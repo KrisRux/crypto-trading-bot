@@ -321,10 +321,10 @@ class TradingEngine:
         self.ws.on_message(self._on_price_update)
         await self.ws.start(streams)
 
-        # Run trading cycles every 60 seconds
+        # Run trading cycles every 30 seconds
         while self.running:
             await self.run_cycle()
-            await asyncio.sleep(60)
+            await asyncio.sleep(30)
 
     async def stop(self):
         self.running = False
