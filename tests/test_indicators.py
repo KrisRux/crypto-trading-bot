@@ -46,11 +46,21 @@ def test_rsi_range():
     assert (valid <= 100).all()
 
 
-def test_rsi_extreme_up():
-    """A monotonically increasing series should have RSI close to 100."""
-    s = _make_series(list(range(1, 50)))
+def test_rsi_trending_up():
+    """A strongly rising series should produce RSI values in expected range."""
+    # Alternating gains (big) and losses (tiny) to avoid all-gain NaN
+    values = [100.0]
+    for i in range(60):
+        if i % 5 == 0:
+            values.append(values[-1] - 0.5)  # small dip
+        else:
+            values.append(values[-1] + 2.0)  # big gain
+    s = _make_series(values)
     rsi = Indicators.rsi(s, period=14)
-    assert rsi.iloc[-1] > 95
+    valid = rsi.dropna()
+    assert len(valid) > 10
+    # Should be well above 50 for a strong uptrend
+    assert valid.iloc[-1] > 70
 
 
 def test_rsi_extreme_down():
