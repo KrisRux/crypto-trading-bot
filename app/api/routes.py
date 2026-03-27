@@ -21,6 +21,7 @@ from app.api.auth import (
     create_token, require_auth, require_admin, require_write,
 )
 from app.models.user import User, verify_password, hash_password
+from app.config import settings
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
