@@ -46,6 +46,8 @@ class TradingEngine:
         self.running = False
         self.last_prices: dict[str, float] = {s: 0.0 for s in self.symbols}
         self.signals_log: list[dict] = []
+        # Lot size (step size decimals) per symbol, loaded from Binance at startup
+        self._qty_decimals: dict[str, int] = {}
 
     @property
     def last_price(self) -> float:
@@ -154,13 +156,31 @@ class TradingEngine:
                 continue
             await self._execute_order(db, user, signal)
 
-    @staticmethod
-    def _round_qty(symbol: str, qty: float) -> float:
+    async def _load_lot_sizes(self):
+        """Fetch step sizes from Binance exchangeInfo for all symbols."""
+        try:
+            info = await self.market_client.get_exchange_info()
+            for s in info.get("symbols", []):
+                sym = s["symbol"]
+                for f in s.get("filters", []):
+                    if f["filterType"] == "LOT_SIZE":
+                        step = f["stepSize"]  # e.g. "0.00100000"
+                        # Count decimals: "0.00100000" -> 3
+                        if "." in step:
+                            stripped = step.rstrip("0")
+                            decimals = len(stripped.split(".")[1]) if "." in stripped else 0
+                        else:
+                            decimals = 0
+                        self._qty_decimals[sym] = decimals
+                        break
+            logger.info("Loaded lot sizes for %d symbols", len(self._qty_decimals))
+        except Exception:
+            logger.exception("Failed to load lot sizes, using defaults")
+
+    def _round_qty(self, symbol: str, qty: float) -> float:
         """Round quantity to Binance-allowed step size."""
-        # BTC pairs: 5 decimals, most others: 3-5
-        if "BTC" in symbol:
-            return round(qty, 5)
-        return round(qty, 4)
+        decimals = self._qty_decimals.get(symbol, 4)
+        return round(qty, decimals)
 
     async def _execute_order(self, db: Session, user: User, signal: Signal):
         """Place a real order on Binance (testnet or live based on user mode)."""
@@ -321,16 +341,8 @@ class TradingEngine:
         self.running = True
         logger.info("Trading engine starting for %s", ", ".join(self.symbols))
 
-        # Init paper portfolios for users with trading enabled
-        db = SessionLocal()
-        users = db.query(User).filter(
-            User.is_active == True, User.trading_enabled == True
-        ).all()
-        for user in users:
-            self.paper_portfolio.get_or_create(
-                db, user.id, user.paper_initial_capital
-            )
-        db.close()
+        # Load lot sizes from Binance for proper quantity rounding
+        await self._load_lot_sizes()
 
         streams = [f"{s.lower()}@trade" for s in self.symbols]
         self.ws.on_message(self._on_price_update)
