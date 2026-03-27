@@ -1,8 +1,9 @@
 """
 Order execution module.
 
-Handles the actual placement of orders on Binance (live mode) or delegation
-to the paper trading engine (paper mode).
+ALL orders are sent to Binance (testnet or production).
+The mode label ("paper" or "live") is only used for DB tagging.
+The client passed to OrderManager determines the actual endpoint.
 """
 
 import logging
@@ -19,11 +20,11 @@ logger = logging.getLogger(__name__)
 class OrderManager:
     def __init__(self, client: BinanceRestClient, mode: str = "paper"):
         self.client = client
-        self.mode = mode  # "live" or "paper"
+        self.mode = mode  # "paper" or "live" — for DB tagging only
 
     async def place_market_order(self, db: Session, symbol: str, side: str,
                                  quantity: float) -> Order:
-        """Place a market order and record it in the database."""
+        """Place a real market order on Binance (testnet or production)."""
         order = Order(
             symbol=symbol,
             side=OrderSide(side),
@@ -33,25 +34,25 @@ class OrderManager:
         )
         db.add(order)
 
-        if self.mode == "live":
-            try:
-                result = await self.client.place_order(
-                    symbol=symbol, side=side, order_type="MARKET", quantity=quantity
-                )
-                order.exchange_order_id = str(result.get("orderId", ""))
-                order.filled_price = float(result.get("fills", [{}])[0].get("price", 0))
-                order.status = OrderStatus.FILLED
-                logger.info("Live MARKET %s order filled: %s qty=%.6f @ %.2f",
-                            side, symbol, quantity, order.filled_price)
-            except Exception as exc:
-                order.status = OrderStatus.FAILED
-                order.error_message = str(exc)[:500]
-                logger.error("Live order failed: %s", exc)
-        else:
-            # Paper mode: filled immediately at "current" price (set by caller)
+        try:
+            result = await self.client.place_order(
+                symbol=symbol, side=side, order_type="MARKET", quantity=quantity
+            )
+            order.exchange_order_id = str(result.get("orderId", ""))
+            fills = result.get("fills", [])
+            if fills:
+                order.filled_price = float(fills[0].get("price", 0))
+            else:
+                order.filled_price = float(result.get("price", 0))
             order.status = OrderStatus.FILLED
-            logger.info("Paper MARKET %s order filled: %s qty=%.6f",
-                        side, symbol, quantity)
+            logger.info("[%s] MARKET %s filled: %s qty=%.6f @ %.2f",
+                        self.mode.upper(), side, symbol, quantity,
+                        order.filled_price or 0)
+        except Exception as exc:
+            order.status = OrderStatus.FAILED
+            order.error_message = str(exc)[:500]
+            logger.error("[%s] MARKET %s failed for %s: %s",
+                         self.mode.upper(), side, symbol, exc)
 
         order.updated_at = datetime.now(timezone.utc)
         db.commit()
@@ -60,7 +61,7 @@ class OrderManager:
 
     async def place_limit_order(self, db: Session, symbol: str, side: str,
                                 quantity: float, price: float) -> Order:
-        """Place a limit order."""
+        """Place a real limit order on Binance (testnet or production)."""
         order = Order(
             symbol=symbol,
             side=OrderSide(side),
@@ -71,24 +72,20 @@ class OrderManager:
         )
         db.add(order)
 
-        if self.mode == "live":
-            try:
-                result = await self.client.place_order(
-                    symbol=symbol, side=side, order_type="LIMIT",
-                    quantity=quantity, price=price
-                )
-                order.exchange_order_id = str(result.get("orderId", ""))
-                order.status = OrderStatus.PENDING  # Limit orders wait for fill
-                logger.info("Live LIMIT %s order placed: %s qty=%.6f @ %.2f",
-                            side, symbol, quantity, price)
-            except Exception as exc:
-                order.status = OrderStatus.FAILED
-                order.error_message = str(exc)[:500]
-                logger.error("Live limit order failed: %s", exc)
-        else:
+        try:
+            result = await self.client.place_order(
+                symbol=symbol, side=side, order_type="LIMIT",
+                quantity=quantity, price=price
+            )
+            order.exchange_order_id = str(result.get("orderId", ""))
             order.status = OrderStatus.PENDING
-            logger.info("Paper LIMIT %s order placed: %s qty=%.6f @ %.2f",
-                        side, symbol, quantity, price)
+            logger.info("[%s] LIMIT %s placed: %s qty=%.6f @ %.2f",
+                        self.mode.upper(), side, symbol, quantity, price)
+        except Exception as exc:
+            order.status = OrderStatus.FAILED
+            order.error_message = str(exc)[:500]
+            logger.error("[%s] LIMIT %s failed for %s: %s",
+                         self.mode.upper(), side, symbol, exc)
 
         order.updated_at = datetime.now(timezone.utc)
         db.commit()
