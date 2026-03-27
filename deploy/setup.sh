@@ -29,12 +29,11 @@ apt-get install -y \
   git curl software-properties-common \
   iptables-persistent
 
-# Node.js 20.x
-if ! command -v node &>/dev/null; then
-  echo "Installing Node.js 20..."
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-  apt-get install -y nodejs
-fi
+# Node.js 20.x — remove old version and install fresh
+echo "Installing Node.js 20..."
+apt-get remove -y nodejs npm 2>/dev/null || true
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
 
 echo "  Python: $(python3 --version)"
 echo "  Node:   $(node --version)"
