@@ -9,7 +9,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.trade import Trade, Order
+from app.models.trade import Trade, Order, TradeStatus
 from app.models.portfolio import PaperPortfolio, PaperPosition
 from app.api.schemas import (
     BalanceResponse, PositionResponse,
