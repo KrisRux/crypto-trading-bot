@@ -273,19 +273,6 @@ export default function Settings() {
         )}
       </section>
 
-      {/* Paper Capital */}
-      <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
-        <h3 className="text-sm font-semibold text-white">{t('Capitale Iniziale Paper', 'Paper Initial Capital')}</h3>
-        <div className="flex items-center gap-2">
-          <input
-            type="number"
-            value={form.paper_initial_capital}
-            onChange={(e) => setForm({ ...form, paper_initial_capital: parseFloat(e.target.value) || 0 })}
-            className="w-40 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-          />
-          <span className="text-sm text-gray-400">USDT</span>
-        </div>
-      </section>
 
       {/* Testnet Keys — for Paper mode */}
       <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
