@@ -190,6 +190,18 @@ class TradingEngine:
 
         try:
             if signal.signal_type == SignalType.BUY:
+                # Skip if there's already an open position for this symbol
+                existing = db.query(Trade).filter(
+                    Trade.user_id == user.id,
+                    Trade.status == TradeStatus.OPEN,
+                    Trade.mode == user_mode,
+                    Trade.symbol == signal.symbol,
+                ).first()
+                if existing:
+                    logger.debug("User %d: skip BUY %s — position already open (trade #%d)",
+                                 user.id, signal.symbol, existing.id)
+                    return
+
                 # Get real balance from Binance (testnet or live)
                 account = await client.get_account()
                 usdt = next(
@@ -353,7 +365,7 @@ class TradingEngine:
 
         while self.running:
             await self.run_cycle()
-            await asyncio.sleep(30)
+            await asyncio.sleep(60)
 
     async def stop(self):
         self.running = False
