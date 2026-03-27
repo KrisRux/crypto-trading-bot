@@ -37,19 +37,19 @@ function manual(lang: Lang): { title: string; disclaimer: string; sections: Sect
         },
         {
           title: '2. Modalita Simulata vs Live',
-          body: `<p>Il bot funziona in due modalita. Quella attiva e sempre indicata chiaramente nel badge in alto a destra e nel banner colorato sotto la barra di navigazione.</p>
+          body: `<p>Ogni utente puo scegliere in quale modalita operare dalla pagina <strong>Impostazioni</strong>. La modalita attiva e indicata nella Dashboard con un badge colorato.</p>
           <table>
             <tr><th>Simulato (Paper)</th><th>Live (Reale)</th></tr>
-            <tr><td>Portafoglio virtuale — nessun denaro reale coinvolto</td><td>Ordini reali inviati a Binance</td></tr>
+            <tr><td>Portafoglio virtuale — nessun denaro reale coinvolto</td><td>Ordini reali inviati a Binance con le tue chiavi API</td></tr>
             <tr><td>Usa prezzi di mercato reali per la simulazione</td><td>Opera direttamente sul tuo conto Binance</td></tr>
-            <tr><td>Ideale per testare e prendere confidenza</td><td>Da usare solo dopo aver validato in modalita simulata</td></tr>
-            <tr><td>Il portafoglio puo essere resettato in qualsiasi momento</td><td>Le operazioni non sono reversibili</td></tr>
+            <tr><td>Richiede chiavi API Testnet</td><td>Richiede chiavi API Live</td></tr>
+            <tr><td>Il portafoglio puo essere resettato</td><td>Le operazioni non sono reversibili</td></tr>
           </table>
-          <p>Per passare da una modalita all'altra, clicca il badge <strong>SIMULATO</strong> / <strong>LIVE</strong> nella barra di navigazione.</p>`,
+          <p>Ogni utente ha il proprio portafoglio e i propri dati completamente separati dagli altri utenti. I dati Paper e Live non si mescolano mai.</p>`,
           subsections: [
             {
               title: 'Attenzione alla modalita Live',
-              body: `<p>Quando il banner in alto e <strong>rosso</strong> e indica "TRADING LIVE", ogni operazione del bot comporta movimenti di denaro reale sul tuo conto Binance. Assicurati di aver prima testato la configurazione in modalita simulata.</p>`,
+              body: `<p>In modalita Live ogni operazione del bot comporta movimenti di denaro reale sul tuo conto Binance. Assicurati di aver prima testato la configurazione in modalita Simulata per un periodo adeguato.</p>`,
             },
           ],
         },
@@ -306,19 +306,19 @@ function manual(lang: Lang): { title: string; disclaimer: string; sections: Sect
       },
       {
         title: '2. Paper vs Live Mode',
-        body: `<p>The bot operates in two modes. The active mode is always clearly shown in the badge at the top right and in the coloured banner below the navigation bar.</p>
+        body: `<p>Each user can choose their operating mode from the <strong>Settings</strong> page. The active mode is shown on the Dashboard with a coloured badge.</p>
         <table>
           <tr><th>Paper (Simulated)</th><th>Live (Real)</th></tr>
-          <tr><td>Virtual portfolio — no real money involved</td><td>Real orders sent to Binance</td></tr>
+          <tr><td>Virtual portfolio — no real money involved</td><td>Real orders sent to Binance using your API keys</td></tr>
           <tr><td>Uses real market prices for simulation</td><td>Operates directly on your Binance account</td></tr>
-          <tr><td>Ideal for testing and gaining confidence</td><td>Use only after validating in Paper mode</td></tr>
-          <tr><td>Portfolio can be reset at any time</td><td>Operations are not reversible</td></tr>
+          <tr><td>Requires Testnet API keys</td><td>Requires Live API keys</td></tr>
+          <tr><td>Portfolio can be reset</td><td>Operations are not reversible</td></tr>
         </table>
-        <p>To switch between modes, click the <strong>PAPER</strong> / <strong>LIVE</strong> badge in the navigation bar.</p>`,
+        <p>Each user has their own portfolio and data, completely separate from other users. Paper and Live data never mix.</p>`,
         subsections: [
           {
             title: 'Live mode warning',
-            body: '<p>When the banner at the top is <strong>red</strong> and says "LIVE TRADING", every bot operation involves real money on your Binance account. Make sure you have tested your configuration in Paper mode first.</p>',
+            body: '<p>In Live mode, every bot operation involves real money on your Binance account. Make sure you have tested your configuration in Paper mode for an adequate period first.</p>',
           },
         ],
       },

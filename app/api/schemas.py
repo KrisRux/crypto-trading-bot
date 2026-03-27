@@ -4,14 +4,6 @@ from pydantic import BaseModel
 from datetime import datetime
 
 
-# -- Mode --
-class ModeResponse(BaseModel):
-    mode: str  # "live" or "paper"
-
-
-class ModeSwitch(BaseModel):
-    mode: str
-
 
 # -- Dashboard --
 class BalanceResponse(BaseModel):

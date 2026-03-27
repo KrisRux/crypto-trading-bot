@@ -10,22 +10,6 @@ const translations = {
   nav_strategies: { it: 'Strategie', en: 'Strategies' },
   nav_logs: { it: 'Log', en: 'Logs' },
 
-  // -- Mode --
-  mode_live: { it: 'LIVE', en: 'LIVE' },
-  mode_paper: { it: 'SIMULATO', en: 'PAPER' },
-  mode_banner_live: {
-    it: 'TRADING LIVE — Gli ordini reali vengono inviati a Binance',
-    en: 'LIVE TRADING — Real orders are being placed on Binance',
-  },
-  mode_banner_paper: {
-    it: 'TRADING SIMULATO — Nessun denaro reale coinvolto, portafoglio virtuale',
-    en: 'PAPER TRADING — No real money involved, using simulated portfolio',
-  },
-  mode_switch_failed: {
-    it: 'Cambio modalità fallito',
-    en: 'Failed to switch mode',
-  },
-
   // -- Dashboard --
   cash_balance: { it: 'Saldo Disponibile', en: 'Cash Balance' },
   total_equity: { it: 'Patrimonio Totale', en: 'Total Equity' },

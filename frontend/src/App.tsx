@@ -113,11 +113,11 @@ function AppContent() {
                 <div className="hidden md:flex items-center gap-1">
                   <NavLink to="/" className={navLinkClass}>{t('nav_dashboard')}</NavLink>
                   <NavLink to="/strategies" className={navLinkClass}>{t('nav_strategies')}</NavLink>
-                  <NavLink to="/logs" className={navLinkClass}>{t('nav_logs')}</NavLink>
                   <NavLink to="/skills" className={navLinkClass}>{t('nav_skills')}</NavLink>
                   <NavLink to="/manual" className={navLinkClass}>{t('nav_manual')}</NavLink>
                   {role !== 'guest' && <NavLink to="/settings" className={navLinkClass}>{t('nav_settings')}</NavLink>}
                   {isAdmin && <NavLink to="/users" className={navLinkClass}>Utenti</NavLink>}
+                  <NavLink to="/logs" className={navLinkClass}>{t('nav_logs')}</NavLink>
                 </div>
               </div>
 
@@ -167,9 +167,6 @@ function AppContent() {
                 <NavLink to="/strategies" className={navLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_strategies')}
                 </NavLink>
-                <NavLink to="/logs" className={navLinkClass} onClick={() => setMenuOpen(false)}>
-                  {t('nav_logs')}
-                </NavLink>
                 <NavLink to="/skills" className={navLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_skills')}
                 </NavLink>
@@ -186,6 +183,9 @@ function AppContent() {
                     Utenti
                   </NavLink>
                 )}
+                <NavLink to="/logs" className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                  {t('nav_logs')}
+                </NavLink>
               </div>
             )}
           </div>
