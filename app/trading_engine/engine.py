@@ -236,6 +236,9 @@ class TradingEngine:
                     Trade.mode == user_mode,
                     Trade.symbol == signal.symbol,
                 ).all()
+                if not open_trades:
+                    logger.info("User %d [%s]: SELL %s — no open positions to close",
+                                user.id, user_mode, signal.symbol)
                 for trade in open_trades:
                     await self._close_trade(db, user, trade, signal.price, "signal_sell")
 
