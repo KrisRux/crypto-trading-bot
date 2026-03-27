@@ -113,6 +113,12 @@ class TradingEngine:
         """Execute signals for a specific user."""
         user_mode = user.trading_mode or "paper"
 
+        # Verify the user has configured the required API keys for their mode
+        if user_mode == "paper" and not user.has_api_keys(live=False):
+            return  # Paper mode requires testnet keys
+        if user_mode == "live" and not user.has_api_keys(live=True):
+            return  # Live mode requires live keys
+
         # Check existing positions for TP/SL
         if user_mode == "paper":
             closed = self.paper_portfolio.check_tp_sl_symbol(
@@ -122,7 +128,6 @@ class TradingEngine:
                 logger.info("User %d: position closed (%s) %s @ %.2f",
                             user.id, reason, pos.symbol, current_price)
         else:
-            # Live mode: check trades in DB
             open_trades = db.query(Trade).filter(
                 Trade.user_id == user.id,
                 Trade.status == TradeStatus.OPEN,
@@ -147,7 +152,7 @@ class TradingEngine:
                     db, user.id, user.paper_initial_capital
                 ).cash_balance
                 await self._execute_paper(db, user.id, signal, capital)
-            elif user.has_api_keys(live=True):
+            else:
                 await self._execute_live(db, user, signal)
 
     async def _execute_paper(self, db: Session, user_id: int,

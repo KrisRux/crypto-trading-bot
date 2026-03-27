@@ -152,6 +152,17 @@ export default function Settings() {
             )}
           </div>
         )}
+        {form.trading_enabled && (
+          (form.trading_mode === 'paper' && !keys?.has_testnet_keys) ||
+          (form.trading_mode === 'live' && !keys?.has_live_keys)
+        ) && (
+          <div className="bg-red-900/30 border border-red-800/50 rounded-lg p-3 text-xs text-red-300">
+            {t(
+              'Trading abilitato ma chiavi API mancanti! Configura le chiavi qui sotto per la modalita selezionata, altrimenti nessun ordine verra eseguito.',
+              'Trading enabled but API keys missing! Configure the keys below for your selected mode, otherwise no orders will be executed.'
+            )}
+          </div>
+        )}
       </section>
 
       {/* Trading Mode */}
