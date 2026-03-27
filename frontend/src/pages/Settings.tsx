@@ -157,12 +157,21 @@ export default function Settings() {
             )}
           </div>
         )}
-        {form.trading_enabled && form.trading_mode === 'live' && !keys?.has_live_keys && (
+        {form.trading_enabled && (
+          (form.trading_mode === 'paper' && !keys?.has_testnet_keys) ||
+          (form.trading_mode === 'live' && !keys?.has_live_keys)
+        ) && (
           <div className="bg-red-900/30 border border-red-800/50 rounded-lg p-3 text-xs text-red-300">
-            {t(
-              'Trading Live abilitato ma chiavi API Live mancanti! Configura le chiavi qui sotto, altrimenti nessun ordine verra eseguito.',
-              'Live trading enabled but Live API keys missing! Configure the keys below, otherwise no orders will be executed.'
-            )}
+            {form.trading_mode === 'paper'
+              ? t(
+                  'Trading abilitato ma chiavi Testnet mancanti! Configura le chiavi Testnet qui sotto per operare in Paper.',
+                  'Trading enabled but Testnet keys missing! Configure Testnet keys below to trade in Paper mode.'
+                )
+              : t(
+                  'Trading abilitato ma chiavi Live mancanti! Configura le chiavi Live qui sotto per operare.',
+                  'Trading enabled but Live keys missing! Configure Live keys below to trade.'
+                )
+            }
           </div>
         )}
       </section>
@@ -278,26 +287,54 @@ export default function Settings() {
         </div>
       </section>
 
-      {/* Binance API Keys — required only for Live mode */}
+      {/* Testnet Keys — for Paper mode */}
       <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-white">
-            {t('Chiavi API Binance', 'Binance API Keys')}
+            Binance Testnet API
+            <span className="ml-2 text-[10px] font-normal text-gray-500">({t('per Paper', 'for Paper')})</span>
+          </h3>
+          {keys?.has_testnet_keys && (
+            <span className="text-xs text-emerald-400">{t('Configurate', 'Configured')}: {keys.binance_testnet_api_key}</span>
+          )}
+        </div>
+        <p className="text-xs text-gray-500">
+          {t(
+            'Per la modalita Paper. Ordini reali su Binance Testnet (soldi virtuali). Ottieni le chiavi su testnet.binance.vision',
+            'For Paper mode. Real orders on Binance Testnet (virtual money). Get keys at testnet.binance.vision'
+          )}
+        </p>
+        <input
+          type="text"
+          placeholder="Testnet API Key"
+          value={form.binance_testnet_api_key}
+          onChange={(e) => setForm({ ...form, binance_testnet_api_key: e.target.value })}
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
+        />
+        <input
+          type="password"
+          placeholder="Testnet API Secret"
+          value={form.binance_testnet_api_secret}
+          onChange={(e) => setForm({ ...form, binance_testnet_api_secret: e.target.value })}
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
+        />
+      </section>
+
+      {/* Live Keys — for Live mode */}
+      <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-white">
+            Binance Live API
+            <span className="ml-2 text-[10px] font-normal text-gray-500">({t('per Live', 'for Live')})</span>
           </h3>
           {keys?.has_live_keys && (
             <span className="text-xs text-emerald-400">{t('Configurate', 'Configured')}: {keys.binance_api_key}</span>
           )}
         </div>
-        <p className="text-xs text-gray-500">
+        <div className="bg-red-900/30 border border-red-800/50 rounded-lg p-3 text-xs text-red-300">
           {t(
-            'Necessarie solo per la modalita Live. In Paper il bot simula gli ordini senza contattare Binance.',
-            'Required only for Live mode. In Paper the bot simulates orders without contacting Binance.'
-          )}
-        </p>
-        <div className="bg-yellow-900/30 border border-yellow-800/50 rounded-lg p-3 text-xs text-yellow-300">
-          {t(
-            'Abilita SOLO "Enable Spot & Margin Trading". MAI abilitare "Enable Withdrawals".',
-            'Enable ONLY "Enable Spot & Margin Trading". NEVER enable "Enable Withdrawals".'
+            'ATTENZIONE: ordini con denaro reale! Abilita SOLO "Enable Spot & Margin Trading". MAI "Enable Withdrawals".',
+            'WARNING: real money orders! Enable ONLY "Enable Spot & Margin Trading". NEVER "Enable Withdrawals".'
           )}
         </div>
         <input

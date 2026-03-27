@@ -103,41 +103,47 @@ class TradingEngine:
     # Per-user execution
     # ------------------------------------------------------------------
 
+    def _get_user_client(self, user: User) -> tuple[BinanceRestClient, bool]:
+        """
+        Create a Binance client for the user's trading mode.
+        Paper = Testnet API (real orders on testnet with fake money).
+        Live = Production API (real orders with real money).
+        """
+        is_live = (user.trading_mode or "paper") == "live"
+        return BinanceRestClient(
+            api_key=user.get_api_key(live=is_live),
+            api_secret=user.get_api_secret(live=is_live),
+            testnet=not is_live,
+        ), is_live
+
     async def _execute_for_user(self, db: Session, user: User,
                                 symbol: str, signals: list[Signal],
                                 current_price: float):
-        """Execute signals for a specific user."""
+        """Execute signals for a specific user via Binance API (testnet or live)."""
         user_mode = user.trading_mode or "paper"
+        is_live = user_mode == "live"
 
-        # Live mode requires API keys; paper mode doesn't (orders are simulated)
-        if user_mode == "live" and not user.has_api_keys(live=True):
+        # Both modes require API keys (paper=testnet, live=production)
+        if not user.has_api_keys(live=is_live):
             return
 
-        # Check trading schedule — TP/SL always checked, but new trades only during hours
+        # Check trading schedule — TP/SL always checked, new trades only during hours
         within_hours = user.is_within_trading_hours()
 
         # Check existing positions for TP/SL (always, even outside hours)
-        if user_mode == "paper":
-            closed = self.paper_portfolio.check_tp_sl_symbol(
-                db, user.id, symbol, current_price
+        open_trades = db.query(Trade).filter(
+            Trade.user_id == user.id,
+            Trade.status == TradeStatus.OPEN,
+            Trade.mode == user_mode,
+            Trade.symbol == symbol,
+        ).all()
+        for trade in open_trades:
+            result = self.risk_manager.should_close_position(
+                trade.entry_price, current_price,
+                trade.stop_loss, trade.take_profit
             )
-            for pos, reason in closed:
-                logger.info("User %d: position closed (%s) %s @ %.2f",
-                            user.id, reason, pos.symbol, current_price)
-        else:
-            open_trades = db.query(Trade).filter(
-                Trade.user_id == user.id,
-                Trade.status == TradeStatus.OPEN,
-                Trade.mode == "live",
-                Trade.symbol == symbol,
-            ).all()
-            for trade in open_trades:
-                result = self.risk_manager.should_close_position(
-                    trade.entry_price, current_price,
-                    trade.stop_loss, trade.take_profit
-                )
-                if result:
-                    await self._close_live_trade(db, user, trade, current_price, result)
+            if result:
+                await self._close_trade(db, user, trade, current_price, result)
 
         # Execute signals (only during trading hours)
         if not within_hours:
@@ -146,42 +152,17 @@ class TradingEngine:
         for signal in signals:
             if signal.signal_type == SignalType.HOLD:
                 continue
+            await self._execute_order(db, user, signal)
 
-            if user_mode == "paper":
-                capital = self.paper_portfolio.get_or_create(
-                    db, user.id, user.paper_initial_capital
-                ).cash_balance
-                await self._execute_paper(db, user.id, signal, capital)
-            else:
-                await self._execute_live(db, user, signal)
-
-    async def _execute_paper(self, db: Session, user_id: int,
-                             signal: Signal, capital: float):
-        if signal.signal_type == SignalType.BUY:
-            qty = self.risk_manager.calculate_position_size(capital, signal.price)
-            if qty <= 0:
-                return
-            sl = self.risk_manager.calculate_stop_loss(signal.price)
-            tp = self.risk_manager.calculate_take_profit(signal.price)
-            self.paper_portfolio.open_position(
-                db, user_id, signal.symbol, qty, signal.price, sl, tp
-            )
-        elif signal.signal_type == SignalType.SELL:
-            self.paper_portfolio.close_all_positions(
-                db, user_id, signal.symbol, signal.price
-            )
-
-    async def _execute_live(self, db: Session, user: User, signal: Signal):
-        """Execute a live order using the user's own Binance API keys."""
-        client = BinanceRestClient(
-            api_key=user.get_api_key(live=True),
-            api_secret=user.get_api_secret(live=True),
-            testnet=False,
-        )
-        order_mgr = OrderManager(client, mode="live")
+    async def _execute_order(self, db: Session, user: User, signal: Signal):
+        """Place a real order on Binance (testnet or live based on user mode)."""
+        client, is_live = self._get_user_client(user)
+        user_mode = "live" if is_live else "paper"
+        order_mgr = OrderManager(client, mode=user_mode)
 
         try:
             if signal.signal_type == SignalType.BUY:
+                # Get real balance from Binance (testnet or live)
                 account = await client.get_account()
                 usdt = next(
                     (b for b in account.get("balances", []) if b["asset"] == "USDT"),
@@ -203,39 +184,36 @@ class TradingEngine:
                     user_id=user.id, symbol=signal.symbol, side=OrderSide.BUY,
                     entry_price=filled_price, quantity=qty,
                     stop_loss=sl, take_profit=tp,
-                    status=TradeStatus.OPEN, mode="live",
+                    status=TradeStatus.OPEN, mode=user_mode,
                     strategy=signal.strategy_name, entry_order_id=order.id,
                 )
                 db.add(trade)
                 db.commit()
-                logger.info("User %d: Live BUY %s qty=%.6f @ %.2f",
-                            user.id, signal.symbol, qty, filled_price)
+                logger.info("User %d [%s]: BUY %s qty=%.6f @ %.2f",
+                            user.id, user_mode, signal.symbol, qty, filled_price)
 
             elif signal.signal_type == SignalType.SELL:
                 open_trades = db.query(Trade).filter(
                     Trade.user_id == user.id,
                     Trade.status == TradeStatus.OPEN,
-                    Trade.mode == "live",
+                    Trade.mode == user_mode,
                     Trade.symbol == signal.symbol,
                 ).all()
                 for trade in open_trades:
-                    await self._close_live_trade(
-                        db, user, trade, signal.price, "signal_sell"
-                    )
+                    await self._close_trade(db, user, trade, signal.price, "signal_sell")
+
         except Exception:
-            logger.exception("User %d: live order failed for %s",
-                             user.id, signal.symbol)
+            logger.exception("User %d [%s]: order failed for %s",
+                             user.id, user_mode, signal.symbol)
         finally:
             await client.close()
 
-    async def _close_live_trade(self, db: Session, user: User,
-                                trade: Trade, exit_price: float, reason: str):
-        client = BinanceRestClient(
-            api_key=user.get_api_key(live=True),
-            api_secret=user.get_api_secret(live=True),
-            testnet=False,
-        )
-        order_mgr = OrderManager(client, mode="live")
+    async def _close_trade(self, db: Session, user: User,
+                           trade: Trade, exit_price: float, reason: str):
+        """Close a trade by placing a real SELL order on Binance."""
+        client, is_live = self._get_user_client(user)
+        user_mode = "live" if is_live else "paper"
+        order_mgr = OrderManager(client, mode=user_mode)
         try:
             order = await order_mgr.place_market_order(
                 db, trade.symbol, "SELL", trade.quantity
@@ -248,8 +226,8 @@ class TradingEngine:
             trade.exit_order_id = order.id
             trade.closed_at = datetime.now(timezone.utc)
             db.commit()
-            logger.info("User %d: Trade #%d closed (%s) PnL=%.2f",
-                         user.id, trade.id, reason, trade.pnl)
+            logger.info("User %d [%s]: Trade #%d closed (%s) PnL=%.2f",
+                         user.id, user_mode, trade.id, reason, trade.pnl)
         except Exception:
             logger.exception("User %d: failed to close trade #%d", user.id, trade.id)
         finally:

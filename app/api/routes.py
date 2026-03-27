@@ -248,143 +248,115 @@ async def update_api_keys(body: dict, db: Session = Depends(get_db),
 # ------------------------------------------------------------------ Dashboard (per-user)
 @router.get("/balance", response_model=BalanceResponse)
 async def get_balance(db: Session = Depends(get_db), user_info: dict = Depends(require_auth)):
+    from app.binance_client.rest_client import BinanceRestClient
     engine = get_engine()
     user = _get_user_obj(user_info, db)
     user_mode = user.trading_mode or "paper"
+    is_live = user_mode == "live"
 
-    if user_mode == "paper":
-        portfolio = engine.paper_portfolio.get_or_create(
-            db, user.id, user.paper_initial_capital
-        )
-        return BalanceResponse(
-            mode="paper",
-            cash_balance=portfolio.cash_balance,
-            total_equity=portfolio.total_equity,
-            total_pnl=portfolio.total_pnl,
-            total_trades=portfolio.total_trades,
-            winning_trades=portfolio.winning_trades,
-            losing_trades=portfolio.losing_trades,
-        )
-    else:
-        # Live mode: fetch real balance from Binance
-        from app.binance_client.rest_client import BinanceRestClient
-        cash_balance = 0.0
-        total_equity = 0.0
+    cash_balance = 0.0
+    total_equity = 0.0
 
-        if user.has_api_keys(live=True):
-            client = BinanceRestClient(
-                api_key=user.get_api_key(live=True),
-                api_secret=user.get_api_secret(live=True),
-                testnet=False,
-            )
-            try:
-                account = await client.get_account()
-                balances = account.get("balances", [])
-                # USDT free balance
-                usdt = next((b for b in balances if b["asset"] == "USDT"), None)
-                cash_balance = float(usdt["free"]) if usdt else 0.0
-                # Total equity = USDT + value of held assets at current prices
-                total_equity = cash_balance
-                for b in balances:
-                    free = float(b.get("free", 0))
-                    locked = float(b.get("locked", 0))
-                    qty = free + locked
-                    if qty > 0 and b["asset"] != "USDT":
-                        symbol = b["asset"] + "USDT"
-                        price = engine.last_prices.get(symbol, 0)
-                        total_equity += qty * price
-            except Exception as exc:
-                logger.warning("Failed to fetch Binance balance for user %d: %s",
-                               user.id, exc)
-            finally:
-                await client.close()
-
-        trades = db.query(Trade).filter(
-            Trade.user_id == user.id, Trade.mode == "live"
-        ).all()
-        closed_trades = [t for t in trades if t.status == TradeStatus.CLOSED]
-        total_pnl = sum(t.pnl or 0 for t in closed_trades)
-        winning = sum(1 for t in closed_trades if (t.pnl or 0) > 0)
-        losing = sum(1 for t in closed_trades if (t.pnl or 0) < 0)
-        return BalanceResponse(
-            mode="live",
-            cash_balance=cash_balance,
-            total_equity=total_equity,
-            total_pnl=total_pnl,
-            total_trades=len(closed_trades),
-            winning_trades=winning,
-            losing_trades=losing,
+    # Fetch real balance from Binance (testnet for paper, production for live)
+    if user.has_api_keys(live=is_live):
+        client = BinanceRestClient(
+            api_key=user.get_api_key(live=is_live),
+            api_secret=user.get_api_secret(live=is_live),
+            testnet=not is_live,
         )
+        try:
+            account = await client.get_account()
+            balances = account.get("balances", [])
+            usdt = next((b for b in balances if b["asset"] == "USDT"), None)
+            cash_balance = float(usdt["free"]) if usdt else 0.0
+            total_equity = cash_balance
+            for b in balances:
+                free = float(b.get("free", 0))
+                locked = float(b.get("locked", 0))
+                qty = free + locked
+                if qty > 0 and b["asset"] != "USDT":
+                    symbol = b["asset"] + "USDT"
+                    price = engine.last_prices.get(symbol, 0)
+                    total_equity += qty * price
+        except Exception as exc:
+            logger.warning("Failed to fetch Binance balance for user %d: %s",
+                           user.id, exc)
+        finally:
+            await client.close()
+
+    trades = db.query(Trade).filter(
+        Trade.user_id == user.id, Trade.mode == user_mode
+    ).all()
+    closed_trades = [t for t in trades if t.status == TradeStatus.CLOSED]
+    total_pnl = sum(t.pnl or 0 for t in closed_trades)
+    winning = sum(1 for t in closed_trades if (t.pnl or 0) > 0)
+    losing = sum(1 for t in closed_trades if (t.pnl or 0) < 0)
+    return BalanceResponse(
+        mode=user_mode,
+        cash_balance=cash_balance,
+        total_equity=total_equity,
+        total_pnl=total_pnl,
+        total_trades=len(closed_trades),
+        winning_trades=winning,
+        losing_trades=losing,
+    )
 
 
 @router.get("/positions", response_model=list[PositionResponse])
 async def get_positions(db: Session = Depends(get_db), user_info: dict = Depends(require_auth)):
+    from app.binance_client.rest_client import BinanceRestClient
     engine = get_engine()
     user = _get_user_obj(user_info, db)
     user_mode = user.trading_mode or "paper"
+    is_live = user_mode == "live"
 
     result = []
 
-    if user_mode == "paper":
-        positions = db.query(PaperPosition).filter(
-            PaperPosition.user_id == user.id
-        ).all()
-        for p in positions:
-            result.append(PositionResponse(
-                id=p.id, symbol=p.symbol, side=p.side, quantity=p.quantity,
-                entry_price=p.entry_price, current_price=p.current_price,
-                unrealized_pnl=p.unrealized_pnl,
-                stop_loss=p.stop_loss, take_profit=p.take_profit,
-                opened_at=p.opened_at,
-            ))
-    else:
-        # Live mode: show tracked trades + real Binance balances as positions
-        open_trades = db.query(Trade).filter(
-            Trade.user_id == user.id,
-            Trade.status == TradeStatus.OPEN,
-            Trade.mode == "live",
-        ).all()
-        for t in open_trades:
-            cp = engine.last_prices.get(t.symbol, 0)
-            result.append(PositionResponse(
-                id=t.id, symbol=t.symbol, side=t.side.value,
-                quantity=t.quantity, entry_price=t.entry_price,
-                current_price=cp,
-                unrealized_pnl=(cp - t.entry_price) * t.quantity if cp else 0,
-                stop_loss=t.stop_loss, take_profit=t.take_profit,
-                opened_at=t.opened_at,
-            ))
+    # Show tracked trades from DB
+    open_trades = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.status == TradeStatus.OPEN,
+        Trade.mode == user_mode,
+    ).all()
+    for t in open_trades:
+        cp = engine.last_prices.get(t.symbol, 0)
+        result.append(PositionResponse(
+            id=t.id, symbol=t.symbol, side=t.side.value,
+            quantity=t.quantity, entry_price=t.entry_price,
+            current_price=cp,
+            unrealized_pnl=(cp - t.entry_price) * t.quantity if cp else 0,
+            stop_loss=t.stop_loss, take_profit=t.take_profit,
+            opened_at=t.opened_at,
+        ))
 
-        # Also fetch real non-zero balances from Binance
-        if user.has_api_keys(live=True):
-            from app.binance_client.rest_client import BinanceRestClient
-            client = BinanceRestClient(
-                api_key=user.get_api_key(live=True),
-                api_secret=user.get_api_secret(live=True),
-                testnet=False,
-            )
-            try:
-                account = await client.get_account()
-                tracked_symbols = {t.symbol for t in open_trades}
-                for b in account.get("balances", []):
-                    qty = float(b.get("free", 0)) + float(b.get("locked", 0))
-                    if qty > 0 and b["asset"] not in ("USDT", "BNB"):
-                        symbol = b["asset"] + "USDT"
-                        if symbol not in tracked_symbols:
-                            cp = engine.last_prices.get(symbol, 0)
-                            result.append(PositionResponse(
-                                id=0, symbol=symbol, side="BUY",
-                                quantity=qty, entry_price=0,
-                                current_price=cp,
-                                unrealized_pnl=0,
-                                stop_loss=None, take_profit=None,
-                                opened_at=None,
-                            ))
-            except Exception as exc:
-                logger.warning("Failed to fetch Binance positions for user %d: %s",
-                               user.id, exc)
-            finally:
-                await client.close()
+    # Also fetch real non-zero balances from Binance (testnet or live)
+    if user.has_api_keys(live=is_live):
+        client = BinanceRestClient(
+            api_key=user.get_api_key(live=is_live),
+            api_secret=user.get_api_secret(live=is_live),
+            testnet=not is_live,
+        )
+        try:
+            account = await client.get_account()
+            tracked_symbols = {t.symbol for t in open_trades}
+            for b in account.get("balances", []):
+                qty = float(b.get("free", 0)) + float(b.get("locked", 0))
+                if qty > 0 and b["asset"] not in ("USDT", "BNB"):
+                    symbol = b["asset"] + "USDT"
+                    if symbol not in tracked_symbols:
+                        cp = engine.last_prices.get(symbol, 0)
+                        result.append(PositionResponse(
+                            id=0, symbol=symbol, side="BUY",
+                            quantity=qty, entry_price=0,
+                            current_price=cp, unrealized_pnl=0,
+                            stop_loss=None, take_profit=None,
+                            opened_at=None,
+                        ))
+        except Exception as exc:
+            logger.warning("Failed to fetch Binance positions for user %d: %s",
+                           user.id, exc)
+        finally:
+            await client.close()
 
     return result
 
