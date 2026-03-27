@@ -168,12 +168,73 @@ def switch_mode(body: ModeSwitch, _user: dict = Depends(require_admin)):
     return {"mode": engine.mode}
 
 
-# ------------------------------------------------------------------ Dashboard
+def _get_user_id(user_info: dict, db: Session) -> int:
+    """Resolve the user ID from the JWT payload."""
+    u = db.query(User).filter(User.username == user_info["username"]).first()
+    if not u:
+        raise HTTPException(404, "User not found")
+    return u.id
+
+
+def _get_user_obj(user_info: dict, db: Session) -> User:
+    u = db.query(User).filter(User.username == user_info["username"]).first()
+    if not u:
+        raise HTTPException(404, "User not found")
+    return u
+
+
+# ------------------------------------------------------------------ User Settings (API keys)
+@router.get("/settings/keys")
+def get_api_keys(db: Session = Depends(get_db), user_info: dict = Depends(require_auth)):
+    user = _get_user_obj(user_info, db)
+    return {
+        "trading_mode": user.trading_mode,
+        "paper_initial_capital": user.paper_initial_capital,
+        "has_live_keys": user.has_api_keys(live=True),
+        "has_testnet_keys": user.has_api_keys(live=False),
+        "binance_api_key": user.get_api_key(live=True)[:8] + "..." if user.has_api_keys(live=True) else "",
+        "binance_testnet_api_key": user.get_api_key(live=False)[:8] + "..." if user.has_api_keys(live=False) else "",
+    }
+
+
+@router.put("/settings/keys")
+def update_api_keys(body: dict, db: Session = Depends(get_db),
+                    user_info: dict = Depends(require_auth)):
+    user = _get_user_obj(user_info, db)
+    if "trading_mode" in body:
+        if body["trading_mode"] not in ("paper", "live"):
+            raise HTTPException(400, "Mode must be 'paper' or 'live'")
+        user.trading_mode = body["trading_mode"]
+    if "paper_initial_capital" in body:
+        user.paper_initial_capital = float(body["paper_initial_capital"])
+    # Only update keys if provided (non-empty)
+    api_key = body.get("binance_api_key", "")
+    api_secret = body.get("binance_api_secret", "")
+    testnet_key = body.get("binance_testnet_api_key", "")
+    testnet_secret = body.get("binance_testnet_api_secret", "")
+    if api_key or api_secret or testnet_key or testnet_secret:
+        user.set_api_keys(
+            api_key=api_key or user.get_api_key(live=True),
+            api_secret=api_secret or user.get_api_secret(live=True),
+            testnet_key=testnet_key or user.get_api_key(live=False),
+            testnet_secret=testnet_secret or user.get_api_secret(live=False),
+        )
+    db.commit()
+    logger.info("User '%s' updated their settings", user.username)
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ Dashboard (per-user)
 @router.get("/balance", response_model=BalanceResponse)
-def get_balance(db: Session = Depends(get_db), _user: dict = Depends(require_auth)):
+def get_balance(db: Session = Depends(get_db), user_info: dict = Depends(require_auth)):
     engine = get_engine()
-    if engine.mode == "paper":
-        portfolio = engine.paper_portfolio.get_or_create(db)
+    user = _get_user_obj(user_info, db)
+    user_mode = user.trading_mode or "paper"
+
+    if user_mode == "paper":
+        portfolio = engine.paper_portfolio.get_or_create(
+            db, user.id, user.paper_initial_capital
+        )
         return BalanceResponse(
             mode="paper",
             cash_balance=portfolio.cash_balance,
@@ -184,60 +245,60 @@ def get_balance(db: Session = Depends(get_db), _user: dict = Depends(require_aut
             losing_trades=portfolio.losing_trades,
         )
     else:
-        # For live mode, we return data from closed trades
-        trades = db.query(Trade).filter(Trade.mode == "live").all()
+        trades = db.query(Trade).filter(
+            Trade.user_id == user.id, Trade.mode == "live"
+        ).all()
         total_pnl = sum(t.pnl or 0 for t in trades)
         winning = sum(1 for t in trades if (t.pnl or 0) > 0)
         losing = sum(1 for t in trades if (t.pnl or 0) < 0)
         return BalanceResponse(
-            mode="live",
-            cash_balance=0,  # Fetched async separately
-            total_equity=0,
-            total_pnl=total_pnl,
-            total_trades=len(trades),
-            winning_trades=winning,
-            losing_trades=losing,
+            mode="live", cash_balance=0, total_equity=0,
+            total_pnl=total_pnl, total_trades=len(trades),
+            winning_trades=winning, losing_trades=losing,
         )
 
 
 @router.get("/positions", response_model=list[PositionResponse])
-def get_positions(db: Session = Depends(get_db), _user: dict = Depends(require_auth)):
+def get_positions(db: Session = Depends(get_db), user_info: dict = Depends(require_auth)):
     engine = get_engine()
-    if engine.mode == "paper":
-        portfolio = engine.paper_portfolio.get_or_create(db)
-        positions = db.query(PaperPosition).filter(
-            PaperPosition.portfolio_id == portfolio.id
-        ).all()
-        return [
-            PositionResponse(
-                id=p.id, symbol=p.symbol, side=p.side, quantity=p.quantity,
-                entry_price=p.entry_price, current_price=p.current_price,
-                unrealized_pnl=p.unrealized_pnl,
-                stop_loss=p.stop_loss, take_profit=p.take_profit,
-                opened_at=p.opened_at,
-            ) for p in positions
-        ]
-    else:
-        trades = db.query(Trade).filter(
-            Trade.mode == "live", Trade.status == "OPEN"
-        ).all()
-        return [
-            PositionResponse(
+    user = _get_user_obj(user_info, db)
+
+    positions = db.query(PaperPosition).filter(
+        PaperPosition.user_id == user.id
+    ).all()
+    open_trades = db.query(Trade).filter(
+        Trade.user_id == user.id, Trade.status == TradeStatus.OPEN
+    ).all()
+
+    result = []
+    for p in positions:
+        result.append(PositionResponse(
+            id=p.id, symbol=p.symbol, side=p.side, quantity=p.quantity,
+            entry_price=p.entry_price, current_price=p.current_price,
+            unrealized_pnl=p.unrealized_pnl,
+            stop_loss=p.stop_loss, take_profit=p.take_profit,
+            opened_at=p.opened_at,
+        ))
+    for t in open_trades:
+        if t.mode == "live":
+            cp = engine.last_prices.get(t.symbol, 0)
+            result.append(PositionResponse(
                 id=t.id, symbol=t.symbol, side=t.side.value,
                 quantity=t.quantity, entry_price=t.entry_price,
-                current_price=engine.last_price,
-                unrealized_pnl=(engine.last_price - t.entry_price) * t.quantity,
+                current_price=cp,
+                unrealized_pnl=(cp - t.entry_price) * t.quantity if cp else 0,
                 stop_loss=t.stop_loss, take_profit=t.take_profit,
                 opened_at=t.opened_at,
-            ) for t in trades
-        ]
+            ))
+    return result
 
 
 @router.get("/orders", response_model=list[OrderResponse])
-def get_orders(db: Session = Depends(get_db), limit: int = 50, _user: dict = Depends(require_auth)):
-    engine = get_engine()
+def get_orders(db: Session = Depends(get_db), limit: int = 50,
+               user_info: dict = Depends(require_auth)):
+    user_id = _get_user_id(user_info, db)
     orders = db.query(Order).filter(
-        Order.mode == engine.mode
+        Order.user_id == user_id
     ).order_by(Order.created_at.desc()).limit(limit).all()
     return [
         OrderResponse(
@@ -251,10 +312,11 @@ def get_orders(db: Session = Depends(get_db), limit: int = 50, _user: dict = Dep
 
 
 @router.get("/trades", response_model=list[TradeResponse])
-def get_trades(db: Session = Depends(get_db), limit: int = 50, _user: dict = Depends(require_auth)):
-    engine = get_engine()
+def get_trades(db: Session = Depends(get_db), limit: int = 50,
+               user_info: dict = Depends(require_auth)):
+    user_id = _get_user_id(user_info, db)
     trades = db.query(Trade).filter(
-        Trade.mode == engine.mode
+        Trade.user_id == user_id
     ).order_by(Trade.opened_at.desc()).limit(limit).all()
     return [
         TradeResponse(
@@ -326,18 +388,20 @@ def get_signals(_user: dict = Depends(require_auth)):
 
 # ------------------------------------------------------------------ Paper trading extras
 @router.post("/paper/reset")
-def reset_paper_portfolio(db: Session = Depends(get_db), _user: dict = Depends(require_admin)):
+def reset_paper_portfolio(db: Session = Depends(get_db),
+                          user_info: dict = Depends(require_auth)):
     engine = get_engine()
-    if engine.mode != "paper":
-        raise HTTPException(400, "Can only reset in paper mode")
-    engine.paper_portfolio.reset(db)
+    user_id = _get_user_id(user_info, db)
+    engine.paper_portfolio.reset(db, user_id)
     return {"ok": True}
 
 
 @router.get("/paper/export")
-def export_paper_trades(db: Session = Depends(get_db), _user: dict = Depends(require_auth)):
+def export_paper_trades(db: Session = Depends(get_db),
+                        user_info: dict = Depends(require_auth)):
     engine = get_engine()
-    csv_data = engine.paper_portfolio.export_trades_csv(db)
+    user_id = _get_user_id(user_info, db)
+    csv_data = engine.paper_portfolio.export_trades_csv(db, user_id)
     return PlainTextResponse(csv_data, media_type="text/csv", headers={
         "Content-Disposition": "attachment; filename=paper_trades.csv"
     })

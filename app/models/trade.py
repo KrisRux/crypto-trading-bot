@@ -35,6 +35,7 @@ class Order(Base):
     __tablename__ = "orders"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=True, index=True)
     symbol = Column(String, nullable=False, index=True)
     side = Column(SAEnum(OrderSide), nullable=False)
     order_type = Column(SAEnum(OrderType), nullable=False)
@@ -58,6 +59,7 @@ class Trade(Base):
     __tablename__ = "trades"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=True, index=True)
     symbol = Column(String, nullable=False, index=True)
     side = Column(SAEnum(OrderSide), nullable=False)  # Direction of entry
     entry_price = Column(Float, nullable=False)

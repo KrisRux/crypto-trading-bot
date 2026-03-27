@@ -93,6 +93,9 @@ const translations = {
 
   // -- Skills page --
   nav_skills: { it: 'Skills', en: 'Skills' },
+
+  // -- Settings --
+  nav_settings: { it: 'Impostazioni', en: 'Settings' },
 } as const
 
 export type TranslationKey = keyof typeof translations

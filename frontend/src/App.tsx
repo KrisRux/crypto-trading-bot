@@ -6,6 +6,7 @@ import Logs from './pages/Logs'
 import Manual from './pages/Manual'
 import Skills from './pages/Skills'
 import Users from './pages/Users'
+import Settings from './pages/Settings'
 import Login from './pages/Login'
 import { api } from './api'
 import { Lang } from './i18n'
@@ -101,6 +102,7 @@ function AppContent() {
                   <NavLink to="/logs" className={navLinkClass}>{t('nav_logs')}</NavLink>
                   <NavLink to="/skills" className={navLinkClass}>{t('nav_skills')}</NavLink>
                   <NavLink to="/manual" className={navLinkClass}>{t('nav_manual')}</NavLink>
+                  {role !== 'guest' && <NavLink to="/settings" className={navLinkClass}>{t('nav_settings')}</NavLink>}
                   {isAdmin && <NavLink to="/users" className={navLinkClass}>Utenti</NavLink>}
                 </div>
               </div>
@@ -171,6 +173,11 @@ function AppContent() {
                 <NavLink to="/manual" className={navLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_manual')}
                 </NavLink>
+                {role !== 'guest' && (
+                  <NavLink to="/settings" className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                    {t('nav_settings')}
+                  </NavLink>
+                )}
                 {isAdmin && (
                   <NavLink to="/users" className={navLinkClass} onClick={() => setMenuOpen(false)}>
                     Utenti
@@ -196,6 +203,7 @@ function AppContent() {
             <Route path="/logs" element={<Logs mode={mode} />} />
             <Route path="/skills" element={<Skills />} />
             <Route path="/manual" element={<Manual />} />
+            {role !== 'guest' && <Route path="/settings" element={<Settings />} />}
             {isAdmin && <Route path="/users" element={<Users />} />}
             <Route path="/login" element={<Navigate to="/" replace />} />
           </Routes>

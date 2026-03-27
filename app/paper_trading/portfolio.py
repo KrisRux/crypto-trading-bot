@@ -1,9 +1,7 @@
 """
-Paper Trading Portfolio Manager.
+Paper Trading Portfolio Manager — per-user.
 
-Manages a virtual portfolio: tracks cash, positions, PnL, and trade history
-without ever sending real orders to the exchange. Uses real-time prices from
-the Binance data feed.
+Each user has their own virtual portfolio with separate cash, positions, and PnL.
 """
 
 import csv
@@ -13,7 +11,6 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.models.portfolio import PaperPortfolio, PaperPosition
 from app.models.trade import Trade, TradeStatus, OrderSide, Order, OrderType, OrderStatus
 
@@ -21,80 +18,74 @@ logger = logging.getLogger(__name__)
 
 
 class PaperPortfolioManager:
-    def get_or_create(self, db: Session, name: str = "default") -> PaperPortfolio:
-        """Get existing portfolio or create a new one with initial capital."""
+
+    def get_or_create(self, db: Session, user_id: int,
+                      initial_capital: float = 10000.0) -> PaperPortfolio:
         portfolio = db.query(PaperPortfolio).filter(
-            PaperPortfolio.name == name
+            PaperPortfolio.user_id == user_id
         ).first()
         if not portfolio:
             portfolio = PaperPortfolio(
-                name=name,
-                initial_capital=settings.paper_initial_capital,
-                cash_balance=settings.paper_initial_capital,
-                total_equity=settings.paper_initial_capital,
+                user_id=user_id,
+                initial_capital=initial_capital,
+                cash_balance=initial_capital,
+                total_equity=initial_capital,
             )
             db.add(portfolio)
             db.commit()
             db.refresh(portfolio)
-            logger.info("Created paper portfolio '%s' with %.2f USDT",
-                        name, settings.paper_initial_capital)
+            logger.info("Created paper portfolio for user %d with %.2f USDT",
+                        user_id, initial_capital)
         return portfolio
 
-    def open_position(self, db: Session, symbol: str, quantity: float,
-                      price: float, stop_loss: float, take_profit: float):
-        """Open a new paper position and deduct cash."""
-        portfolio = self.get_or_create(db)
+    def open_position(self, db: Session, user_id: int, symbol: str,
+                      quantity: float, price: float,
+                      stop_loss: float, take_profit: float):
+        portfolio = self.get_or_create(db, user_id)
         cost = quantity * price
 
         if cost > portfolio.cash_balance:
-            logger.warning("Insufficient paper balance: need %.2f, have %.2f",
-                           cost, portfolio.cash_balance)
+            logger.warning("User %d: insufficient paper balance (need %.2f, have %.2f)",
+                           user_id, cost, portfolio.cash_balance)
             return None
 
-        # Record the order
         order = Order(
-            symbol=symbol, side=OrderSide.BUY, order_type=OrderType.MARKET,
-            quantity=quantity, filled_price=price, status=OrderStatus.FILLED,
-            mode="paper",
+            user_id=user_id, symbol=symbol, side=OrderSide.BUY,
+            order_type=OrderType.MARKET, quantity=quantity,
+            filled_price=price, status=OrderStatus.FILLED, mode="paper",
         )
         db.add(order)
         db.flush()
 
-        # Create position
         position = PaperPosition(
-            portfolio_id=portfolio.id,
-            symbol=symbol,
-            side="BUY",
-            quantity=quantity,
-            entry_price=price,
-            current_price=price,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
+            portfolio_id=portfolio.id, user_id=user_id, symbol=symbol,
+            side="BUY", quantity=quantity, entry_price=price,
+            current_price=price, stop_loss=stop_loss, take_profit=take_profit,
         )
         db.add(position)
 
-        # Record trade
         trade = Trade(
-            symbol=symbol, side=OrderSide.BUY, entry_price=price,
-            quantity=quantity, stop_loss=stop_loss, take_profit=take_profit,
-            status=TradeStatus.OPEN, mode="paper", strategy="paper",
-            entry_order_id=order.id,
+            user_id=user_id, symbol=symbol, side=OrderSide.BUY,
+            entry_price=price, quantity=quantity, stop_loss=stop_loss,
+            take_profit=take_profit, status=TradeStatus.OPEN,
+            mode="paper", strategy="paper", entry_order_id=order.id,
         )
         db.add(trade)
 
-        # Update portfolio
         portfolio.cash_balance -= cost
         portfolio.total_equity = portfolio.cash_balance + cost
         portfolio.total_trades += 1
         db.commit()
 
-        logger.info("Paper BUY: %s qty=%.6f @ %.2f (cost=%.2f)", symbol, quantity, price, cost)
+        logger.info("User %d: Paper BUY %s qty=%.6f @ %.2f",
+                     user_id, symbol, quantity, price)
         return position
 
     def close_position(self, db: Session, position: PaperPosition,
                        exit_price: float, reason: str = "manual"):
-        """Close a paper position and record PnL."""
-        portfolio = db.query(PaperPortfolio).get(position.portfolio_id)
+        portfolio = db.query(PaperPortfolio).filter(
+            PaperPortfolio.user_id == position.user_id
+        ).first()
         if not portfolio:
             return
 
@@ -103,17 +94,17 @@ class PaperPortfolioManager:
         pnl = proceeds - cost
         pnl_pct = (pnl / cost) * 100 if cost > 0 else 0
 
-        # Record sell order
         order = Order(
-            symbol=position.symbol, side=OrderSide.SELL, order_type=OrderType.MARKET,
+            user_id=position.user_id, symbol=position.symbol,
+            side=OrderSide.SELL, order_type=OrderType.MARKET,
             quantity=position.quantity, filled_price=exit_price,
             status=OrderStatus.FILLED, mode="paper",
         )
         db.add(order)
         db.flush()
 
-        # Update the matching trade
         open_trade = db.query(Trade).filter(
+            Trade.user_id == position.user_id,
             Trade.symbol == position.symbol,
             Trade.status == TradeStatus.OPEN,
             Trade.mode == "paper",
@@ -126,7 +117,6 @@ class PaperPortfolioManager:
             open_trade.exit_order_id = order.id
             open_trade.closed_at = datetime.now(timezone.utc)
 
-        # Update portfolio
         portfolio.cash_balance += proceeds
         portfolio.total_pnl += pnl
         if pnl > 0:
@@ -134,28 +124,27 @@ class PaperPortfolioManager:
         else:
             portfolio.losing_trades += 1
 
-        # Remove position
         db.delete(position)
         db.commit()
 
-        logger.info("Paper SELL (%s): %s qty=%.6f @ %.2f PnL=%.2f (%.2f%%)",
-                     reason, position.symbol, position.quantity, exit_price, pnl, pnl_pct)
+        logger.info("User %d: Paper SELL (%s) %s qty=%.6f @ %.2f PnL=%.2f",
+                     position.user_id, reason, position.symbol,
+                     position.quantity, exit_price, pnl)
 
-    def close_all_positions(self, db: Session, symbol: str, exit_price: float):
-        """Close all open positions for a symbol."""
-        portfolio = self.get_or_create(db)
+    def close_all_positions(self, db: Session, user_id: int,
+                            symbol: str, exit_price: float):
+        portfolio = self.get_or_create(db, user_id)
         positions = db.query(PaperPosition).filter(
-            PaperPosition.portfolio_id == portfolio.id,
+            PaperPosition.user_id == user_id,
             PaperPosition.symbol == symbol,
         ).all()
         for pos in positions:
             self.close_position(db, pos, exit_price, reason="signal_sell")
 
-    def check_tp_sl_symbol(self, db: Session, symbol: str, current_price: float) -> list[tuple]:
-        """Check positions for a specific symbol for TP/SL triggers."""
-        portfolio = self.get_or_create(db)
+    def check_tp_sl_symbol(self, db: Session, user_id: int,
+                           symbol: str, current_price: float) -> list[tuple]:
         positions = db.query(PaperPosition).filter(
-            PaperPosition.portfolio_id == portfolio.id,
+            PaperPosition.user_id == user_id,
             PaperPosition.symbol == symbol,
         ).all()
 
@@ -175,50 +164,11 @@ class PaperPortfolioManager:
             db.commit()
         return closed
 
-    def check_tp_sl(self, db: Session, current_price: float) -> list[tuple]:
-        """Check all open positions for TP/SL triggers. Returns list of (position, reason)."""
-        portfolio = self.get_or_create(db)
-        positions = db.query(PaperPosition).filter(
-            PaperPosition.portfolio_id == portfolio.id,
-        ).all()
-
-        closed = []
-        for pos in positions:
-            pos.current_price = current_price
-            pos.unrealized_pnl = (current_price - pos.entry_price) * pos.quantity
-
-            if pos.take_profit and current_price >= pos.take_profit:
-                self.close_position(db, pos, current_price, "take_profit")
-                closed.append((pos, "take_profit"))
-            elif pos.stop_loss and current_price <= pos.stop_loss:
-                self.close_position(db, pos, current_price, "stop_loss")
-                closed.append((pos, "stop_loss"))
-
-        if not closed:
-            db.commit()  # persist updated current_price / unrealized_pnl
-        return closed
-
-    def update_equity(self, db: Session, prices: dict[str, float]):
-        """Recalculate total equity based on current prices."""
-        portfolio = self.get_or_create(db)
-        positions = db.query(PaperPosition).filter(
-            PaperPosition.portfolio_id == portfolio.id,
-        ).all()
-        position_value = sum(
-            pos.quantity * prices.get(pos.symbol, pos.entry_price)
-            for pos in positions
-        )
-        portfolio.total_equity = portfolio.cash_balance + position_value
-        db.commit()
-
-    def reset(self, db: Session):
-        """Reset the paper portfolio to initial state."""
-        portfolio = self.get_or_create(db)
-        # Delete all positions
+    def reset(self, db: Session, user_id: int):
+        portfolio = self.get_or_create(db, user_id)
         db.query(PaperPosition).filter(
-            PaperPosition.portfolio_id == portfolio.id
+            PaperPosition.user_id == user_id
         ).delete()
-        # Reset portfolio values
         portfolio.cash_balance = portfolio.initial_capital
         portfolio.total_equity = portfolio.initial_capital
         portfolio.total_pnl = 0.0
@@ -226,11 +176,12 @@ class PaperPortfolioManager:
         portfolio.winning_trades = 0
         portfolio.losing_trades = 0
         db.commit()
-        logger.info("Paper portfolio reset to %.2f USDT", portfolio.initial_capital)
+        logger.info("User %d: paper portfolio reset", user_id)
 
-    def export_trades_csv(self, db: Session) -> str:
-        """Export all paper trades to a CSV string."""
-        trades = db.query(Trade).filter(Trade.mode == "paper").order_by(Trade.opened_at).all()
+    def export_trades_csv(self, db: Session, user_id: int) -> str:
+        trades = db.query(Trade).filter(
+            Trade.user_id == user_id, Trade.mode == "paper"
+        ).order_by(Trade.opened_at).all()
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow([

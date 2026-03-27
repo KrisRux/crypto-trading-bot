@@ -1,5 +1,6 @@
 """
 SQLAlchemy models for paper trading portfolio.
+Each user has their own portfolio.
 """
 
 from datetime import datetime, timezone
@@ -8,14 +9,14 @@ from app.database import Base
 
 
 class PaperPortfolio(Base):
-    """Virtual portfolio state for paper trading."""
+    """Virtual portfolio state for paper trading — one per user."""
     __tablename__ = "paper_portfolios"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, default="default", unique=True)
+    user_id = Column(Integer, nullable=False, index=True, unique=True)
     initial_capital = Column(Float, nullable=False)
-    cash_balance = Column(Float, nullable=False)  # Available USDT
-    total_equity = Column(Float, nullable=False)  # Cash + value of positions
+    cash_balance = Column(Float, nullable=False)
+    total_equity = Column(Float, nullable=False)
     total_pnl = Column(Float, default=0.0)
     total_trades = Column(Integer, default=0)
     winning_trades = Column(Integer, default=0)
@@ -31,8 +32,9 @@ class PaperPosition(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     portfolio_id = Column(Integer, nullable=False)
+    user_id = Column(Integer, nullable=False, index=True)
     symbol = Column(String, nullable=False, index=True)
-    side = Column(String, nullable=False)  # BUY (long)
+    side = Column(String, nullable=False)
     quantity = Column(Float, nullable=False)
     entry_price = Column(Float, nullable=False)
     current_price = Column(Float, nullable=True)
