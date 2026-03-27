@@ -9,7 +9,7 @@ interface Props {
 }
 
 export default function Dashboard({ mode }: Props) {
-  const { t } = useLang()
+  const { lang, t } = useLang()
 
   const fetchBalance = useCallback(() => api.getBalance(), [])
   const fetchPositions = useCallback(() => api.getPositions(), [])
@@ -47,8 +47,26 @@ export default function Dashboard({ mode }: Props) {
     }
   }
 
+  const dataMode = balance?.mode || 'paper'
+
   return (
     <div className="space-y-6">
+      {/* Data mode indicator */}
+      <div className="flex items-center gap-2">
+        <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
+          dataMode === 'live'
+            ? 'bg-red-900/50 text-red-300 border border-red-800/50'
+            : 'bg-emerald-900/50 text-emerald-300 border border-emerald-800/50'
+        }`}>
+          {dataMode === 'live' ? 'Live' : 'Paper'}
+        </span>
+        <span className="text-xs text-gray-500">
+          {dataMode === 'live'
+            ? (lang === 'it' ? 'Dati reali dal tuo conto Binance' : 'Real data from your Binance account')
+            : (lang === 'it' ? 'Dati simulati — portafoglio virtuale' : 'Simulated data — virtual portfolio')
+          }
+        </span>
+      </div>
       {/* Stats row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label={t('cash_balance')} value={balance?.cash_balance ?? 0} sub="USDT" />
@@ -74,7 +92,7 @@ export default function Dashboard({ mode }: Props) {
       <div className="space-y-2">
         <div className="flex flex-wrap gap-4 items-center text-sm text-gray-400">
           <span>{t('engine')}: {engine?.running ? t('running') : t('stopped')}</span>
-          {mode === 'paper' && (
+          {dataMode === 'paper' && (
             <>
               <button onClick={handleReset}
                 className="px-3 py-1 bg-yellow-700 hover:bg-yellow-600 text-white text-xs rounded">

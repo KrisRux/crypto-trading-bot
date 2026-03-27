@@ -384,9 +384,11 @@ async def get_positions(db: Session = Depends(get_db), user_info: dict = Depends
 @router.get("/orders", response_model=list[OrderResponse])
 def get_orders(db: Session = Depends(get_db), limit: int = 50,
                user_info: dict = Depends(require_auth)):
-    user_id = _get_user_id(user_info, db)
+    user = _get_user_obj(user_info, db)
+    user_mode = user.trading_mode or "paper"
     orders = db.query(Order).filter(
-        Order.user_id == user_id
+        Order.user_id == user.id,
+        Order.mode == user_mode,
     ).order_by(Order.created_at.desc()).limit(limit).all()
     return [
         OrderResponse(
@@ -402,9 +404,11 @@ def get_orders(db: Session = Depends(get_db), limit: int = 50,
 @router.get("/trades", response_model=list[TradeResponse])
 def get_trades(db: Session = Depends(get_db), limit: int = 50,
                user_info: dict = Depends(require_auth)):
-    user_id = _get_user_id(user_info, db)
+    user = _get_user_obj(user_info, db)
+    user_mode = user.trading_mode or "paper"
     trades = db.query(Trade).filter(
-        Trade.user_id == user_id
+        Trade.user_id == user.id,
+        Trade.mode == user_mode,
     ).order_by(Trade.opened_at.desc()).limit(limit).all()
     return [
         TradeResponse(
