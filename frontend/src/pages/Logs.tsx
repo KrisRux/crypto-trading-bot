@@ -3,11 +3,7 @@ import { api, SignalItem, OrderItem } from '../api'
 import { usePolling } from '../hooks/usePolling'
 import { useLang } from '../hooks/useLang'
 
-interface Props {
-  mode: string
-}
-
-export default function Logs({ mode }: Props) {
+export default function Logs() {
   const { t } = useLang()
 
   const fetchSignals = useCallback(() => api.getSignals(), [])
@@ -66,7 +62,7 @@ export default function Logs({ mode }: Props) {
       {/* Orders */}
       <section>
         <h2 className="text-lg font-semibold text-white mb-3">
-          {t('order_history')} ({mode === 'live' ? 'Live' : 'Paper'})
+          {t('order_history')}
         </h2>
         {orders && orders.length > 0 ? (
           <div className="overflow-x-auto">

@@ -4,11 +4,7 @@ import { usePolling } from '../hooks/usePolling'
 import { useLang } from '../hooks/useLang'
 import StatCard from '../components/StatCard'
 
-interface Props {
-  mode: string
-}
-
-export default function Dashboard({ mode }: Props) {
+export default function Dashboard() {
   const { lang, t } = useLang()
 
   const fetchBalance = useCallback(() => api.getBalance(), [])
@@ -21,8 +17,10 @@ export default function Dashboard({ mode }: Props) {
   const [trades] = usePolling<TradeItem[]>(fetchTrades, 10000)
   const [engine] = usePolling<EngineStatus>(fetchEngine, 5000)
 
+  const dataMode = balance?.mode || 'paper'
+
   const handleReset = async () => {
-    if (mode !== 'paper') return
+    if (dataMode !== 'paper') return
     if (!confirm(t('reset_confirm'))) return
     try {
       await api.resetPaperPortfolio()
@@ -46,8 +44,6 @@ export default function Dashboard({ mode }: Props) {
       alert(`${t('export_failed')}: ${e}`)
     }
   }
-
-  const dataMode = balance?.mode || 'paper'
 
   return (
     <div className="space-y-6">

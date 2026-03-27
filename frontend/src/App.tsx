@@ -33,7 +33,6 @@ function UtcClock() {
 }
 
 function AppContent() {
-  const [mode, setMode] = useState<string>('paper')
   const [menuOpen, setMenuOpen] = useState(false)
   const { lang, setLang, t } = useLang()
   const navigate = useNavigate()
@@ -82,22 +81,6 @@ function AppContent() {
 
   // Auto-logout on inactivity
   useIdleTimeout(sessionTimeout, logout, isAuthenticated)
-
-  useEffect(() => {
-    if (isAuthenticated) {
-      api.getMode().then((d) => setMode(d.mode)).catch(() => {})
-    }
-  }, [isAuthenticated])
-
-  const toggleMode = async () => {
-    const newMode = mode === 'paper' ? 'live' : 'paper'
-    try {
-      const res = await api.switchMode(newMode)
-      setMode(res.mode)
-    } catch (e) {
-      alert(`${t('mode_switch_failed')}: ${e}`)
-    }
-  }
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
@@ -148,18 +131,6 @@ function AppContent() {
                   title={lang === 'it' ? 'Switch to English' : 'Passa a Italiano'}
                 >
                   {lang === 'it' ? 'EN' : 'IT'}
-                </button>
-
-                {/* Mode badge */}
-                <button
-                  onClick={toggleMode}
-                  className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider transition-colors ${
-                    mode === 'live'
-                      ? 'bg-red-600 text-white hover:bg-red-700'
-                      : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                  }`}
-                >
-                  {mode === 'live' ? t('mode_live') : t('mode_paper')}
                 </button>
 
                 {/* Logout */}
@@ -220,19 +191,12 @@ function AppContent() {
           </div>
         </nav>
 
-        {/* Mode banner */}
-        <div className={`text-center py-1 text-xs font-semibold ${
-          mode === 'live' ? 'bg-red-900/50 text-red-300' : 'bg-emerald-900/50 text-emerald-300'
-        }`}>
-          {mode === 'live' ? t('mode_banner_live') : t('mode_banner_paper')}
-        </div>
-
         {/* Page content */}
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <Routes>
-            <Route path="/" element={<Dashboard mode={mode} />} />
+            <Route path="/" element={<Dashboard />} />
             <Route path="/strategies" element={<Strategies />} />
-            <Route path="/logs" element={<Logs mode={mode} />} />
+            <Route path="/logs" element={<Logs />} />
             <Route path="/skills" element={<Skills />} />
             <Route path="/manual" element={<Manual />} />
             {role !== 'guest' && <Route path="/settings" element={<Settings />} />}
