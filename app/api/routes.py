@@ -190,6 +190,7 @@ def _get_user_obj(user_info: dict, db: Session) -> User:
 def get_api_keys(db: Session = Depends(get_db), user_info: dict = Depends(require_auth)):
     user = _get_user_obj(user_info, db)
     return {
+        "trading_enabled": user.trading_enabled,
         "trading_mode": user.trading_mode,
         "paper_initial_capital": user.paper_initial_capital,
         "has_live_keys": user.has_api_keys(live=True),
@@ -203,6 +204,8 @@ def get_api_keys(db: Session = Depends(get_db), user_info: dict = Depends(requir
 def update_api_keys(body: dict, db: Session = Depends(get_db),
                     user_info: dict = Depends(require_auth)):
     user = _get_user_obj(user_info, db)
+    if "trading_enabled" in body:
+        user.trading_enabled = bool(body["trading_enabled"])
     if "trading_mode" in body:
         if body["trading_mode"] not in ("paper", "live"):
             raise HTTPException(400, "Mode must be 'paper' or 'live'")

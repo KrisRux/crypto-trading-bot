@@ -4,6 +4,7 @@ import { useLang } from '../hooks/useLang'
 import { useAuth } from '../hooks/useAuth'
 
 interface KeysState {
+  trading_enabled: boolean
   trading_mode: string
   paper_initial_capital: number
   has_live_keys: boolean
@@ -19,6 +20,7 @@ export default function Settings() {
 
   const [keys, setKeys] = useState<KeysState | null>(null)
   const [form, setForm] = useState({
+    trading_enabled: false,
     trading_mode: 'paper',
     paper_initial_capital: 10000,
     binance_api_key: '',
@@ -48,6 +50,7 @@ export default function Settings() {
         setKeys(data)
         setForm((f) => ({
           ...f,
+          trading_enabled: data.trading_enabled || false,
           trading_mode: data.trading_mode || 'paper',
           paper_initial_capital: data.paper_initial_capital || 10000,
         }))
@@ -62,6 +65,7 @@ export default function Settings() {
     setError('')
     try {
       const body: Record<string, unknown> = {
+        trading_enabled: form.trading_enabled,
         trading_mode: form.trading_mode,
         paper_initial_capital: form.paper_initial_capital,
       }
@@ -114,6 +118,41 @@ export default function Settings() {
           )}
         </p>
       </div>
+
+      {/* Enable Trading */}
+      <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-white">
+              {t('Abilita Trading', 'Enable Trading')}
+            </h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {t(
+                'Il bot eseguira operazioni sul tuo portafoglio solo se il trading e abilitato.',
+                'The bot will only execute trades on your portfolio when trading is enabled.'
+              )}
+            </p>
+          </div>
+          <button
+            onClick={() => setForm({ ...form, trading_enabled: !form.trading_enabled })}
+            className={`relative w-12 h-6 rounded-full transition-colors ${
+              form.trading_enabled ? 'bg-emerald-600' : 'bg-gray-700'
+            }`}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+              form.trading_enabled ? 'translate-x-6' : ''
+            }`} />
+          </button>
+        </div>
+        {!form.trading_enabled && (
+          <div className="bg-yellow-900/30 border border-yellow-800/50 rounded-lg p-3 text-xs text-yellow-300">
+            {t(
+              'Trading disabilitato. Il bot analizza il mercato ma non apre posizioni per il tuo account.',
+              'Trading disabled. The bot analyses the market but does not open positions for your account.'
+            )}
+          </div>
+        )}
+      </section>
 
       {/* Trading Mode */}
       <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">

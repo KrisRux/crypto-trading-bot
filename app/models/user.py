@@ -60,6 +60,7 @@ class User(Base):
     display_name = Column(String, nullable=True)
     role = Column(String, default="guest")  # admin, user, guest
     is_active = Column(Boolean, default=True)
+    trading_enabled = Column(Boolean, default=False)  # Must opt-in explicitly
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_login = Column(DateTime, nullable=True)
 

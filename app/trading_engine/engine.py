@@ -261,8 +261,11 @@ class TradingEngine:
     async def run_cycle(self):
         db = SessionLocal()
         try:
-            # Get all active users
-            active_users = db.query(User).filter(User.is_active == True).all()
+            # Get only users who have explicitly enabled trading
+            active_users = db.query(User).filter(
+                User.is_active == True,
+                User.trading_enabled == True,
+            ).all()
 
             for symbol in self.symbols:
                 try:
@@ -294,8 +297,6 @@ class TradingEngine:
 
                     # Execute for each active user
                     for user in active_users:
-                        if user.role == "guest":
-                            continue  # Guests don't trade
                         try:
                             await self._execute_for_user(
                                 db, user, symbol, signals, current_price
@@ -315,14 +316,15 @@ class TradingEngine:
         self.running = True
         logger.info("Trading engine starting for %s", ", ".join(self.symbols))
 
-        # Init paper portfolios for all active users
+        # Init paper portfolios for users with trading enabled
         db = SessionLocal()
-        users = db.query(User).filter(User.is_active == True).all()
+        users = db.query(User).filter(
+            User.is_active == True, User.trading_enabled == True
+        ).all()
         for user in users:
-            if user.role != "guest":
-                self.paper_portfolio.get_or_create(
-                    db, user.id, user.paper_initial_capital
-                )
+            self.paper_portfolio.get_or_create(
+                db, user.id, user.paper_initial_capital
+            )
         db.close()
 
         streams = [f"{s.lower()}@trade" for s in self.symbols]
