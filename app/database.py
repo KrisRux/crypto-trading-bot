@@ -30,6 +30,25 @@ def get_db():
 
 
 def init_db():
-    """Create all tables."""
-    from app.models import trade, portfolio  # noqa: F401 – import so models register
+    """Create all tables and seed admin user if needed."""
+    from app.models import trade, portfolio, user  # noqa: F401
+    from app.models.user import User, hash_password
+    from app.config import settings
+
     Base.metadata.create_all(bind=engine)
+
+    # Seed the admin user from .env if it doesn't exist yet
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(User.username == settings.auth_username).first()
+        if not admin:
+            admin = User(
+                username=settings.auth_username,
+                password_hash=hash_password(settings.auth_password),
+                display_name="Admin",
+                role="admin",
+            )
+            db.add(admin)
+            db.commit()
+    finally:
+        db.close()

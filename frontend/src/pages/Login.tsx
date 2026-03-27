@@ -19,7 +19,7 @@ export default function Login() {
     setLoading(true)
     try {
       const res = await api.login(username, password)
-      login(res.access_token)
+      login(res.access_token, res.role, res.display_name)
     } catch {
       setError(t('Credenziali non valide', 'Invalid credentials'))
     } finally {

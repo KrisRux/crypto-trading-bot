@@ -42,6 +42,8 @@ export interface LoginResponse {
   access_token: string
   token_type: string
   expires_in: number
+  role: string
+  display_name: string
 }
 
 // -- Types --
@@ -129,6 +131,16 @@ export interface EngineStatus {
   strategies_count: number
 }
 
+export interface UserItem {
+  id: number
+  username: string
+  display_name: string | null
+  role: string
+  is_active: boolean
+  created_at: string | null
+  last_login: string | null
+}
+
 export interface PriceData {
   symbol: string
   price: number
@@ -177,6 +189,14 @@ export const api = {
   getEngineStatus: () => request<EngineStatus>('/engine/status'),
   resetPaperPortfolio: () => request('/paper/reset', { method: 'POST' }),
   exportTrades: () => request<string>('/paper/export'),
+  getMe: () => request<{ username: string; display_name: string; role: string }>('/me'),
+  getUsers: () => request<UserItem[]>('/users'),
+  createUser: (data: { username: string; password: string; display_name?: string; role: string }) =>
+    request<UserItem>('/users', { method: 'POST', body: JSON.stringify(data) }),
+  updateUser: (id: number, data: { display_name?: string; role?: string; password?: string; is_active?: boolean }) =>
+    request<UserItem>(`/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteUser: (id: number) =>
+    request(`/users/${id}`, { method: 'DELETE' }),
   addSymbol: (symbol: string) =>
     request<{ symbols: string[] }>('/symbols/add', {
       method: 'POST', body: JSON.stringify({ symbol }),

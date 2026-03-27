@@ -17,13 +17,15 @@ from app.api.schemas import (
     RiskParams, SignalResponse, PriceResponse,
 )
 from app.api.auth import (
-    LoginRequest, TokenResponse, verify_credentials, create_token, require_auth,
+    LoginRequest, TokenResponse, UserCreate, UserUpdate, UserInfo,
+    create_token, require_auth, require_admin, require_write,
 )
+from app.models.user import User, verify_password, hash_password
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
-# The trading engine and skills library are injected at startup (see main.py)
 _engine = None
 _skills_library = None
 
@@ -42,22 +44,121 @@ def get_engine():
 
 # ------------------------------------------------------------------ Auth
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest):
-    if not verify_credentials(body.username, body.password):
+def login(body: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(
+        User.username == body.username, User.is_active == True
+    ).first()
+    if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(401, "Invalid username or password")
-    token, expires_in = create_token(body.username)
-    logger.info("User '%s' logged in", body.username)
-    return TokenResponse(access_token=token, expires_in=expires_in)
+    token, expires_in = create_token(user.username, user.role)
+    user.last_login = datetime.now(timezone.utc)
+    db.commit()
+    logger.info("User '%s' (%s) logged in", user.username, user.role)
+    return TokenResponse(
+        access_token=token, expires_in=expires_in,
+        role=user.role, display_name=user.display_name or user.username,
+    )
+
+
+@router.get("/me")
+def get_me(user: dict = Depends(require_auth), db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.username == user["username"]).first()
+    if not db_user:
+        raise HTTPException(404, "User not found")
+    return {
+        "username": db_user.username,
+        "display_name": db_user.display_name or db_user.username,
+        "role": db_user.role,
+    }
+
+
+# ------------------------------------------------------------------ User Management (admin only)
+@router.get("/users", response_model=list[UserInfo])
+def list_users(db: Session = Depends(get_db), _admin: dict = Depends(require_admin)):
+    users = db.query(User).order_by(User.created_at).all()
+    return [
+        UserInfo(
+            id=u.id, username=u.username, display_name=u.display_name,
+            role=u.role, is_active=u.is_active,
+            created_at=u.created_at, last_login=u.last_login,
+        ) for u in users
+    ]
+
+
+@router.post("/users", response_model=UserInfo)
+def create_user(body: UserCreate, db: Session = Depends(get_db),
+                _admin: dict = Depends(require_admin)):
+    if body.role not in ("admin", "user", "guest"):
+        raise HTTPException(400, "Role must be admin, user, or guest")
+    if db.query(User).filter(User.username == body.username).first():
+        raise HTTPException(409, f"Username '{body.username}' already exists")
+    user = User(
+        username=body.username,
+        password_hash=hash_password(body.password),
+        display_name=body.display_name or body.username,
+        role=body.role,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    logger.info("Admin created user '%s' with role '%s'", user.username, user.role)
+    return UserInfo(
+        id=user.id, username=user.username, display_name=user.display_name,
+        role=user.role, is_active=user.is_active,
+        created_at=user.created_at, last_login=user.last_login,
+    )
+
+
+@router.put("/users/{user_id}", response_model=UserInfo)
+def update_user(user_id: int, body: UserUpdate, db: Session = Depends(get_db),
+                _admin: dict = Depends(require_admin)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    if body.display_name is not None:
+        user.display_name = body.display_name
+    if body.role is not None:
+        if body.role not in ("admin", "user", "guest"):
+            raise HTTPException(400, "Role must be admin, user, or guest")
+        user.role = body.role
+    if body.password is not None:
+        user.password_hash = hash_password(body.password)
+    if body.is_active is not None:
+        user.is_active = body.is_active
+    db.commit()
+    db.refresh(user)
+    logger.info("Admin updated user '%s'", user.username)
+    return UserInfo(
+        id=user.id, username=user.username, display_name=user.display_name,
+        role=user.role, is_active=user.is_active,
+        created_at=user.created_at, last_login=user.last_login,
+    )
+
+
+@router.delete("/users/{user_id}")
+def delete_user(user_id: int, db: Session = Depends(get_db),
+                _admin: dict = Depends(require_admin)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    if user.role == "admin":
+        admin_count = db.query(User).filter(User.role == "admin", User.is_active == True).count()
+        if admin_count <= 1:
+            raise HTTPException(400, "Cannot delete the last admin")
+    db.delete(user)
+    db.commit()
+    logger.info("Admin deleted user '%s'", user.username)
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------ Mode
 @router.get("/mode", response_model=ModeResponse)
-def get_mode(_user: str = Depends(require_auth)):
+def get_mode(_user: dict = Depends(require_auth)):
     return {"mode": get_engine().mode}
 
 
 @router.post("/mode", response_model=ModeResponse)
-def switch_mode(body: ModeSwitch, _user: str = Depends(require_auth)):
+def switch_mode(body: ModeSwitch, _user: dict = Depends(require_admin)):
     engine = get_engine()
     try:
         engine.switch_mode(body.mode)
@@ -69,7 +170,7 @@ def switch_mode(body: ModeSwitch, _user: str = Depends(require_auth)):
 
 # ------------------------------------------------------------------ Dashboard
 @router.get("/balance", response_model=BalanceResponse)
-def get_balance(db: Session = Depends(get_db), _user: str = Depends(require_auth)):
+def get_balance(db: Session = Depends(get_db), _user: dict = Depends(require_auth)):
     engine = get_engine()
     if engine.mode == "paper":
         portfolio = engine.paper_portfolio.get_or_create(db)
@@ -100,7 +201,7 @@ def get_balance(db: Session = Depends(get_db), _user: str = Depends(require_auth
 
 
 @router.get("/positions", response_model=list[PositionResponse])
-def get_positions(db: Session = Depends(get_db), _user: str = Depends(require_auth)):
+def get_positions(db: Session = Depends(get_db), _user: dict = Depends(require_auth)):
     engine = get_engine()
     if engine.mode == "paper":
         portfolio = engine.paper_portfolio.get_or_create(db)
@@ -133,7 +234,7 @@ def get_positions(db: Session = Depends(get_db), _user: str = Depends(require_au
 
 
 @router.get("/orders", response_model=list[OrderResponse])
-def get_orders(db: Session = Depends(get_db), limit: int = 50, _user: str = Depends(require_auth)):
+def get_orders(db: Session = Depends(get_db), limit: int = 50, _user: dict = Depends(require_auth)):
     engine = get_engine()
     orders = db.query(Order).filter(
         Order.mode == engine.mode
@@ -150,7 +251,7 @@ def get_orders(db: Session = Depends(get_db), limit: int = 50, _user: str = Depe
 
 
 @router.get("/trades", response_model=list[TradeResponse])
-def get_trades(db: Session = Depends(get_db), limit: int = 50, _user: str = Depends(require_auth)):
+def get_trades(db: Session = Depends(get_db), limit: int = 50, _user: dict = Depends(require_auth)):
     engine = get_engine()
     trades = db.query(Trade).filter(
         Trade.mode == engine.mode
@@ -169,7 +270,7 @@ def get_trades(db: Session = Depends(get_db), limit: int = 50, _user: str = Depe
 
 # ------------------------------------------------------------------ Price
 @router.get("/price/{symbol}", response_model=PriceResponse)
-async def get_price(symbol: str, _user: str = Depends(require_auth)):
+async def get_price(symbol: str, _user: dict = Depends(require_auth)):
     engine = get_engine()
     try:
         data = await engine.market_client.get_ticker_price(symbol.upper())
@@ -180,7 +281,7 @@ async def get_price(symbol: str, _user: str = Depends(require_auth)):
 
 # ------------------------------------------------------------------ Strategies
 @router.get("/strategies", response_model=list[StrategyInfo])
-def get_strategies(_user: str = Depends(require_auth)):
+def get_strategies(_user: dict = Depends(require_auth)):
     engine = get_engine()
     return [
         StrategyInfo(name=s.name, enabled=s.enabled, params=s.get_params())
@@ -189,7 +290,7 @@ def get_strategies(_user: str = Depends(require_auth)):
 
 
 @router.put("/strategies")
-def update_strategy(body: StrategyUpdate, _user: str = Depends(require_auth)):
+def update_strategy(body: StrategyUpdate, _user: dict = Depends(require_write)):
     engine = get_engine()
     strat = next((s for s in engine.strategies if s.name == body.name), None)
     if not strat:
@@ -205,12 +306,12 @@ def update_strategy(body: StrategyUpdate, _user: str = Depends(require_auth)):
 
 # ------------------------------------------------------------------ Risk
 @router.get("/risk", response_model=RiskParams)
-def get_risk_params(_user: str = Depends(require_auth)):
+def get_risk_params(_user: dict = Depends(require_auth)):
     return get_engine().risk_manager.get_params()
 
 
 @router.put("/risk", response_model=RiskParams)
-def update_risk_params(body: RiskParams, _user: str = Depends(require_auth)):
+def update_risk_params(body: RiskParams, _user: dict = Depends(require_write)):
     engine = get_engine()
     engine.risk_manager.set_params(body.model_dump())
     return engine.risk_manager.get_params()
@@ -218,14 +319,14 @@ def update_risk_params(body: RiskParams, _user: str = Depends(require_auth)):
 
 # ------------------------------------------------------------------ Signals log
 @router.get("/signals", response_model=list[SignalResponse])
-def get_signals(_user: str = Depends(require_auth)):
+def get_signals(_user: dict = Depends(require_auth)):
     engine = get_engine()
     return engine.signals_log[-50:]
 
 
 # ------------------------------------------------------------------ Paper trading extras
 @router.post("/paper/reset")
-def reset_paper_portfolio(db: Session = Depends(get_db), _user: str = Depends(require_auth)):
+def reset_paper_portfolio(db: Session = Depends(get_db), _user: dict = Depends(require_admin)):
     engine = get_engine()
     if engine.mode != "paper":
         raise HTTPException(400, "Can only reset in paper mode")
@@ -234,7 +335,7 @@ def reset_paper_portfolio(db: Session = Depends(get_db), _user: str = Depends(re
 
 
 @router.get("/paper/export")
-def export_paper_trades(db: Session = Depends(get_db), _user: str = Depends(require_auth)):
+def export_paper_trades(db: Session = Depends(get_db), _user: dict = Depends(require_auth)):
     engine = get_engine()
     csv_data = engine.paper_portfolio.export_trades_csv(db)
     return PlainTextResponse(csv_data, media_type="text/csv", headers={
@@ -244,7 +345,7 @@ def export_paper_trades(db: Session = Depends(get_db), _user: str = Depends(requ
 
 # ------------------------------------------------------------------ Engine control
 @router.get("/engine/status")
-def engine_status(_user: str = Depends(require_auth)):
+def engine_status(_user: dict = Depends(require_auth)):
     engine = get_engine()
     return {
         "running": engine.running,
@@ -256,7 +357,7 @@ def engine_status(_user: str = Depends(require_auth)):
 
 
 @router.post("/symbols/add")
-def add_symbol(body: dict, _user: str = Depends(require_auth)):
+def add_symbol(body: dict, _user: dict = Depends(require_admin)):
     engine = get_engine()
     symbol = body.get("symbol", "").upper()
     if not symbol:
@@ -266,7 +367,7 @@ def add_symbol(body: dict, _user: str = Depends(require_auth)):
 
 
 @router.post("/symbols/remove")
-def remove_symbol(body: dict, _user: str = Depends(require_auth)):
+def remove_symbol(body: dict, _user: dict = Depends(require_admin)):
     engine = get_engine()
     symbol = body.get("symbol", "").upper()
     if not symbol:
@@ -279,14 +380,14 @@ def remove_symbol(body: dict, _user: str = Depends(require_auth)):
 
 # ------------------------------------------------------------------ Embient Skills
 @router.get("/skills/summary")
-def skills_summary(_user: str = Depends(require_auth)):
+def skills_summary(_user: dict = Depends(require_auth)):
     if not _skills_library:
         return {"total_skills": 0, "categories": {}}
     return _skills_library.summary()
 
 
 @router.get("/skills")
-def list_skills(category: str | None = None, _user: str = Depends(require_auth)):
+def list_skills(category: str | None = None, _user: dict = Depends(require_auth)):
     if not _skills_library:
         return []
     if category:
@@ -295,7 +396,7 @@ def list_skills(category: str | None = None, _user: str = Depends(require_auth))
 
 
 @router.get("/skills/{name}")
-def get_skill(name: str, _user: str = Depends(require_auth)):
+def get_skill(name: str, _user: dict = Depends(require_auth)):
     if not _skills_library:
         raise HTTPException(404, "Skills library not loaded")
     skill = _skills_library.get(name)

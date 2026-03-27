@@ -5,6 +5,7 @@ import Strategies from './pages/Strategies'
 import Logs from './pages/Logs'
 import Manual from './pages/Manual'
 import Skills from './pages/Skills'
+import Users from './pages/Users'
 import Login from './pages/Login'
 import { api } from './api'
 import { Lang } from './i18n'
@@ -21,17 +22,32 @@ function AppContent() {
   const [token, setToken] = useState<string | null>(() =>
     localStorage.getItem('auth_token')
   )
+  const [role, setRole] = useState<string>(() =>
+    localStorage.getItem('auth_role') || ''
+  )
+  const [displayName, setDisplayName] = useState<string>(() =>
+    localStorage.getItem('auth_name') || ''
+  )
   const isAuthenticated = !!token
+  const isAdmin = role === 'admin'
 
-  const login = useCallback((newToken: string) => {
+  const login = useCallback((newToken: string, newRole: string, newName: string) => {
     localStorage.setItem('auth_token', newToken)
+    localStorage.setItem('auth_role', newRole)
+    localStorage.setItem('auth_name', newName)
     setToken(newToken)
+    setRole(newRole)
+    setDisplayName(newName)
     navigate('/')
   }, [navigate])
 
   const logout = useCallback(() => {
     localStorage.removeItem('auth_token')
+    localStorage.removeItem('auth_role')
+    localStorage.removeItem('auth_name')
     setToken(null)
+    setRole('')
+    setDisplayName('')
     navigate('/login')
   }, [navigate])
 
@@ -61,7 +77,7 @@ function AppContent() {
   // If not authenticated, show login
   if (!isAuthenticated) {
     return (
-      <AuthContext.Provider value={{ token, login, logout, isAuthenticated }}>
+      <AuthContext.Provider value={{ token, role, displayName, login, logout, isAuthenticated, isAdmin }}>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
@@ -71,7 +87,7 @@ function AppContent() {
   }
 
   return (
-    <AuthContext.Provider value={{ token, login, logout, isAuthenticated }}>
+    <AuthContext.Provider value={{ token, role, displayName, login, logout, isAuthenticated, isAdmin }}>
       <div className="min-h-screen bg-gray-950">
         {/* Navigation bar */}
         <nav className="bg-gray-900 border-b border-gray-800">
@@ -85,10 +101,12 @@ function AppContent() {
                   <NavLink to="/logs" className={navLinkClass}>{t('nav_logs')}</NavLink>
                   <NavLink to="/skills" className={navLinkClass}>{t('nav_skills')}</NavLink>
                   <NavLink to="/manual" className={navLinkClass}>{t('nav_manual')}</NavLink>
+                  {isAdmin && <NavLink to="/users" className={navLinkClass}>Utenti</NavLink>}
                 </div>
               </div>
 
               <div className="flex items-center gap-3">
+                <span className="hidden sm:inline text-xs text-gray-500">{displayName}</span>
                 {/* Language selector */}
                 <button
                   onClick={() => setLang(lang === 'it' ? 'en' : 'it')}
@@ -153,6 +171,11 @@ function AppContent() {
                 <NavLink to="/manual" className={navLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_manual')}
                 </NavLink>
+                {isAdmin && (
+                  <NavLink to="/users" className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                    Utenti
+                  </NavLink>
+                )}
               </div>
             )}
           </div>
@@ -173,6 +196,7 @@ function AppContent() {
             <Route path="/logs" element={<Logs mode={mode} />} />
             <Route path="/skills" element={<Skills />} />
             <Route path="/manual" element={<Manual />} />
+            {isAdmin && <Route path="/users" element={<Users />} />}
             <Route path="/login" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
