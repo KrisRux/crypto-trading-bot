@@ -257,6 +257,10 @@ async def get_balance(db: Session = Depends(get_db), user_info: dict = Depends(r
     cash_balance = 0.0
 
     # Fetch USDT balance from Binance (testnet or live)
+    # Tracked symbols (the ones the bot operates on)
+    tracked_assets = {s.replace("USDT", "") for s in engine.symbols}
+    positions_value = 0.0
+
     if user.has_api_keys(live=is_live):
         client = BinanceRestClient(
             api_key=user.get_api_key(live=is_live),
@@ -265,22 +269,21 @@ async def get_balance(db: Session = Depends(get_db), user_info: dict = Depends(r
         )
         try:
             account = await client.get_account()
-            usdt = next((b for b in account.get("balances", []) if b["asset"] == "USDT"), None)
-            cash_balance = float(usdt["free"]) if usdt else 0.0
+            for b in account.get("balances", []):
+                asset = b["asset"]
+                qty = float(b.get("free", 0)) + float(b.get("locked", 0))
+                if asset == "USDT":
+                    cash_balance = float(b["free"])
+                elif asset in tracked_assets and qty > 0:
+                    symbol = asset + "USDT"
+                    price = engine.last_prices.get(symbol, 0)
+                    positions_value += qty * price
         except Exception as exc:
             logger.warning("Failed to fetch Binance balance for user %d: %s",
                            user.id, exc)
         finally:
             await client.close()
 
-    # Equity = USDT + value of bot's open positions at current prices
-    open_trades = db.query(Trade).filter(
-        Trade.user_id == user.id, Trade.mode == user_mode,
-        Trade.status == TradeStatus.OPEN,
-    ).all()
-    positions_value = sum(
-        t.quantity * engine.last_prices.get(t.symbol, 0) for t in open_trades
-    )
     total_equity = cash_balance + positions_value
 
     trades = db.query(Trade).filter(
