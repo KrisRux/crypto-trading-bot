@@ -1,24 +1,47 @@
 /**
  * API client for communicating with the FastAPI backend.
+ * All requests (except login) include the JWT token from localStorage.
  */
 
 const BASE = '/api'
 
+function getToken(): string | null {
+  return localStorage.getItem('auth_token')
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
+  const token = getToken()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options?.headers as Record<string, string> || {}),
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+
+  const res = await fetch(`${BASE}${path}`, { ...options, headers })
+
+  if (res.status === 401) {
+    // Token expired or invalid — clear and redirect to login
+    localStorage.removeItem('auth_token')
+    window.location.href = '/login'
+    throw new Error('Session expired')
+  }
   if (!res.ok) {
     const text = await res.text()
     throw new Error(`API error ${res.status}: ${text}`)
   }
-  // Handle CSV / plain text responses
   const ct = res.headers.get('content-type') || ''
   if (ct.includes('text/csv') || ct.includes('text/plain')) {
     return (await res.text()) as unknown as T
   }
   return res.json()
+}
+
+export interface LoginResponse {
+  access_token: string
+  token_type: string
+  expires_in: number
 }
 
 // -- Types --
@@ -128,6 +151,11 @@ export interface SkillsSummary {
 
 // -- API calls --
 export const api = {
+  login: (username: string, password: string) =>
+    request<LoginResponse>('/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    }),
   getMode: () => request<{ mode: string }>('/mode'),
   switchMode: (mode: string) =>
     request<{ mode: string }>('/mode', {

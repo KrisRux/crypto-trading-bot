@@ -1,5 +1,6 @@
 """
 FastAPI routes for the trading bot web application.
+All routes (except /api/login) require JWT authentication.
 """
 
 import logging
@@ -14,6 +15,9 @@ from app.api.schemas import (
     ModeResponse, ModeSwitch, BalanceResponse, PositionResponse,
     OrderResponse, TradeResponse, StrategyInfo, StrategyUpdate,
     RiskParams, SignalResponse, PriceResponse,
+)
+from app.api.auth import (
+    LoginRequest, TokenResponse, verify_credentials, create_token, require_auth,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,14 +40,24 @@ def get_engine():
     return _engine
 
 
+# ------------------------------------------------------------------ Auth
+@router.post("/login", response_model=TokenResponse)
+def login(body: LoginRequest):
+    if not verify_credentials(body.username, body.password):
+        raise HTTPException(401, "Invalid username or password")
+    token, expires_in = create_token(body.username)
+    logger.info("User '%s' logged in", body.username)
+    return TokenResponse(access_token=token, expires_in=expires_in)
+
+
 # ------------------------------------------------------------------ Mode
 @router.get("/mode", response_model=ModeResponse)
-def get_mode():
+def get_mode(_user: str = Depends(require_auth)):
     return {"mode": get_engine().mode}
 
 
 @router.post("/mode", response_model=ModeResponse)
-def switch_mode(body: ModeSwitch):
+def switch_mode(body: ModeSwitch, _user: str = Depends(require_auth)):
     engine = get_engine()
     try:
         engine.switch_mode(body.mode)
@@ -55,7 +69,7 @@ def switch_mode(body: ModeSwitch):
 
 # ------------------------------------------------------------------ Dashboard
 @router.get("/balance", response_model=BalanceResponse)
-def get_balance(db: Session = Depends(get_db)):
+def get_balance(db: Session = Depends(get_db), _user: str = Depends(require_auth)):
     engine = get_engine()
     if engine.mode == "paper":
         portfolio = engine.paper_portfolio.get_or_create(db)
@@ -86,7 +100,7 @@ def get_balance(db: Session = Depends(get_db)):
 
 
 @router.get("/positions", response_model=list[PositionResponse])
-def get_positions(db: Session = Depends(get_db)):
+def get_positions(db: Session = Depends(get_db), _user: str = Depends(require_auth)):
     engine = get_engine()
     if engine.mode == "paper":
         portfolio = engine.paper_portfolio.get_or_create(db)
@@ -119,7 +133,7 @@ def get_positions(db: Session = Depends(get_db)):
 
 
 @router.get("/orders", response_model=list[OrderResponse])
-def get_orders(db: Session = Depends(get_db), limit: int = 50):
+def get_orders(db: Session = Depends(get_db), limit: int = 50, _user: str = Depends(require_auth)):
     engine = get_engine()
     orders = db.query(Order).filter(
         Order.mode == engine.mode
@@ -136,7 +150,7 @@ def get_orders(db: Session = Depends(get_db), limit: int = 50):
 
 
 @router.get("/trades", response_model=list[TradeResponse])
-def get_trades(db: Session = Depends(get_db), limit: int = 50):
+def get_trades(db: Session = Depends(get_db), limit: int = 50, _user: str = Depends(require_auth)):
     engine = get_engine()
     trades = db.query(Trade).filter(
         Trade.mode == engine.mode
@@ -155,7 +169,7 @@ def get_trades(db: Session = Depends(get_db), limit: int = 50):
 
 # ------------------------------------------------------------------ Price
 @router.get("/price/{symbol}", response_model=PriceResponse)
-async def get_price(symbol: str):
+async def get_price(symbol: str, _user: str = Depends(require_auth)):
     engine = get_engine()
     try:
         data = await engine.market_client.get_ticker_price(symbol.upper())
@@ -166,7 +180,7 @@ async def get_price(symbol: str):
 
 # ------------------------------------------------------------------ Strategies
 @router.get("/strategies", response_model=list[StrategyInfo])
-def get_strategies():
+def get_strategies(_user: str = Depends(require_auth)):
     engine = get_engine()
     return [
         StrategyInfo(name=s.name, enabled=s.enabled, params=s.get_params())
@@ -175,7 +189,7 @@ def get_strategies():
 
 
 @router.put("/strategies")
-def update_strategy(body: StrategyUpdate):
+def update_strategy(body: StrategyUpdate, _user: str = Depends(require_auth)):
     engine = get_engine()
     strat = next((s for s in engine.strategies if s.name == body.name), None)
     if not strat:
@@ -191,12 +205,12 @@ def update_strategy(body: StrategyUpdate):
 
 # ------------------------------------------------------------------ Risk
 @router.get("/risk", response_model=RiskParams)
-def get_risk_params():
+def get_risk_params(_user: str = Depends(require_auth)):
     return get_engine().risk_manager.get_params()
 
 
 @router.put("/risk", response_model=RiskParams)
-def update_risk_params(body: RiskParams):
+def update_risk_params(body: RiskParams, _user: str = Depends(require_auth)):
     engine = get_engine()
     engine.risk_manager.set_params(body.model_dump())
     return engine.risk_manager.get_params()
@@ -204,14 +218,14 @@ def update_risk_params(body: RiskParams):
 
 # ------------------------------------------------------------------ Signals log
 @router.get("/signals", response_model=list[SignalResponse])
-def get_signals():
+def get_signals(_user: str = Depends(require_auth)):
     engine = get_engine()
     return engine.signals_log[-50:]
 
 
 # ------------------------------------------------------------------ Paper trading extras
 @router.post("/paper/reset")
-def reset_paper_portfolio(db: Session = Depends(get_db)):
+def reset_paper_portfolio(db: Session = Depends(get_db), _user: str = Depends(require_auth)):
     engine = get_engine()
     if engine.mode != "paper":
         raise HTTPException(400, "Can only reset in paper mode")
@@ -220,7 +234,7 @@ def reset_paper_portfolio(db: Session = Depends(get_db)):
 
 
 @router.get("/paper/export")
-def export_paper_trades(db: Session = Depends(get_db)):
+def export_paper_trades(db: Session = Depends(get_db), _user: str = Depends(require_auth)):
     engine = get_engine()
     csv_data = engine.paper_portfolio.export_trades_csv(db)
     return PlainTextResponse(csv_data, media_type="text/csv", headers={
@@ -230,7 +244,7 @@ def export_paper_trades(db: Session = Depends(get_db)):
 
 # ------------------------------------------------------------------ Engine control
 @router.get("/engine/status")
-def engine_status():
+def engine_status(_user: str = Depends(require_auth)):
     engine = get_engine()
     return {
         "running": engine.running,
@@ -242,7 +256,7 @@ def engine_status():
 
 
 @router.post("/symbols/add")
-def add_symbol(body: dict):
+def add_symbol(body: dict, _user: str = Depends(require_auth)):
     engine = get_engine()
     symbol = body.get("symbol", "").upper()
     if not symbol:
@@ -252,7 +266,7 @@ def add_symbol(body: dict):
 
 
 @router.post("/symbols/remove")
-def remove_symbol(body: dict):
+def remove_symbol(body: dict, _user: str = Depends(require_auth)):
     engine = get_engine()
     symbol = body.get("symbol", "").upper()
     if not symbol:
@@ -265,14 +279,14 @@ def remove_symbol(body: dict):
 
 # ------------------------------------------------------------------ Embient Skills
 @router.get("/skills/summary")
-def skills_summary():
+def skills_summary(_user: str = Depends(require_auth)):
     if not _skills_library:
         return {"total_skills": 0, "categories": {}}
     return _skills_library.summary()
 
 
 @router.get("/skills")
-def list_skills(category: str | None = None):
+def list_skills(category: str | None = None, _user: str = Depends(require_auth)):
     if not _skills_library:
         return []
     if category:
@@ -281,7 +295,7 @@ def list_skills(category: str | None = None):
 
 
 @router.get("/skills/{name}")
-def get_skill(name: str):
+def get_skill(name: str, _user: str = Depends(require_auth)):
     if not _skills_library:
         raise HTTPException(404, "Skills library not loaded")
     skill = _skills_library.get(name)

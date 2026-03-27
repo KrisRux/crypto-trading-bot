@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    # Authentication
+    auth_username: str = Field(default="admin", alias="AUTH_USERNAME")
+    auth_password: str = Field(default="changeme", alias="AUTH_PASSWORD")
+    jwt_secret: str = Field(default="change-this-secret-key-in-production", alias="JWT_SECRET")
+    jwt_expiry_hours: int = Field(default=24, alias="JWT_EXPIRY_HOURS")
+
     # Server
     backend_host: str = Field(default="0.0.0.0", alias="BACKEND_HOST")
     backend_port: int = Field(default=8000, alias="BACKEND_PORT")
