@@ -36,6 +36,7 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+    session_timeout_minutes: int
     role: str
     display_name: str
 

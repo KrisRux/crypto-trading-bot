@@ -12,6 +12,7 @@ import { api } from './api'
 import { Lang } from './i18n'
 import { LangContext, useLang } from './hooks/useLang'
 import { AuthContext } from './hooks/useAuth'
+import { useIdleTimeout } from './hooks/useIdleTimeout'
 
 function AppContent() {
   const [mode, setMode] = useState<string>('paper')
@@ -29,13 +30,21 @@ function AppContent() {
   const [displayName, setDisplayName] = useState<string>(() =>
     localStorage.getItem('auth_name') || ''
   )
+  const [sessionTimeout, setSessionTimeout] = useState<number>(() =>
+    parseInt(localStorage.getItem('session_timeout') || '30', 10)
+  )
   const isAuthenticated = !!token
   const isAdmin = role === 'admin'
 
-  const login = useCallback((newToken: string, newRole: string, newName: string) => {
+  const login = useCallback((newToken: string, newRole: string, newName: string,
+                             timeoutMinutes?: number) => {
     localStorage.setItem('auth_token', newToken)
     localStorage.setItem('auth_role', newRole)
     localStorage.setItem('auth_name', newName)
+    if (timeoutMinutes) {
+      localStorage.setItem('session_timeout', String(timeoutMinutes))
+      setSessionTimeout(timeoutMinutes)
+    }
     setToken(newToken)
     setRole(newRole)
     setDisplayName(newName)
@@ -46,11 +55,15 @@ function AppContent() {
     localStorage.removeItem('auth_token')
     localStorage.removeItem('auth_role')
     localStorage.removeItem('auth_name')
+    localStorage.removeItem('session_timeout')
     setToken(null)
     setRole('')
     setDisplayName('')
     navigate('/login')
   }, [navigate])
+
+  // Auto-logout on inactivity
+  useIdleTimeout(sessionTimeout, logout, isAuthenticated)
 
   useEffect(() => {
     if (isAuthenticated) {

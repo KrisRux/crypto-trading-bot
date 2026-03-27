@@ -42,6 +42,7 @@ export interface LoginResponse {
   access_token: string
   token_type: string
   expires_in: number
+  session_timeout_minutes: number
   role: string
   display_name: string
 }

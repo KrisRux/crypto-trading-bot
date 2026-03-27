@@ -4,7 +4,7 @@ export interface AuthState {
   token: string | null
   role: string
   displayName: string
-  login: (token: string, role: string, displayName: string) => void
+  login: (token: string, role: string, displayName: string, timeoutMinutes?: number) => void
   logout: () => void
   isAuthenticated: boolean
   isAdmin: boolean

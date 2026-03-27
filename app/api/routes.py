@@ -56,6 +56,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     logger.info("User '%s' (%s) logged in", user.username, user.role)
     return TokenResponse(
         access_token=token, expires_in=expires_in,
+        session_timeout_minutes=settings.session_timeout_minutes,
         role=user.role, display_name=user.display_name or user.username,
     )
 

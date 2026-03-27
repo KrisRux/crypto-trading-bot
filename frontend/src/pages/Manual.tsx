@@ -194,7 +194,34 @@ function manual(lang: Lang): { title: string; disclaimer: string; sections: Sect
           </ol>`,
         },
         {
-          title: '8. Domande Frequenti',
+          title: '8. Impostazioni e Sicurezza',
+          body: '<p>Nella pagina <strong>Impostazioni</strong> (visibile a utenti admin e user, non ai guest) puoi configurare il tuo account personale.</p>',
+          subsections: [
+            {
+              title: '8.1 Chiavi API Binance',
+              body: `<p>Ogni utente inserisce le proprie chiavi API Binance. Le chiavi sono personali e separate da quelle degli altri utenti.</p>
+              <ul>
+                <li><strong>Testnet</strong> — Per il paper trading. Le ottieni su testnet.binance.vision</li>
+                <li><strong>Live</strong> — Per il trading reale. Abilita solo "Spot &amp; Margin Trading", mai "Withdrawals"</li>
+              </ul>
+              <p>Le chiavi vengono salvate in modo sicuro nel database del server e non sono mai visibili per intero dopo il salvataggio.</p>`,
+            },
+            {
+              title: '8.2 Modalita Trading',
+              body: `<p>Ogni utente puo scegliere indipendentemente se operare in modalita <strong>Simulata</strong> o <strong>Live</strong>. Puoi stare in Paper mentre un altro utente e in Live.</p>`,
+            },
+            {
+              title: '8.3 Capitale Iniziale',
+              body: `<p>Puoi configurare il capitale iniziale del tuo portafoglio virtuale (paper trading). Per applicare il nuovo valore, resetta il portafoglio dalla Dashboard.</p>`,
+            },
+            {
+              title: '8.4 Logout Automatico',
+              body: `<p>Per sicurezza, il sistema ti disconnette automaticamente dopo un periodo di inattivita (predefinito: 30 minuti). L'inattivita viene misurata in base a mouse, tastiera e touch. Al ritorno vedrai la pagina di login.</p>`,
+            },
+          ],
+        },
+        {
+          title: '9. Domande Frequenti',
           body: '',
           subsections: [
             {
@@ -228,7 +255,7 @@ function manual(lang: Lang): { title: string; disclaimer: string; sections: Sect
           ],
         },
         {
-          title: '9. Glossario',
+          title: '10. Glossario',
           body: `<table>
             <tr><th>Termine</th><th>Significato</th></tr>
             <tr><td><strong>Paper / Simulato</strong></td><td>Modalita di prova con denaro virtuale</td></tr>
@@ -431,7 +458,34 @@ function manual(lang: Lang): { title: string; disclaimer: string; sections: Sect
         </ol>`,
       },
       {
-        title: '8. FAQ',
+        title: '8. Settings & Security',
+        body: '<p>On the <strong>Settings</strong> page (visible to admin and user roles, not guests) you can configure your personal account.</p>',
+        subsections: [
+          {
+            title: '8.1 Binance API Keys',
+            body: `<p>Each user enters their own Binance API keys. Keys are personal and separate from other users.</p>
+            <ul>
+              <li><strong>Testnet</strong> — For paper trading. Get them at testnet.binance.vision</li>
+              <li><strong>Live</strong> — For real trading. Enable only "Spot &amp; Margin Trading", never "Withdrawals"</li>
+            </ul>
+            <p>Keys are stored securely in the server database and are never fully visible after saving.</p>`,
+          },
+          {
+            title: '8.2 Trading Mode',
+            body: '<p>Each user can independently choose whether to operate in <strong>Paper</strong> or <strong>Live</strong> mode. You can be in Paper while another user is in Live.</p>',
+          },
+          {
+            title: '8.3 Initial Capital',
+            body: '<p>You can configure the initial capital for your virtual portfolio (paper trading). To apply the new value, reset your portfolio from the Dashboard.</p>',
+          },
+          {
+            title: '8.4 Auto Logout',
+            body: '<p>For security, the system automatically logs you out after a period of inactivity (default: 30 minutes). Inactivity is measured by mouse, keyboard, and touch events. When you return, you will see the login page.</p>',
+          },
+        ],
+      },
+      {
+        title: '9. FAQ',
         body: '',
         subsections: [
           {
@@ -465,7 +519,7 @@ function manual(lang: Lang): { title: string; disclaimer: string; sections: Sect
         ],
       },
       {
-        title: '9. Glossary',
+        title: '10. Glossary',
         body: `<table>
           <tr><th>Term</th><th>Meaning</th></tr>
           <tr><td><strong>Paper</strong></td><td>Simulated mode with virtual money</td></tr>
