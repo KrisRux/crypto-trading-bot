@@ -7,6 +7,8 @@ interface KeysState {
   trading_enabled: boolean
   trading_mode: string
   paper_initial_capital: number
+  trading_start_hour: number | null
+  trading_end_hour: number | null
   has_live_keys: boolean
   has_testnet_keys: boolean
   binance_api_key: string
@@ -23,6 +25,8 @@ export default function Settings() {
     trading_enabled: false,
     trading_mode: 'paper',
     paper_initial_capital: 10000,
+    trading_start_hour: null as number | null,
+    trading_end_hour: null as number | null,
     binance_api_key: '',
     binance_api_secret: '',
     binance_testnet_api_key: '',
@@ -53,6 +57,8 @@ export default function Settings() {
           trading_enabled: data.trading_enabled || false,
           trading_mode: data.trading_mode || 'paper',
           paper_initial_capital: data.paper_initial_capital || 10000,
+          trading_start_hour: data.trading_start_hour,
+          trading_end_hour: data.trading_end_hour,
         }))
       })
       .catch(() => {})
@@ -68,6 +74,8 @@ export default function Settings() {
         trading_enabled: form.trading_enabled,
         trading_mode: form.trading_mode,
         paper_initial_capital: form.paper_initial_capital,
+        trading_start_hour: form.trading_start_hour,
+        trading_end_hour: form.trading_end_hour,
       }
       if (form.binance_api_key) body.binance_api_key = form.binance_api_key
       if (form.binance_api_secret) body.binance_api_secret = form.binance_api_secret
@@ -162,6 +170,68 @@ export default function Settings() {
               'Trading enabled but API keys missing! Configure the keys below for your selected mode, otherwise no orders will be executed.'
             )}
           </div>
+        )}
+      </section>
+
+      {/* Trading Schedule */}
+      <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
+        <h3 className="text-sm font-semibold text-white">
+          {t('Orario di Trading', 'Trading Schedule')}
+        </h3>
+        <p className="text-xs text-gray-500">
+          {t(
+            'Configura le ore in cui il bot puo aprire nuove posizioni (fuso orario UTC). Le posizioni aperte vengono sempre monitorate per SL/TP anche fuori orario. Lascia vuoto per operare 24/7.',
+            'Set the hours during which the bot can open new positions (UTC timezone). Open positions are always monitored for SL/TP even outside hours. Leave empty to trade 24/7.'
+          )}
+        </p>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-400">{t('Dalle (UTC)', 'From (UTC)')}</label>
+            <select
+              value={form.trading_start_hour ?? ''}
+              onChange={(e) => setForm({
+                ...form,
+                trading_start_hour: e.target.value === '' ? null : parseInt(e.target.value),
+              })}
+              className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+            >
+              <option value="">24/7</option>
+              {Array.from({ length: 24 }, (_, i) => (
+                <option key={i} value={i}>{String(i).padStart(2, '0')}:00</option>
+              ))}
+            </select>
+          </div>
+          <span className="text-gray-600">—</span>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-400">{t('Alle (UTC)', 'To (UTC)')}</label>
+            <select
+              value={form.trading_end_hour ?? ''}
+              onChange={(e) => setForm({
+                ...form,
+                trading_end_hour: e.target.value === '' ? null : parseInt(e.target.value),
+              })}
+              className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+            >
+              <option value="">24/7</option>
+              {Array.from({ length: 24 }, (_, i) => (
+                <option key={i} value={i}>{String(i).padStart(2, '0')}:00</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        {form.trading_start_hour != null && form.trading_end_hour != null && (
+          <p className="text-xs text-blue-400">
+            {form.trading_start_hour <= form.trading_end_hour
+              ? t(
+                  `Il bot opera dalle ${String(form.trading_start_hour).padStart(2,'0')}:00 alle ${String(form.trading_end_hour).padStart(2,'0')}:00 UTC`,
+                  `Bot trades from ${String(form.trading_start_hour).padStart(2,'0')}:00 to ${String(form.trading_end_hour).padStart(2,'0')}:00 UTC`
+                )
+              : t(
+                  `Il bot opera dalle ${String(form.trading_start_hour).padStart(2,'0')}:00 alle ${String(form.trading_end_hour).padStart(2,'0')}:00 UTC (notturno)`,
+                  `Bot trades from ${String(form.trading_start_hour).padStart(2,'0')}:00 to ${String(form.trading_end_hour).padStart(2,'0')}:00 UTC (overnight)`
+                )
+            }
+          </p>
         )}
       </section>
 

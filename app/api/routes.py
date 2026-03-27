@@ -193,6 +193,8 @@ def get_api_keys(db: Session = Depends(get_db), user_info: dict = Depends(requir
         "trading_enabled": user.trading_enabled,
         "trading_mode": user.trading_mode,
         "paper_initial_capital": user.paper_initial_capital,
+        "trading_start_hour": user.trading_start_hour,
+        "trading_end_hour": user.trading_end_hour,
         "has_live_keys": user.has_api_keys(live=True),
         "has_testnet_keys": user.has_api_keys(live=False),
         "binance_api_key": user.get_api_key(live=True)[:8] + "..." if user.has_api_keys(live=True) else "",
@@ -212,6 +214,12 @@ def update_api_keys(body: dict, db: Session = Depends(get_db),
         user.trading_mode = body["trading_mode"]
     if "paper_initial_capital" in body:
         user.paper_initial_capital = float(body["paper_initial_capital"])
+    if "trading_start_hour" in body:
+        val = body["trading_start_hour"]
+        user.trading_start_hour = int(val) if val is not None and val != "" else None
+    if "trading_end_hour" in body:
+        val = body["trading_end_hour"]
+        user.trading_end_hour = int(val) if val is not None and val != "" else None
     # Only update keys if provided (non-empty)
     api_key = body.get("binance_api_key", "")
     api_secret = body.get("binance_api_secret", "")

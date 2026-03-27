@@ -215,7 +215,12 @@ function manual(lang: Lang): { title: string; disclaimer: string; sections: Sect
               body: `<p>Puoi configurare il capitale iniziale del tuo portafoglio virtuale (paper trading). Per applicare il nuovo valore, resetta il portafoglio dalla Dashboard.</p>`,
             },
             {
-              title: '8.4 Logout Automatico',
+              title: '8.4 Orario di Trading',
+              body: `<p>Puoi configurare una finestra oraria in cui il bot opera (es. dalle 08:00 alle 22:00 UTC). Fuori da questa finestra il bot continua a monitorare le posizioni aperte per Stop Loss e Take Profit, ma non apre nuove posizioni. Lascia i campi vuoti per operare 24/7.</p>
+              <p>Supporta anche fasce notturne (es. 22:00 - 08:00). Gli orari sono in formato UTC.</p>`,
+            },
+            {
+              title: '8.5 Logout Automatico',
               body: `<p>Per sicurezza, il sistema ti disconnette automaticamente dopo un periodo di inattivita (predefinito: 30 minuti). L'inattivita viene misurata in base a mouse, tastiera e touch. Al ritorno vedrai la pagina di login.</p>`,
             },
           ],
@@ -479,7 +484,11 @@ function manual(lang: Lang): { title: string; disclaimer: string; sections: Sect
             body: '<p>You can configure the initial capital for your virtual portfolio (paper trading). To apply the new value, reset your portfolio from the Dashboard.</p>',
           },
           {
-            title: '8.4 Auto Logout',
+            title: '8.4 Trading Schedule',
+            body: '<p>You can set a time window during which the bot operates (e.g. 08:00 to 22:00 UTC). Outside this window the bot continues monitoring open positions for Stop Loss and Take Profit, but does not open new positions. Leave fields empty to trade 24/7.</p><p>Overnight ranges are supported (e.g. 22:00 - 08:00). Times are in UTC format.</p>',
+          },
+          {
+            title: '8.5 Auto Logout',
             body: '<p>For security, the system automatically logs you out after a period of inactivity (default: 30 minutes). Inactivity is measured by mouse, keyboard, and touch events. When you return, you will see the login page.</p>',
           },
         ],

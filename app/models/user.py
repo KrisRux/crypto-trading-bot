@@ -74,6 +74,10 @@ class User(Base):
     trading_mode = Column(String, default="paper")  # "paper" or "live"
     paper_initial_capital = Column(Float, default=10000.0)
 
+    # Trading schedule (UTC hours, 0-23). None = always active when enabled.
+    trading_start_hour = Column(Integer, nullable=True)  # e.g. 8
+    trading_end_hour = Column(Integer, nullable=True)    # e.g. 22
+
     def set_api_keys(self, api_key: str = "", api_secret: str = "",
                      testnet_key: str = "", testnet_secret: str = ""):
         self.binance_api_key = _obfuscate(api_key)
@@ -93,3 +97,17 @@ class User(Base):
 
     def has_api_keys(self, live: bool = False) -> bool:
         return bool(self.get_api_key(live) and self.get_api_secret(live))
+
+    def is_within_trading_hours(self) -> bool:
+        """Check if current UTC time is within the user's trading schedule."""
+        if self.trading_start_hour is None or self.trading_end_hour is None:
+            return True  # No schedule = always active
+
+        current_hour = datetime.now(timezone.utc).hour
+
+        if self.trading_start_hour <= self.trading_end_hour:
+            # Normal range, e.g. 8-22
+            return self.trading_start_hour <= current_hour < self.trading_end_hour
+        else:
+            # Overnight range, e.g. 22-8 (trades at night)
+            return current_hour >= self.trading_start_hour or current_hour < self.trading_end_hour

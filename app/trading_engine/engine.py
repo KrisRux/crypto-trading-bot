@@ -115,11 +115,14 @@ class TradingEngine:
 
         # Verify the user has configured the required API keys for their mode
         if user_mode == "paper" and not user.has_api_keys(live=False):
-            return  # Paper mode requires testnet keys
+            return
         if user_mode == "live" and not user.has_api_keys(live=True):
-            return  # Live mode requires live keys
+            return
 
-        # Check existing positions for TP/SL
+        # Check trading schedule — TP/SL always checked, but new trades only during hours
+        within_hours = user.is_within_trading_hours()
+
+        # Check existing positions for TP/SL (always, even outside hours)
         if user_mode == "paper":
             closed = self.paper_portfolio.check_tp_sl_symbol(
                 db, user.id, symbol, current_price
@@ -142,7 +145,10 @@ class TradingEngine:
                 if result:
                     await self._close_live_trade(db, user, trade, current_price, result)
 
-        # Execute signals
+        # Execute signals (only during trading hours)
+        if not within_hours:
+            return
+
         for signal in signals:
             if signal.signal_type == SignalType.HOLD:
                 continue
