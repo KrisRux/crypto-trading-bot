@@ -36,13 +36,6 @@ export default function Settings() {
   const [error, setError] = useState('')
 
   const loadKeys = useCallback(() => {
-    api.getMe().then(() => {
-      return fetch('/api/settings/keys', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
-      })
-    }).catch(() => {})
-
-    // Use the api helper directly
     fetch('/api/settings/keys', {
       headers: {
         Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
@@ -284,34 +277,7 @@ export default function Settings() {
         </div>
       </section>
 
-      {/* Testnet Keys */}
-      <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-white">Binance Testnet API</h3>
-          {keys?.has_testnet_keys && (
-            <span className="text-xs text-emerald-400">{t('Configurate', 'Configured')}: {keys.binance_testnet_api_key}</span>
-          )}
-        </div>
-        <p className="text-xs text-gray-500">
-          {t('Per il paper trading. Ottieni le chiavi su testnet.binance.vision', 'For paper trading. Get keys at testnet.binance.vision')}
-        </p>
-        <input
-          type="text"
-          placeholder="API Key"
-          value={form.binance_testnet_api_key}
-          onChange={(e) => setForm({ ...form, binance_testnet_api_key: e.target.value })}
-          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
-        />
-        <input
-          type="password"
-          placeholder="API Secret"
-          value={form.binance_testnet_api_secret}
-          onChange={(e) => setForm({ ...form, binance_testnet_api_secret: e.target.value })}
-          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
-        />
-      </section>
-
-      {/* Live Keys */}
+      {/* Live Keys — shown first as primary */}
       <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-white">Binance Live API</h3>
@@ -337,6 +303,33 @@ export default function Settings() {
           placeholder="API Secret"
           value={form.binance_api_secret}
           onChange={(e) => setForm({ ...form, binance_api_secret: e.target.value })}
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
+        />
+      </section>
+
+      {/* Testnet Keys */}
+      <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-white">Binance Testnet API</h3>
+          {keys?.has_testnet_keys && (
+            <span className="text-xs text-emerald-400">{t('Configurate', 'Configured')}: {keys.binance_testnet_api_key}</span>
+          )}
+        </div>
+        <p className="text-xs text-gray-500">
+          {t('Per il paper trading. Ottieni le chiavi su testnet.binance.vision', 'For paper trading. Get keys at testnet.binance.vision')}
+        </p>
+        <input
+          type="text"
+          placeholder="API Key"
+          value={form.binance_testnet_api_key}
+          onChange={(e) => setForm({ ...form, binance_testnet_api_key: e.target.value })}
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
+        />
+        <input
+          type="password"
+          placeholder="API Secret"
+          value={form.binance_testnet_api_secret}
+          onChange={(e) => setForm({ ...form, binance_testnet_api_secret: e.target.value })}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
         />
       </section>
