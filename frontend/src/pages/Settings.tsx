@@ -75,7 +75,7 @@ export default function Settings() {
       if (form.binance_testnet_api_key) body.binance_testnet_api_key = form.binance_testnet_api_key
       if (form.binance_testnet_api_secret) body.binance_testnet_api_secret = form.binance_testnet_api_secret
 
-      await fetch('/api/settings/keys', {
+      const resp = await fetch('/api/settings/keys', {
         method: 'PUT',
         headers: {
           Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
@@ -83,6 +83,10 @@ export default function Settings() {
         },
         body: JSON.stringify(body),
       })
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: 'Error' }))
+        throw new Error(err.detail || `Error ${resp.status}`)
+      }
       setSaved(true)
       setForm((f) => ({
         ...f,

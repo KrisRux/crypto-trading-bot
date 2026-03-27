@@ -187,8 +187,10 @@ def get_api_keys(db: Session = Depends(get_db), user_info: dict = Depends(requir
 
 
 @router.put("/settings/keys")
-def update_api_keys(body: dict, db: Session = Depends(get_db),
-                    user_info: dict = Depends(require_auth)):
+async def update_api_keys(body: dict, db: Session = Depends(get_db),
+                          user_info: dict = Depends(require_auth)):
+    from app.binance_client.rest_client import BinanceRestClient
+
     user = _get_user_obj(user_info, db)
     if "trading_enabled" in body:
         user.trading_enabled = bool(body["trading_enabled"])
@@ -204,11 +206,33 @@ def update_api_keys(body: dict, db: Session = Depends(get_db),
     if "trading_end_hour" in body:
         val = body["trading_end_hour"]
         user.trading_end_hour = int(val) if val is not None and val != "" else None
-    # Only update keys if provided (non-empty)
+
+    # Validate and save API keys
     api_key = body.get("binance_api_key", "")
     api_secret = body.get("binance_api_secret", "")
     testnet_key = body.get("binance_testnet_api_key", "")
     testnet_secret = body.get("binance_testnet_api_secret", "")
+
+    # Validate Live keys if provided
+    if api_key and api_secret:
+        client = BinanceRestClient(api_key=api_key, api_secret=api_secret, testnet=False)
+        try:
+            await client.get_account()
+        except Exception:
+            await client.close()
+            raise HTTPException(400, "Chiavi Live API non valide / Live API keys invalid")
+        await client.close()
+
+    # Validate Testnet keys if provided
+    if testnet_key and testnet_secret:
+        client = BinanceRestClient(api_key=testnet_key, api_secret=testnet_secret, testnet=True)
+        try:
+            await client.get_account()
+        except Exception:
+            await client.close()
+            raise HTTPException(400, "Chiavi Testnet API non valide / Testnet API keys invalid")
+        await client.close()
+
     if api_key or api_secret or testnet_key or testnet_secret:
         user.set_api_keys(
             api_key=api_key or user.get_api_key(live=True),
