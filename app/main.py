@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
 
     # Start the engine in the background
     engine_task = asyncio.create_task(engine.start())
-    logger.info("Trading engine started in %s mode", engine.mode)
+    logger.info("Trading engine started")
 
     yield  # App is running
 
