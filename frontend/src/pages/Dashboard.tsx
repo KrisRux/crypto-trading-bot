@@ -184,6 +184,7 @@ export default function Dashboard() {
               <thead>
                 <tr className="text-gray-400 border-b border-gray-800">
                   <th className="text-left py-2 px-3">{t('symbol')}</th>
+                  <th className="text-left py-2 px-3">{l('Fonte', 'Source')}</th>
                   <th className="text-right py-2 px-3">{t('qty')}</th>
                   <th className="text-right py-2 px-3">{t('entry')}</th>
                   <th className="text-right py-2 px-3">{t('current')}</th>
@@ -196,6 +197,15 @@ export default function Dashboard() {
                 {filteredPositions.map((p) => (
                   <tr key={p.id} className="border-b border-gray-800/50 hover:bg-gray-900/50">
                     <td className="py-2 px-3 font-medium text-white">{p.symbol}</td>
+                    <td className="py-2 px-3">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                        p.side === 'HOLD'
+                          ? 'bg-gray-700 text-gray-400'
+                          : 'bg-blue-900 text-blue-300'
+                      }`}>
+                        {p.side === 'HOLD' ? 'Wallet' : 'Bot'}
+                      </span>
+                    </td>
                     <td className="py-2 px-3 text-right">{p.quantity.toFixed(6)}</td>
                     <td className="py-2 px-3 text-right">{p.entry_price.toLocaleString()}</td>
                     <td className="py-2 px-3 text-right">{p.current_price?.toLocaleString() ?? '-'}</td>

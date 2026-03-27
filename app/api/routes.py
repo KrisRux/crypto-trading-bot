@@ -305,28 +305,71 @@ async def get_balance(db: Session = Depends(get_db), user_info: dict = Depends(r
 
 
 @router.get("/positions", response_model=list[PositionResponse])
-def get_positions(db: Session = Depends(get_db), user_info: dict = Depends(require_auth)):
+async def get_positions(db: Session = Depends(get_db), user_info: dict = Depends(require_auth)):
+    from app.binance_client.rest_client import BinanceRestClient
     engine = get_engine()
     user = _get_user_obj(user_info, db)
     user_mode = user.trading_mode or "paper"
+    is_live = user_mode == "live"
 
-    # Show only positions opened by the bot (tracked in DB)
+    result = []
+
+    # Bot-tracked open trades (with SL/TP info)
     open_trades = db.query(Trade).filter(
         Trade.user_id == user.id,
         Trade.status == TradeStatus.OPEN,
         Trade.mode == user_mode,
     ).all()
-    return [
-        PositionResponse(
+    tracked_symbols = set()
+    for t in open_trades:
+        tracked_symbols.add(t.symbol)
+        cp = engine.last_prices.get(t.symbol, 0)
+        result.append(PositionResponse(
             id=t.id, symbol=t.symbol, side=t.side.value,
             quantity=t.quantity, entry_price=t.entry_price,
-            current_price=engine.last_prices.get(t.symbol, 0),
-            unrealized_pnl=(engine.last_prices.get(t.symbol, 0) - t.entry_price) * t.quantity
-                if engine.last_prices.get(t.symbol, 0) else 0,
+            current_price=cp,
+            unrealized_pnl=(cp - t.entry_price) * t.quantity if cp else 0,
             stop_loss=t.stop_loss, take_profit=t.take_profit,
             opened_at=t.opened_at,
-        ) for t in open_trades
-    ]
+        ))
+
+    # All non-zero crypto balances from Binance (excluding stablecoins)
+    stablecoins = {"USDT", "USDC", "BUSD", "TUSD", "DAI", "FDUSD", "USDP"}
+    if user.has_api_keys(live=is_live):
+        client = BinanceRestClient(
+            api_key=user.get_api_key(live=is_live),
+            api_secret=user.get_api_secret(live=is_live),
+            testnet=not is_live,
+        )
+        try:
+            account = await client.get_account()
+            for b in account.get("balances", []):
+                asset = b["asset"]
+                qty = float(b.get("free", 0)) + float(b.get("locked", 0))
+                if qty <= 0 or asset in stablecoins:
+                    continue
+                symbol = asset + "USDT"
+                # Skip if already shown as a bot-tracked trade
+                if symbol in tracked_symbols:
+                    continue
+                cp = engine.last_prices.get(symbol, 0)
+                # Only show if we can get a price (valid USDT pair)
+                if cp > 0:
+                    result.append(PositionResponse(
+                        id=0, symbol=symbol, side="HOLD",
+                        quantity=qty, entry_price=0,
+                        current_price=cp,
+                        unrealized_pnl=0,
+                        stop_loss=None, take_profit=None,
+                        opened_at=None,
+                    ))
+        except Exception as exc:
+            logger.warning("Failed to fetch positions for user %d: %s",
+                           user.id, exc)
+        finally:
+            await client.close()
+
+    return result
 
 
 @router.get("/orders", response_model=list[OrderResponse])
