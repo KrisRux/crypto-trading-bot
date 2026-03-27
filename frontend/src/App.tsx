@@ -14,6 +14,24 @@ import { LangContext, useLang } from './hooks/useLang'
 import { AuthContext } from './hooks/useAuth'
 import { useIdleTimeout } from './hooks/useIdleTimeout'
 
+function UtcClock() {
+  const [time, setTime] = useState('')
+  useEffect(() => {
+    const update = () => {
+      const now = new Date()
+      setTime(now.toISOString().slice(11, 19))
+    }
+    update()
+    const id = setInterval(update, 1000)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <span className="hidden sm:inline text-[10px] font-mono text-gray-600" title="UTC Time">
+      UTC {time}
+    </span>
+  )
+}
+
 function AppContent() {
   const [mode, setMode] = useState<string>('paper')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -121,6 +139,7 @@ function AppContent() {
               </div>
 
               <div className="flex items-center gap-3">
+                <UtcClock />
                 <span className="hidden sm:inline text-xs text-gray-500">{displayName}</span>
                 {/* Language selector */}
                 <button
