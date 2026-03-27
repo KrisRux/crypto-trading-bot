@@ -109,9 +109,7 @@ class TradingEngine:
         """Execute signals for a specific user."""
         user_mode = user.trading_mode or "paper"
 
-        # Verify the user has configured the required API keys for their mode
-        if user_mode == "paper" and not user.has_api_keys(live=False):
-            return
+        # Live mode requires API keys; paper mode doesn't (orders are simulated)
         if user_mode == "live" and not user.has_api_keys(live=True):
             return
 

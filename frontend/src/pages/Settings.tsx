@@ -157,14 +157,11 @@ export default function Settings() {
             )}
           </div>
         )}
-        {form.trading_enabled && (
-          (form.trading_mode === 'paper' && !keys?.has_testnet_keys) ||
-          (form.trading_mode === 'live' && !keys?.has_live_keys)
-        ) && (
+        {form.trading_enabled && form.trading_mode === 'live' && !keys?.has_live_keys && (
           <div className="bg-red-900/30 border border-red-800/50 rounded-lg p-3 text-xs text-red-300">
             {t(
-              'Trading abilitato ma chiavi API mancanti! Configura le chiavi qui sotto per la modalita selezionata, altrimenti nessun ordine verra eseguito.',
-              'Trading enabled but API keys missing! Configure the keys below for your selected mode, otherwise no orders will be executed.'
+              'Trading Live abilitato ma chiavi API Live mancanti! Configura le chiavi qui sotto, altrimenti nessun ordine verra eseguito.',
+              'Live trading enabled but Live API keys missing! Configure the keys below, otherwise no orders will be executed.'
             )}
           </div>
         )}
@@ -281,14 +278,22 @@ export default function Settings() {
         </div>
       </section>
 
-      {/* Live Keys — shown first as primary */}
+      {/* Binance API Keys — required only for Live mode */}
       <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-white">Binance Live API</h3>
+          <h3 className="text-sm font-semibold text-white">
+            {t('Chiavi API Binance', 'Binance API Keys')}
+          </h3>
           {keys?.has_live_keys && (
             <span className="text-xs text-emerald-400">{t('Configurate', 'Configured')}: {keys.binance_api_key}</span>
           )}
         </div>
+        <p className="text-xs text-gray-500">
+          {t(
+            'Necessarie solo per la modalita Live. In Paper il bot simula gli ordini senza contattare Binance.',
+            'Required only for Live mode. In Paper the bot simulates orders without contacting Binance.'
+          )}
+        </p>
         <div className="bg-yellow-900/30 border border-yellow-800/50 rounded-lg p-3 text-xs text-yellow-300">
           {t(
             'Abilita SOLO "Enable Spot & Margin Trading". MAI abilitare "Enable Withdrawals".',
@@ -307,33 +312,6 @@ export default function Settings() {
           placeholder="API Secret"
           value={form.binance_api_secret}
           onChange={(e) => setForm({ ...form, binance_api_secret: e.target.value })}
-          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
-        />
-      </section>
-
-      {/* Testnet Keys */}
-      <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-white">Binance Testnet API</h3>
-          {keys?.has_testnet_keys && (
-            <span className="text-xs text-emerald-400">{t('Configurate', 'Configured')}: {keys.binance_testnet_api_key}</span>
-          )}
-        </div>
-        <p className="text-xs text-gray-500">
-          {t('Per il paper trading. Ottieni le chiavi su testnet.binance.vision', 'For paper trading. Get keys at testnet.binance.vision')}
-        </p>
-        <input
-          type="text"
-          placeholder="API Key"
-          value={form.binance_testnet_api_key}
-          onChange={(e) => setForm({ ...form, binance_testnet_api_key: e.target.value })}
-          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
-        />
-        <input
-          type="password"
-          placeholder="API Secret"
-          value={form.binance_testnet_api_secret}
-          onChange={(e) => setForm({ ...form, binance_testnet_api_secret: e.target.value })}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
         />
       </section>
