@@ -47,7 +47,6 @@ def setup_module_db():
 
     # Mock engine
     class MockEngine:
-        mode = "paper"
         symbols = ["BTCUSDT", "ETHUSDT"]
         last_prices = {"BTCUSDT": 65000.0, "ETHUSDT": 2000.0}
         last_price = 65000.0
@@ -70,7 +69,6 @@ def setup_module_db():
             "export_trades_csv": lambda self, db, uid: "id,symbol\n",
         })()
         market_client = type("MC", (), {})()
-        def switch_mode(self, m): self.mode = m
         def add_symbol(self, s): pass
         def remove_symbol(self, s): pass
 

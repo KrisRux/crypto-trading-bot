@@ -12,7 +12,7 @@ from app.database import get_db
 from app.models.trade import Trade, Order
 from app.models.portfolio import PaperPortfolio, PaperPosition
 from app.api.schemas import (
-    ModeResponse, ModeSwitch, BalanceResponse, PositionResponse,
+    BalanceResponse, PositionResponse,
     OrderResponse, TradeResponse, StrategyInfo, StrategyUpdate,
     RiskParams, SignalResponse, PriceResponse,
 )
@@ -152,22 +152,6 @@ def delete_user(user_id: int, db: Session = Depends(get_db),
     logger.info("Admin deleted user '%s'", user.username)
     return {"ok": True}
 
-
-# ------------------------------------------------------------------ Mode
-@router.get("/mode", response_model=ModeResponse)
-def get_mode(_user: dict = Depends(require_auth)):
-    return {"mode": get_engine().mode}
-
-
-@router.post("/mode", response_model=ModeResponse)
-def switch_mode(body: ModeSwitch, _user: dict = Depends(require_admin)):
-    engine = get_engine()
-    try:
-        engine.switch_mode(body.mode)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    logger.info("Mode switched to %s via API", body.mode)
-    return {"mode": engine.mode}
 
 
 def _get_user_id(user_info: dict, db: Session) -> int:
@@ -505,7 +489,6 @@ def engine_status(_user: dict = Depends(require_auth)):
     engine = get_engine()
     return {
         "running": engine.running,
-        "mode": engine.mode,
         "symbols": engine.symbols,
         "last_prices": engine.last_prices,
         "strategies_count": len(engine.strategies),

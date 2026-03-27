@@ -126,7 +126,6 @@ export interface SignalItem {
 
 export interface EngineStatus {
   running: boolean
-  mode: string
   symbols: string[]
   last_prices: Record<string, number>
   strategies_count: number
@@ -168,12 +167,6 @@ export const api = {
     request<LoginResponse>('/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
-    }),
-  getMode: () => request<{ mode: string }>('/mode'),
-  switchMode: (mode: string) =>
-    request<{ mode: string }>('/mode', {
-      method: 'POST',
-      body: JSON.stringify({ mode }),
     }),
   getBalance: () => request<Balance>('/balance'),
   getPositions: () => request<Position[]>('/positions'),

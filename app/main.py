@@ -96,7 +96,7 @@ app.include_router(router)
 
 @app.get("/")
 def root():
-    return {"status": "ok", "name": "Crypto Trading Bot", "mode": settings.trading_mode}
+    return {"status": "ok", "name": "Crypto Trading Bot"}
 
 
 if __name__ == "__main__":

@@ -48,10 +48,6 @@ class TradingEngine:
         self.signals_log: list[dict] = []
 
     @property
-    def mode(self) -> str:
-        return settings.trading_mode
-
-    @property
     def last_price(self) -> float:
         if self.last_prices:
             return next(iter(self.last_prices.values()))
@@ -352,9 +348,3 @@ class TradingEngine:
         await self.market_client.close()
         logger.info("Trading engine stopped")
 
-    def switch_mode(self, new_mode: str):
-        """Global mode switch (admin only) — affects default for new users."""
-        if new_mode not in ("live", "paper"):
-            raise ValueError("Mode must be 'live' or 'paper'")
-        settings.trading_mode = new_mode
-        logger.info("Global default mode switched to %s", new_mode)
