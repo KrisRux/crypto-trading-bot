@@ -17,7 +17,7 @@ from app.binance_client.rest_client import BinanceRestClient
 from app.binance_client.ws_client import BinanceWebSocket
 from app.config import settings
 from app.database import SessionLocal
-from app.models.trade import Trade, TradeStatus, OrderSide
+from app.models.trade import Trade, TradeStatus, OrderSide, OrderStatus
 from app.models.user import User
 from app.paper_trading.portfolio import PaperPortfolioManager
 from app.strategies.base import Strategy, Signal, SignalType
@@ -154,6 +154,14 @@ class TradingEngine:
                 continue
             await self._execute_order(db, user, signal)
 
+    @staticmethod
+    def _round_qty(symbol: str, qty: float) -> float:
+        """Round quantity to Binance-allowed step size."""
+        # BTC pairs: 5 decimals, most others: 3-5
+        if "BTC" in symbol:
+            return round(qty, 5)
+        return round(qty, 4)
+
     async def _execute_order(self, db: Session, user: User, signal: Signal):
         """Place a real order on Binance (testnet or live based on user mode)."""
         client, is_live = self._get_user_client(user)
@@ -169,7 +177,10 @@ class TradingEngine:
                     {"free": "0"}
                 )
                 capital = float(usdt["free"])
-                qty = self.risk_manager.calculate_position_size(capital, signal.price)
+                qty = self._round_qty(
+                    signal.symbol,
+                    self.risk_manager.calculate_position_size(capital, signal.price)
+                )
                 if qty <= 0:
                     return
 
@@ -178,6 +189,12 @@ class TradingEngine:
                 order = await order_mgr.place_market_order(
                     db, signal.symbol, "BUY", qty
                 )
+                # Only create trade if order was filled
+                if order.status != OrderStatus.FILLED:
+                    logger.warning("User %d: BUY order not filled, skipping trade",
+                                   user.id)
+                    return
+
                 order.user_id = user.id
                 filled_price = order.filled_price or signal.price
                 trade = Trade(
@@ -215,9 +232,14 @@ class TradingEngine:
         user_mode = "live" if is_live else "paper"
         order_mgr = OrderManager(client, mode=user_mode)
         try:
+            sell_qty = self._round_qty(trade.symbol, trade.quantity)
             order = await order_mgr.place_market_order(
-                db, trade.symbol, "SELL", trade.quantity
+                db, trade.symbol, "SELL", sell_qty
             )
+            if order.status != OrderStatus.FILLED:
+                logger.warning("User %d: SELL order not filled for trade #%d",
+                               user.id, trade.id)
+                return
             order.user_id = user.id
             trade.exit_price = exit_price
             trade.pnl = (exit_price - trade.entry_price) * trade.quantity
