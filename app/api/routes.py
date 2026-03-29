@@ -249,53 +249,43 @@ async def update_api_keys(body: dict, db: Session = Depends(get_db),
 @router.get("/balance", response_model=BalanceResponse)
 async def get_balance(db: Session = Depends(get_db), user_info: dict = Depends(require_auth)):
     from app.binance_client.rest_client import BinanceRestClient
-    from app.models.portfolio import PaperPortfolio, PaperPosition
     engine = get_engine()
     user = _get_user_obj(user_info, db)
     user_mode = user.trading_mode or "paper"
     is_live = user_mode == "live"
 
-    if is_live:
-        # Live mode: fetch real balances from Binance
-        cash_balance = 0.0
-        positions_value = 0.0
-        tracked_assets = {s.replace("USDT", "") for s in engine.symbols}
-        if user.has_api_keys(live=True):
-            client = BinanceRestClient(
-                api_key=user.get_api_key(live=True),
-                api_secret=user.get_api_secret(live=True),
-                testnet=False,
-            )
-            try:
-                account = await client.get_account()
-                for b in account.get("balances", []):
-                    asset = b["asset"]
-                    qty = float(b.get("free", 0)) + float(b.get("locked", 0))
-                    if asset == "USDT":
-                        cash_balance = float(b["free"])
-                    elif asset in tracked_assets and qty > 0:
-                        price = engine.last_prices.get(asset + "USDT", 0)
-                        positions_value += qty * price
-            except Exception as exc:
-                logger.warning("Failed to fetch Binance balance for user %d: %s",
-                               user.id, exc)
-            finally:
-                await client.close()
-        total_equity = cash_balance + positions_value
-    else:
-        # Paper mode: use the virtual portfolio from DB — ignore testnet Binance balances
-        portfolio = db.query(PaperPortfolio).filter(
-            PaperPortfolio.user_id == user.id
-        ).first()
-        cash_balance = portfolio.cash_balance if portfolio else 0.0
-        open_positions = db.query(PaperPosition).filter(
-            PaperPosition.user_id == user.id
-        ).all()
-        positions_value = sum(
-            pos.quantity * (engine.last_prices.get(pos.symbol, pos.entry_price))
-            for pos in open_positions
+    cash_free = 0.0      # USDT free  — available to invest
+    cash_locked = 0.0    # USDT locked — in open orders
+    positions_value = 0.0
+    tracked_assets = {s.replace("USDT", "") for s in engine.symbols}
+
+    if user.has_api_keys(live=is_live):
+        client = BinanceRestClient(
+            api_key=user.get_api_key(live=is_live),
+            api_secret=user.get_api_secret(live=is_live),
+            testnet=not is_live,
         )
-        total_equity = cash_balance + positions_value
+        try:
+            account = await client.get_account()
+            for b in account.get("balances", []):
+                asset = b["asset"]
+                free = float(b.get("free", 0))
+                locked = float(b.get("locked", 0))
+                if asset == "USDT":
+                    cash_free = free
+                    cash_locked = locked
+                elif asset in tracked_assets and (free + locked) > 0:
+                    price = engine.last_prices.get(asset + "USDT", 0)
+                    positions_value += (free + locked) * price
+        except Exception as exc:
+            logger.warning("Failed to fetch Binance balance for user %d: %s",
+                           user.id, exc)
+        finally:
+            await client.close()
+
+    # cash_balance = spendable USDT; total_equity = everything including locked and positions
+    cash_balance = cash_free
+    total_equity = cash_free + cash_locked + positions_value
 
     trades = db.query(Trade).filter(
         Trade.user_id == user.id, Trade.mode == user_mode
