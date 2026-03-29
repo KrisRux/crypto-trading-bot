@@ -537,10 +537,7 @@ async def get_assets(db: Session = Depends(get_db), user_info: dict = Depends(re
     is_live = user_mode == "live"
 
     result = []
-    has_keys = user.has_api_keys(live=is_live)
-    logger.info("[DEBUG assets] user=%s mode=%s is_live=%s has_keys=%s",
-                user.username, user_mode, is_live, has_keys)
-    if not has_keys:
+    if not user.has_api_keys(live=is_live):
         return result
 
     client = BinanceRestClient(
@@ -551,7 +548,6 @@ async def get_assets(db: Session = Depends(get_db), user_info: dict = Depends(re
     try:
         account = await client.get_account()
         balances = account.get("balances", [])
-        logger.info("[DEBUG assets] Binance returned %d balance entries", len(balances))
         for b in balances:
             asset = b["asset"]
             free = float(b.get("free", 0))
@@ -563,9 +559,11 @@ async def get_assets(db: Session = Depends(get_db), user_info: dict = Depends(re
                 price = 1.0
             else:
                 price = engine.last_prices.get(asset + "USDT", 0.0)
-                if price == 0:
-                    logger.info("[DEBUG assets] skipping %s — no USDT price", asset)
-                    continue  # skip assets with no known USDT price
+                # LD* tokens are Binance Earn locked assets (e.g. LDETH = locked ETH)
+                # Try the underlying asset price by stripping the "LD" prefix
+                if price == 0 and asset.startswith("LD"):
+                    price = engine.last_prices.get(asset[2:] + "USDT", 0.0)
+                # Assets with unknown price are still shown (value = 0)
             result.append({
                 "asset": asset,
                 "free": free,
