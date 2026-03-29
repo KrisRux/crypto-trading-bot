@@ -207,6 +207,8 @@ export const api = {
     request<{ symbols: string[] }>('/symbols/remove', {
       method: 'POST', body: JSON.stringify({ symbol }),
     }),
+  clearApiKeys: (type: 'live' | 'testnet' | 'all') =>
+    request<{ ok: boolean }>(`/settings/keys?key_type=${type}`, { method: 'DELETE' }),
   getAssets: () => request<AssetItem[]>('/assets'),
   getSkillsSummary: () => request<SkillsSummary>('/skills/summary'),
   getSkills: (category?: string) =>

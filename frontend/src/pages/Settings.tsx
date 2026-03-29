@@ -34,14 +34,13 @@ export default function Settings() {
   })
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+  const [clearingType, setClearingType] = useState<'live' | 'testnet' | null>(null)
 
   const loadKeys = useCallback(() => {
-    fetch('/api/settings/keys', {
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
-        'Content-Type': 'application/json',
-      },
-    })
+    api.getMe()  // ensures cookie is valid before fetching settings
+      .then(() =>
+        fetch('/api/settings/keys', { credentials: 'include' })
+      )
       .then((r) => r.json())
       .then((data) => {
         setKeys(data)
@@ -77,10 +76,8 @@ export default function Settings() {
 
       const resp = await fetch('/api/settings/keys', {
         method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
-          'Content-Type': 'application/json',
-        },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
       if (!resp.ok) {
@@ -99,6 +96,28 @@ export default function Settings() {
       setTimeout(() => setSaved(false), 3000)
     } catch (e) {
       setError(String(e))
+    }
+  }
+
+  const handleClearKeys = async (type: 'live' | 'testnet') => {
+    const label = type === 'live'
+      ? t('Live API', 'Live API')
+      : t('Testnet API', 'Testnet API')
+    const confirmed = confirm(
+      t(
+        `Sei sicuro di voler eliminare le chiavi ${label}? Questa azione è irreversibile.`,
+        `Are you sure you want to delete the ${label} keys? This action cannot be undone.`
+      )
+    )
+    if (!confirmed) return
+    setClearingType(type)
+    try {
+      await api.clearApiKeys(type)
+      loadKeys()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setClearingType(null)
     }
   }
 
@@ -273,16 +292,28 @@ export default function Settings() {
         )}
       </section>
 
-
       {/* Testnet Keys — for Paper mode */}
       <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-white">
-            Binance Testnet API
-            <span className="ml-2 text-[10px] font-normal text-gray-500">({t('per Paper', 'for Paper')})</span>
-          </h3>
+          <div>
+            <h3 className="text-sm font-semibold text-white">
+              Binance Testnet API
+              <span className="ml-2 text-[10px] font-normal text-gray-500">({t('per Paper', 'for Paper')})</span>
+            </h3>
+            {keys?.has_testnet_keys && (
+              <span className="text-xs text-emerald-400 mt-0.5 block">{t('Configurate', 'Configured')}: {keys.binance_testnet_api_key}</span>
+            )}
+          </div>
           {keys?.has_testnet_keys && (
-            <span className="text-xs text-emerald-400">{t('Configurate', 'Configured')}: {keys.binance_testnet_api_key}</span>
+            <button
+              onClick={() => handleClearKeys('testnet')}
+              disabled={clearingType === 'testnet'}
+              className="px-3 py-1.5 bg-red-900/50 hover:bg-red-800/60 border border-red-800/50 text-red-300 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+            >
+              {clearingType === 'testnet'
+                ? t('Eliminazione...', 'Deleting...')
+                : t('Elimina chiavi', 'Delete keys')}
+            </button>
           )}
         </div>
         <p className="text-xs text-gray-500">
@@ -293,14 +324,14 @@ export default function Settings() {
         </p>
         <input
           type="text"
-          placeholder="Testnet API Key"
+          placeholder={keys?.has_testnet_keys ? t('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'Testnet API Key'}
           value={form.binance_testnet_api_key}
           onChange={(e) => setForm({ ...form, binance_testnet_api_key: e.target.value })}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
         />
         <input
           type="password"
-          placeholder="Testnet API Secret"
+          placeholder={keys?.has_testnet_keys ? t('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'Testnet API Secret'}
           value={form.binance_testnet_api_secret}
           onChange={(e) => setForm({ ...form, binance_testnet_api_secret: e.target.value })}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
@@ -310,12 +341,25 @@ export default function Settings() {
       {/* Live Keys — for Live mode */}
       <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-white">
-            Binance Live API
-            <span className="ml-2 text-[10px] font-normal text-gray-500">({t('per Live', 'for Live')})</span>
-          </h3>
+          <div>
+            <h3 className="text-sm font-semibold text-white">
+              Binance Live API
+              <span className="ml-2 text-[10px] font-normal text-gray-500">({t('per Live', 'for Live')})</span>
+            </h3>
+            {keys?.has_live_keys && (
+              <span className="text-xs text-emerald-400 mt-0.5 block">{t('Configurate', 'Configured')}: {keys.binance_api_key}</span>
+            )}
+          </div>
           {keys?.has_live_keys && (
-            <span className="text-xs text-emerald-400">{t('Configurate', 'Configured')}: {keys.binance_api_key}</span>
+            <button
+              onClick={() => handleClearKeys('live')}
+              disabled={clearingType === 'live'}
+              className="px-3 py-1.5 bg-red-900/50 hover:bg-red-800/60 border border-red-800/50 text-red-300 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+            >
+              {clearingType === 'live'
+                ? t('Eliminazione...', 'Deleting...')
+                : t('Elimina chiavi', 'Delete keys')}
+            </button>
           )}
         </div>
         <div className="bg-red-900/30 border border-red-800/50 rounded-lg p-3 text-xs text-red-300">
@@ -326,14 +370,14 @@ export default function Settings() {
         </div>
         <input
           type="text"
-          placeholder="API Key"
+          placeholder={keys?.has_live_keys ? t('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'API Key'}
           value={form.binance_api_key}
           onChange={(e) => setForm({ ...form, binance_api_key: e.target.value })}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
         />
         <input
           type="password"
-          placeholder="API Secret"
+          placeholder={keys?.has_live_keys ? t('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'API Secret'}
           value={form.binance_api_secret}
           onChange={(e) => setForm({ ...form, binance_api_secret: e.target.value })}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"

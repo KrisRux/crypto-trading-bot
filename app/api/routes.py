@@ -507,6 +507,26 @@ def remove_symbol(body: dict, db: Session = Depends(get_db), _user: dict = Depen
     return {"symbols": engine.symbols}
 
 
+# ------------------------------------------------------------------ Clear API keys
+@router.delete("/settings/keys")
+def clear_api_keys(key_type: str = "all", db: Session = Depends(get_db),
+                   user_info: dict = Depends(require_auth)):
+    """
+    Delete stored API keys for the current user.
+    key_type: 'live' | 'testnet' | 'all'
+    """
+    user = _get_user_obj(user_info, db)
+    if key_type in ("live", "all"):
+        user.binance_api_key = ""
+        user.binance_api_secret = ""
+    if key_type in ("testnet", "all"):
+        user.binance_testnet_api_key = ""
+        user.binance_testnet_api_secret = ""
+    db.commit()
+    logger.info("User '%s' cleared %s API keys", user.username, key_type)
+    return {"ok": True}
+
+
 # ------------------------------------------------------------------ Assets
 @router.get("/assets")
 async def get_assets(db: Session = Depends(get_db), user_info: dict = Depends(require_auth)):
