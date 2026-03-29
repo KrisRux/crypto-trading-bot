@@ -113,7 +113,7 @@ function AppContent() {
                 <span className="text-xl font-bold text-white">CryptoBot</span>
                 <div className="hidden md:flex items-center gap-1">
                   <NavLink to="/" className={navLinkClass}>{t('nav_dashboard')}</NavLink>
-                  <NavLink to="/assets" className={navLinkClass}>{t('nav_assets')}</NavLink>
+                  <NavLink to="/wallet" className={navLinkClass}>{t('nav_assets')}</NavLink>
                   <NavLink to="/strategies" className={navLinkClass}>{t('nav_strategies')}</NavLink>
                   <NavLink to="/skills" className={navLinkClass}>{t('nav_skills')}</NavLink>
                   <NavLink to="/manual" className={navLinkClass}>{t('nav_manual')}</NavLink>
@@ -166,7 +166,7 @@ function AppContent() {
                 <NavLink to="/" className={navLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_dashboard')}
                 </NavLink>
-                <NavLink to="/assets" className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                <NavLink to="/wallet" className={navLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_assets')}
                 </NavLink>
                 <NavLink to="/strategies" className={navLinkClass} onClick={() => setMenuOpen(false)}>
@@ -200,7 +200,7 @@ function AppContent() {
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <Routes>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/assets" element={<Assets />} />
+            <Route path="/wallet" element={<Assets />} />
             <Route path="/strategies" element={<Strategies />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/skills" element={<Skills />} />
