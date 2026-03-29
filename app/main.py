@@ -42,21 +42,22 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database initialized")
 
+    # Load Embient skills library first (needed to configure EmbientEnhancedStrategy)
+    skills_library = SkillsLibrary()
+    logger.info("Embient skills: %s", skills_library.summary())
+
     # Create and configure the trading engine
     engine = TradingEngine()
 
-    # Register strategies with standard parameters for signal quality over quantity
+    # Register strategies — EmbientEnhancedStrategy reads params from skills_library
     engine.register_strategy(SmaCrossoverStrategy(fast_period=10, slow_period=30))
     engine.register_strategy(RsiStrategy(period=14, oversold=30, overbought=70))
     engine.register_strategy(MacdStrategy(fast=12, slow=26, signal=9))
     engine.register_strategy(EmbientEnhancedStrategy(
-        buy_threshold=55, sell_threshold=55,
-        sma_fast=10, sma_slow=30,
+        skills_library=skills_library,
+        buy_threshold=55,
+        sell_threshold=55,
     ))
-
-    # Load Embient skills library
-    skills_library = SkillsLibrary()
-    logger.info("Embient skills: %s", skills_library.summary())
 
     # Make engine and skills available to API routes
     set_engine(engine, skills_library)

@@ -247,3 +247,57 @@ class SkillsLibrary:
 
     def list_all(self) -> list[dict]:
         return [s.to_dict() for s in self.skills.values()]
+
+    def extract_numeric_params(self, skill_name: str) -> dict:
+        """
+        Extract numeric thresholds and parameter values from a skill's body text
+        and tables using regex patterns.
+
+        Returns a dict with any of:
+          rsi_oversold, rsi_overbought,
+          macd_fast, macd_slow, macd_signal,
+          bb_period, bb_std,
+          sma_fast, sma_slow
+        """
+        skill = self.get(skill_name)
+        if not skill:
+            return {}
+
+        params: dict = {}
+        body = skill.body
+
+        # RSI extreme zones from table cells: "| >70 | Overbought ... |" / "| <30 | Oversold ... |"
+        for m in re.finditer(r'[|]\s*[<>]=?\s*(\d+)\s*[|]\s*([^|\n]+)', body):
+            val = int(m.group(1))
+            label = m.group(2).strip().lower()
+            if "overbought" in label:
+                params["rsi_overbought"] = val
+            elif "oversold" in label:
+                params["rsi_oversold"] = val
+
+        # MACD default settings: "Default settings: 12, 26, 9"
+        m = re.search(r'[Dd]efault\s+settings[:\s]+(\d+)[,\s]+(\d+)[,\s]+(\d+)', body)
+        if m:
+            params["macd_fast"] = int(m.group(1))
+            params["macd_slow"] = int(m.group(2))
+            params["macd_signal"] = int(m.group(3))
+
+        # BB default settings: "Default settings: 20 SMA, 2 StdDev"
+        m = re.search(
+            r'[Dd]efault\s+settings[:\s]+(\d+)\s+SMA[,\s]+(\d+(?:\.\d+)?)\s+StdDev',
+            body,
+        )
+        if m:
+            params["bb_period"] = int(m.group(1))
+            params["bb_std"] = float(m.group(2))
+
+        # MA periods — pick "Day trading" row: "| 9 EMA | 21 EMA | Day trading |"
+        m = re.search(
+            r'[|]\s*(\d+)\s+(?:EMA|SMA)\s*[|]\s*(\d+)\s+(?:EMA|SMA)\s*[|]\s*[Dd]ay\s+trading',
+            body,
+        )
+        if m:
+            params["sma_fast"] = int(m.group(1))
+            params["sma_slow"] = int(m.group(2))
+
+        return params

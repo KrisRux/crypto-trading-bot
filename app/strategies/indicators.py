@@ -63,3 +63,35 @@ class Indicators:
         upper = middle + std_dev * std
         lower = middle - std_dev * std
         return upper, middle, lower
+
+    @staticmethod
+    def adx(high: pd.Series, low: pd.Series, close: pd.Series,
+            period: int = 14) -> pd.Series:
+        """
+        Average Directional Index (0-100).
+        Values above 25 indicate a trending market; below 25 = ranging.
+        Uses Wilder's EWM smoothing (alpha = 1/period).
+        """
+        delta_high = high.diff()
+        delta_low = -low.diff()
+
+        plus_dm = delta_high.where((delta_high > delta_low) & (delta_high > 0), 0.0)
+        minus_dm = delta_low.where((delta_low > delta_high) & (delta_low > 0), 0.0)
+
+        hl = high - low
+        hc = (high - close.shift()).abs()
+        lc = (low - close.shift()).abs()
+        tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
+
+        alpha = 1.0 / period
+        eps = 1e-10
+        atr_s = tr.ewm(alpha=alpha, min_periods=period, adjust=False).mean()
+        pdm_s = plus_dm.ewm(alpha=alpha, min_periods=period, adjust=False).mean()
+        mdm_s = minus_dm.ewm(alpha=alpha, min_periods=period, adjust=False).mean()
+
+        plus_di = 100.0 * pdm_s / (atr_s + eps)
+        minus_di = 100.0 * mdm_s / (atr_s + eps)
+        di_sum = plus_di + minus_di
+        dx = 100.0 * (plus_di - minus_di).abs() / (di_sum + eps)
+        adx_series = dx.ewm(alpha=alpha, min_periods=period, adjust=False).mean()
+        return adx_series
