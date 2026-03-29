@@ -1,6 +1,6 @@
 # Crypto Trading Bot
 
-Bot/agente di trading automatico per criptovalute con integrazione Binance Spot API, web dashboard responsive e modalita paper/live.
+Bot di trading automatico per criptovalute con integrazione Binance Spot API, web dashboard responsive e modalita paper/live.
 
 > **DISCLAIMER**: Questo software e fornito a scopo educativo e sperimentale. Il trading di criptovalute comporta rischi significativi. Non costituisce consiglio finanziario. Utilizza a tuo rischio e pericolo. Testa sempre prima in modalita paper trading.
 
@@ -9,9 +9,10 @@ Bot/agente di trading automatico per criptovalute con integrazione Binance Spot 
 ## Funzionalita
 
 - **Due modalita**: Paper trading (simulato) e Live trading (ordini reali su Binance)
-- **Dati in tempo reale**: Prezzi via Binance WebSocket
-- **Strategie configurabili**: SMA Crossover, RSI Reversal, MACD Crossover
-- **Risk management**: Stop-loss, take-profit e position sizing automatici
+- **Dati in tempo reale**: Prezzi via Binance WebSocket con riconnessione automatica
+- **Strategie multiple**: SMA Crossover, RSI Reversal, MACD Crossover, Embient Enhanced (multi-fattore)
+- **Conflict resolution**: Se due strategie danno segnali opposti sullo stesso simbolo nello stesso ciclo, il trade viene saltato
+- **Risk management**: Stop-loss, take-profit e position sizing automatici (2% del capitale per trade)
 - **Dashboard web responsive**: Utilizzabile da PC e smartphone
 - **Export CSV**: Esporta lo storico dei trade in paper mode
 - **Logging strutturato**: Log su file ruotati e console
@@ -21,7 +22,7 @@ Bot/agente di trading automatico per criptovalute con integrazione Binance Spot 
 ```
 bot_inv/
 ├── app/
-│   ├── main.py                  # Entrypoint FastAPI
+│   ├── main.py                  # Entrypoint FastAPI + registrazione strategie
 │   ├── config.py                # Configurazione da .env
 │   ├── database.py              # Setup SQLAlchemy
 │   ├── logging_config.py        # Logging strutturato
@@ -36,16 +37,18 @@ bot_inv/
 │   │   ├── indicators.py        # SMA, EMA, RSI, MACD, Bollinger
 │   │   ├── sma_crossover.py     # Strategia incrocio medie mobili
 │   │   ├── rsi_strategy.py      # Strategia RSI overbought/oversold
-│   │   └── macd_strategy.py     # Strategia MACD crossover
+│   │   ├── macd_strategy.py     # Strategia MACD crossover
+│   │   └── embient_enhanced.py  # Strategia multi-fattore con scoring (principale)
 │   ├── trading_engine/
 │   │   ├── engine.py            # Motore di trading principale
 │   │   ├── order_manager.py     # Gestione esecuzione ordini
 │   │   └── risk_manager.py      # Calcolo position size, SL/TP
 │   ├── paper_trading/
-│   │   └── portfolio.py         # Portafoglio virtuale
+│   │   └── portfolio.py         # Portafoglio virtuale per-utente
 │   └── models/
 │       ├── trade.py             # Modelli Trade, Order
-│       └── portfolio.py         # Modelli PaperPortfolio, PaperPosition
+│       ├── portfolio.py         # Modelli PaperPortfolio, PaperPosition
+│       └── user.py              # Modello User (chiavi API, modalita trading)
 ├── frontend/                    # React + TypeScript + Tailwind CSS
 │   ├── src/
 │   │   ├── App.tsx              # Layout e routing
@@ -54,12 +57,12 @@ bot_inv/
 │   │   │   ├── Dashboard.tsx    # Saldo, posizioni, storico
 │   │   │   ├── Strategies.tsx   # Configurazione strategie e rischio
 │   │   │   └── Logs.tsx         # Segnali e ordini
-│   │   ├── components/
-│   │   │   └── StatCard.tsx
-│   │   └── hooks/
-│   │       └── usePolling.ts
+│   │   └── components/
 │   └── ...
 ├── tests/                       # Test pytest
+├── deploy/
+│   ├── setup.sh                 # Setup iniziale server
+│   └── update.sh                # Aggiornamento (git pull + restart)
 ├── docker-compose.yml           # Deploy con Docker
 ├── requirements.txt             # Dipendenze Python
 └── .env.example                 # Template configurazione
@@ -120,12 +123,7 @@ pytest tests/ -v
 1. Vai su [Binance Testnet](https://testnet.binance.vision/)
 2. Effettua il login con GitHub
 3. Genera le API keys
-4. Inserisci le chiavi in `.env`:
-   ```
-   BINANCE_TESTNET_API_KEY=your_testnet_key
-   BINANCE_TESTNET_API_SECRET=your_testnet_secret
-   TRADING_MODE=paper
-   ```
+4. Inserisci le chiavi nelle impostazioni utente della dashboard
 
 ### Live Trading
 
@@ -134,39 +132,55 @@ pytest tests/ -v
 3. **IMPORTANTE**: Abilita SOLO "Enable Spot & Margin Trading"
 4. **MAI abilitare** "Enable Withdrawals"
 5. (Opzionale) Limita gli IP consentiti per sicurezza
-6. Inserisci le chiavi in `.env`:
-   ```
-   BINANCE_API_KEY=your_live_key
-   BINANCE_API_SECRET=your_live_secret
-   TRADING_MODE=live
-   ```
+6. Inserisci le chiavi nelle impostazioni utente della dashboard
 
-## Deploy con Docker
+## Deploy su Server (systemd)
 
 ```bash
-cp .env.example .env
-# Modifica .env con le tue chiavi
+# Prima installazione
+sudo ./deploy/setup.sh
 
-docker-compose up --build -d
+# Aggiornamento (pull + restart)
+sudo ./deploy/update.sh
+
+# Oppure manualmente
+cd /opt/cryptobot
+sudo -u cryptobot git pull
+sudo systemctl restart cryptobot
+sudo journalctl -u cryptobot -f
 ```
 
-- Frontend: `http://localhost` (porta 80)
-- Backend API: `http://localhost:8000`
+## Strategie
 
-## Parametri Configurabili
+### Parametri attivi (configurati in `app/main.py`)
 
-| Variabile | Default | Descrizione |
-|-----------|---------|-------------|
-| `TRADING_MODE` | `paper` | Modalita: `paper` o `live` |
-| `PAPER_INITIAL_CAPITAL` | `10000` | Capitale iniziale paper (USDT) |
-| `MAX_POSITION_SIZE_PCT` | `2.0` | Max % capitale per posizione |
-| `DEFAULT_STOP_LOSS_PCT` | `3.0` | Stop loss default (%) |
-| `DEFAULT_TAKE_PROFIT_PCT` | `5.0` | Take profit default (%) |
-| `DEFAULT_SYMBOL` | `BTCUSDT` | Coppia di trading predefinita |
+| Strategia | Parametri | Note |
+|---|---|---|
+| `sma_crossover` | fast=10, slow=30 | Golden/death cross su SMA |
+| `rsi_reversal` | period=14, oversold=30, overbought=70 | Inversione da zone estreme |
+| `macd_crossover` | fast=12, slow=26, signal=9 | Parametri standard |
+| `embient_enhanced` | threshold=55, sma 10/30 | Multi-fattore con scoring 0-100 |
 
-## Come Estendere le Strategie
+### Conflict Resolution
 
-Per aggiungere una nuova strategia:
+Se nello stesso ciclo (60s) due strategie generano segnali opposti (BUY + SELL) sullo stesso simbolo, il trade viene saltato. Il log mostrera:
+```
+INFO | User 1: conflicting signals on ETHUSDT — 1 BUY [macd_crossover] vs 1 SELL [embient_enhanced], skipping
+```
+
+### Strategia Embient Enhanced
+
+Strategia principale multi-fattore con sistema di scoring (0-100). Genera un segnale solo se il punteggio supera la soglia (55). I fattori considerati:
+
+| Fattore | Punti max | Trigger |
+|---|---|---|
+| SMA alignment | 25 | Fast > slow (bullish) + golden cross |
+| RSI zone | 25 | Oversold < 30 o overbought > 70 |
+| MACD momentum | 25 | MACD sopra signal + histogram crescente |
+| Bollinger Band | 15 | Prezzo vicino banda inferiore/superiore |
+| Volume | 10 | Volume > 1.5x media |
+
+### Come aggiungere una nuova strategia
 
 1. Crea un file in `app/strategies/` (es. `my_strategy.py`)
 2. Estendi la classe `Strategy`:
@@ -179,7 +193,6 @@ class MyStrategy(Strategy):
     enabled = True
 
     def generate_signals(self, df, symbol):
-        # La tua logica qui
         # df contiene: open, high, low, close, volume
         return []  # Lista di Signal
 
@@ -187,20 +200,44 @@ class MyStrategy(Strategy):
         return {"enabled": self.enabled}
 ```
 
-3. Registra la strategia in `app/main.py`:
+3. Registra in `app/main.py`:
 
 ```python
 from app.strategies.my_strategy import MyStrategy
 engine.register_strategy(MyStrategy())
 ```
 
-La strategia apparira automaticamente nella pagina "Strategies" della web app.
+La strategia apparira automaticamente nella pagina "Strategies" della dashboard.
+
+## Parametri Configurabili (.env)
+
+| Variabile | Default | Descrizione |
+|---|---|---|
+| `SYMBOLS` | `BTCUSDT,ETHUSDT` | Simboli monitorati (comma-separated) |
+| `MAX_POSITION_SIZE_PCT` | `2.0` | Max % capitale per posizione |
+| `DEFAULT_STOP_LOSS_PCT` | `3.0` | Stop loss default (%) |
+| `DEFAULT_TAKE_PROFIT_PCT` | `5.0` | Take profit default (%) |
+| `LOG_LEVEL` | `INFO` | Livello logging |
 
 ## Note Tecniche
 
 - Il trading engine esegue un ciclo ogni 60 secondi
-- I prezzi real-time sono aggiornati via WebSocket
+- I prezzi real-time sono aggiornati via WebSocket (riconnessione automatica)
 - Il database SQLite viene creato automaticamente al primo avvio
-- I log vengono salvati in `logs/trading_bot.log` (rotazione automatica a 5 MB)
+- I log vengono salvati in `/var/log/cryptobot.log` (rotazione automatica)
 - Le richieste API a Binance sono firmate con HMAC-SHA256
 - La modalita paper usa prezzi reali ma ordini simulati
+- Ogni utente ha il proprio portafoglio paper isolato
+
+## Reset Database
+
+Per ripartire da zero sul server:
+
+```bash
+sudo systemctl stop cryptobot
+sudo -u cryptobot mv /opt/cryptobot/trading_bot.db /opt/cryptobot/trading_bot.db.bak
+sudo systemctl start cryptobot
+# Il database viene ricreato automaticamente all'avvio
+```
+
+> Gli utenti e le chiavi API vengono persi — sara necessario riconfigurarli dalla dashboard.
