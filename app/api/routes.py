@@ -254,10 +254,8 @@ async def get_balance(db: Session = Depends(get_db), user_info: dict = Depends(r
     user_mode = user.trading_mode or "paper"
     is_live = user_mode == "live"
 
-    cash_free = 0.0      # USDT free  — available to invest
-    cash_locked = 0.0    # USDT locked — in open orders
-    positions_value = 0.0
-    tracked_assets = {s.replace("USDT", "") for s in engine.symbols}
+    cash_balance = 0.0   # USDT free — available to invest
+    total_equity = 0.0   # Σ (free + locked) × market price for every asset
 
     if user.has_api_keys(live=is_live):
         client = BinanceRestClient(
@@ -269,23 +267,21 @@ async def get_balance(db: Session = Depends(get_db), user_info: dict = Depends(r
             account = await client.get_account()
             for b in account.get("balances", []):
                 asset = b["asset"]
-                free = float(b.get("free", 0))
-                locked = float(b.get("locked", 0))
+                qty = float(b.get("free", 0)) + float(b.get("locked", 0))
+                if qty <= 0:
+                    continue
                 if asset == "USDT":
-                    cash_free = free
-                    cash_locked = locked
-                elif asset in tracked_assets and (free + locked) > 0:
+                    cash_balance = float(b["free"])
+                    total_equity += qty  # USDT price = 1
+                else:
                     price = engine.last_prices.get(asset + "USDT", 0)
-                    positions_value += (free + locked) * price
+                    if price > 0:
+                        total_equity += qty * price
         except Exception as exc:
             logger.warning("Failed to fetch Binance balance for user %d: %s",
                            user.id, exc)
         finally:
             await client.close()
-
-    # cash_balance = spendable USDT; total_equity = everything including locked and positions
-    cash_balance = cash_free
-    total_equity = cash_free + cash_locked + positions_value
 
     trades = db.query(Trade).filter(
         Trade.user_id == user.id, Trade.mode == user_mode
