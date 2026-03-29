@@ -50,7 +50,7 @@ export default function Assets() {
       {/* Error */}
       {error && (
         <div className="bg-red-900/30 border border-red-700 rounded-lg px-4 py-3 text-red-300 text-sm">
-          {error.message}
+          {error}
         </div>
       )}
 
