@@ -42,13 +42,13 @@ async def lifespan(app: FastAPI):
     # Create and configure the trading engine
     engine = TradingEngine()
 
-    # Register default strategies (shorter periods = more frequent signals)
-    engine.register_strategy(SmaCrossoverStrategy(fast_period=5, slow_period=15))
-    engine.register_strategy(RsiStrategy(period=14, oversold=35, overbought=65))
-    engine.register_strategy(MacdStrategy(fast=8, slow=17, signal=9))
+    # Register strategies with standard parameters for signal quality over quantity
+    engine.register_strategy(SmaCrossoverStrategy(fast_period=10, slow_period=30))
+    engine.register_strategy(RsiStrategy(period=14, oversold=30, overbought=70))
+    engine.register_strategy(MacdStrategy(fast=12, slow=26, signal=9))
     engine.register_strategy(EmbientEnhancedStrategy(
-        buy_threshold=35, sell_threshold=35,
-        sma_fast=5, sma_slow=15,
+        buy_threshold=55, sell_threshold=55,
+        sma_fast=10, sma_slow=30,
     ))
 
     # Load Embient skills library
