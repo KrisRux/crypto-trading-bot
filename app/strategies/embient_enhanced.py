@@ -22,7 +22,6 @@ import pandas as pd
 
 from app.strategies.base import Strategy, Signal, SignalType
 from app.strategies.indicators import Indicators
-from app.embient_skills.loader import SkillsLibrary
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +65,6 @@ class EmbientEnhancedStrategy(Strategy):
         self.bb_period = bb_period
         self.bb_std = bb_std
         self.volume_ma_period = volume_ma_period
-
-        # Load Embient skills for knowledge-based rules
-        self._skills = SkillsLibrary()
-        self._key_rules = self._skills.get_all_rules(
-            categories=["crypto-trading", "technical-strategies", "risk-management"]
-        )
-        logger.info("EmbientEnhanced: loaded %d key rules from skills", len(self._key_rules))
 
     def get_params(self) -> dict:
         return {

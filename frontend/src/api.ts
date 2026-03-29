@@ -1,29 +1,28 @@
 /**
  * API client for communicating with the FastAPI backend.
- * All requests (except login) include the JWT token from localStorage.
+ *
+ * Authentication uses an httpOnly cookie (auth_token) set by the server on
+ * login. The cookie is sent automatically by the browser via
+ * `credentials: 'include'` — it is never accessible to JavaScript, which
+ * protects it from XSS attacks.
  */
 
 const BASE = '/api'
 
-function getToken(): string | null {
-  return localStorage.getItem('auth_token')
-}
-
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = getToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options?.headers as Record<string, string> || {}),
   }
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
 
-  const res = await fetch(`${BASE}${path}`, { ...options, headers })
+  const res = await fetch(`${BASE}${path}`, {
+    ...options,
+    headers,
+    credentials: 'include', // send httpOnly cookie automatically
+  })
 
   if (res.status === 401) {
-    // Token expired or invalid — clear and redirect to login
-    localStorage.removeItem('auth_token')
+    // Cookie expired or invalid — redirect to login
     window.location.href = '/login'
     throw new Error('Session expired')
   }
@@ -39,7 +38,6 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export interface LoginResponse {
-  access_token: string
   token_type: string
   expires_in: number
   session_timeout_minutes: number
@@ -177,6 +175,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     }),
+  logout: () => request<{ ok: boolean }>('/logout', { method: 'POST' }),
   getBalance: () => request<Balance>('/balance'),
   getPositions: () => request<Position[]>('/positions'),
   getOrders: () => request<OrderItem[]>('/orders'),

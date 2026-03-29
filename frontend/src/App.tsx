@@ -38,50 +38,63 @@ function AppContent() {
   const { lang, setLang, t } = useLang()
   const navigate = useNavigate()
 
-  // Auth state
-  const [token, setToken] = useState<string | null>(() =>
-    localStorage.getItem('auth_token')
-  )
-  const [role, setRole] = useState<string>(() =>
-    localStorage.getItem('auth_role') || ''
-  )
-  const [displayName, setDisplayName] = useState<string>(() =>
-    localStorage.getItem('auth_name') || ''
-  )
+  // Auth state — token lives in httpOnly cookie (not in JS/localStorage).
+  // role and displayName are stored in localStorage as UI hints only;
+  // the real auth check is done server-side on every request via the cookie.
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null) // null = checking
+  const [role, setRole] = useState<string>(() => localStorage.getItem('auth_role') || '')
+  const [displayName, setDisplayName] = useState<string>(() => localStorage.getItem('auth_name') || '')
   const [sessionTimeout, setSessionTimeout] = useState<number>(() =>
     parseInt(localStorage.getItem('session_timeout') || '30', 10)
   )
-  const isAuthenticated = !!token
   const isAdmin = role === 'admin'
 
-  const login = useCallback((newToken: string, newRole: string, newName: string,
-                             timeoutMinutes?: number) => {
-    localStorage.setItem('auth_token', newToken)
+  // On mount, verify auth by calling /api/me — the httpOnly cookie is sent automatically.
+  useEffect(() => {
+    api.getMe()
+      .then((me) => {
+        setRole(me.role)
+        setDisplayName(me.display_name)
+        localStorage.setItem('auth_role', me.role)
+        localStorage.setItem('auth_name', me.display_name)
+        setIsAuthenticated(true)
+      })
+      .catch(() => {
+        setIsAuthenticated(false)
+      })
+  }, [])
+
+  const login = useCallback((newRole: string, newName: string, timeoutMinutes?: number) => {
+    // Token is already set as httpOnly cookie by the server — we only store UI hints.
     localStorage.setItem('auth_role', newRole)
     localStorage.setItem('auth_name', newName)
     if (timeoutMinutes) {
       localStorage.setItem('session_timeout', String(timeoutMinutes))
       setSessionTimeout(timeoutMinutes)
     }
-    setToken(newToken)
     setRole(newRole)
     setDisplayName(newName)
+    setIsAuthenticated(true)
     navigate('/')
   }, [navigate])
 
-  const logout = useCallback(() => {
-    localStorage.removeItem('auth_token')
+  const logout = useCallback(async () => {
+    try {
+      await api.logout() // clears the httpOnly cookie server-side
+    } catch {
+      // proceed with client-side cleanup regardless
+    }
     localStorage.removeItem('auth_role')
     localStorage.removeItem('auth_name')
     localStorage.removeItem('session_timeout')
-    setToken(null)
     setRole('')
     setDisplayName('')
+    setIsAuthenticated(false)
     navigate('/login')
   }, [navigate])
 
   // Auto-logout on inactivity
-  useIdleTimeout(sessionTimeout, logout, isAuthenticated)
+  useIdleTimeout(sessionTimeout, logout, isAuthenticated === true)
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
@@ -90,10 +103,29 @@ function AppContent() {
         : 'text-gray-300 hover:bg-gray-700 hover:text-white'
     }`
 
-  // If not authenticated, show login
+  // Still checking auth (first render)
+  if (isAuthenticated === null) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <div className="text-gray-500 text-sm">Loading...</div>
+      </div>
+    )
+  }
+
+  // Auth context value — token is null since it lives in httpOnly cookie
+  const authValue = {
+    token: null,
+    role,
+    displayName,
+    login,
+    logout,
+    isAuthenticated: isAuthenticated === true,
+    isAdmin,
+  }
+
   if (!isAuthenticated) {
     return (
-      <AuthContext.Provider value={{ token, role, displayName, login, logout, isAuthenticated, isAdmin }}>
+      <AuthContext.Provider value={authValue}>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
@@ -103,7 +135,7 @@ function AppContent() {
   }
 
   return (
-    <AuthContext.Provider value={{ token, role, displayName, login, logout, isAuthenticated, isAdmin }}>
+    <AuthContext.Provider value={authValue}>
       <div className="min-h-screen bg-gray-950">
         {/* Navigation bar */}
         <nav className="bg-gray-900 border-b border-gray-800">

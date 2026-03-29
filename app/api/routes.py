@@ -4,7 +4,7 @@ All routes (except /api/login) require JWT authentication.
 """
 
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
@@ -18,7 +18,7 @@ from app.api.schemas import (
 )
 from app.api.auth import (
     LoginRequest, TokenResponse, UserCreate, UserUpdate, UserInfo,
-    create_token, require_auth, require_admin, require_write,
+    create_token, require_auth, require_admin, require_write, COOKIE_NAME,
 )
 from app.models.user import User, verify_password, hash_password
 from app.config import settings
@@ -45,7 +45,7 @@ def get_engine():
 
 # ------------------------------------------------------------------ Auth
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest, db: Session = Depends(get_db)):
+def login(body: LoginRequest, response: Response, db: Session = Depends(get_db)):
     user = db.query(User).filter(
         User.username == body.username, User.is_active == True
     ).first()
@@ -55,11 +55,26 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     user.last_login = datetime.now(timezone.utc)
     db.commit()
     logger.info("User '%s' (%s) logged in", user.username, user.role)
+    # Set httpOnly cookie — not readable by JavaScript (XSS-safe)
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        max_age=expires_in,
+        path="/api",
+    )
     return TokenResponse(
-        access_token=token, expires_in=expires_in,
+        expires_in=expires_in,
         session_timeout_minutes=settings.session_timeout_minutes,
         role=user.role, display_name=user.display_name or user.username,
     )
+
+
+@router.post("/logout")
+def logout(response: Response, _user: dict = Depends(require_auth)):
+    response.delete_cookie(key=COOKIE_NAME, path="/api")
+    return {"ok": True}
 
 
 @router.get("/me")
@@ -460,17 +475,23 @@ def engine_status(_user: dict = Depends(require_auth)):
 
 
 @router.post("/symbols/add")
-def add_symbol(body: dict, _user: dict = Depends(require_admin)):
+def add_symbol(body: dict, db: Session = Depends(get_db), _user: dict = Depends(require_admin)):
+    from app.models.symbol import TradingSymbol
     engine = get_engine()
     symbol = body.get("symbol", "").upper()
     if not symbol:
         raise HTTPException(400, "Symbol is required")
     engine.add_symbol(symbol)
+    # Persist to DB so it survives restarts
+    if not db.query(TradingSymbol).filter(TradingSymbol.symbol == symbol).first():
+        db.add(TradingSymbol(symbol=symbol))
+        db.commit()
     return {"symbols": engine.symbols}
 
 
 @router.post("/symbols/remove")
-def remove_symbol(body: dict, _user: dict = Depends(require_admin)):
+def remove_symbol(body: dict, db: Session = Depends(get_db), _user: dict = Depends(require_admin)):
+    from app.models.symbol import TradingSymbol
     engine = get_engine()
     symbol = body.get("symbol", "").upper()
     if not symbol:
@@ -478,6 +499,11 @@ def remove_symbol(body: dict, _user: dict = Depends(require_admin)):
     if len(engine.symbols) <= 1:
         raise HTTPException(400, "Cannot remove the last symbol")
     engine.remove_symbol(symbol)
+    # Remove from DB
+    row = db.query(TradingSymbol).filter(TradingSymbol.symbol == symbol).first()
+    if row:
+        db.delete(row)
+        db.commit()
     return {"symbols": engine.symbols}
 
 

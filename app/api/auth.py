@@ -1,6 +1,9 @@
 """
 JWT authentication with database-backed users and role-based access.
 
+Token transport: httpOnly cookie (auth_token) preferred over Bearer header.
+The Bearer header is still accepted for API clients / CLI usage.
+
 Roles:
   - admin: full access
   - user:  view + configure strategies/risk
@@ -10,7 +13,7 @@ Roles:
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from pydantic import BaseModel
@@ -24,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 security = HTTPBearer(auto_error=False)
 ALGORITHM = "HS256"
+COOKIE_NAME = "auth_token"
 
 
 # ------------------------------------------------------------------ Schemas
@@ -33,7 +37,6 @@ class LoginRequest(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    access_token: str
     token_type: str = "bearer"
     expires_in: int
     session_timeout_minutes: int
@@ -90,18 +93,35 @@ def decode_token(token: str) -> dict | None:
     return None
 
 
+def _extract_token(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None,
+) -> str | None:
+    """Extract JWT from httpOnly cookie first, then fall back to Bearer header."""
+    # 1. Cookie (preferred — not accessible to JavaScript)
+    cookie_token = request.cookies.get(COOKIE_NAME)
+    if cookie_token:
+        return cookie_token
+    # 2. Bearer header (for API clients / CLI)
+    if credentials and credentials.credentials:
+        return credentials.credentials
+    return None
+
+
 # ------------------------------------------------------------------ Dependencies
 async def require_auth(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> dict:
     """Returns {"username": str, "role": str} or raises 401."""
-    if credentials is None:
+    token = _extract_token(request, credentials)
+    if token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    data = decode_token(credentials.credentials)
+    data = decode_token(token)
     if data is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

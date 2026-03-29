@@ -30,16 +30,17 @@ def get_db():
 
 
 def init_db():
-    """Create all tables and seed admin user if needed."""
-    from app.models import trade, portfolio, user  # noqa: F401
+    """Create all tables, seed admin user, and seed default symbols if needed."""
+    from app.models import trade, portfolio, user, symbol  # noqa: F401
     from app.models.user import User, hash_password
+    from app.models.symbol import TradingSymbol
     from app.config import settings
 
     Base.metadata.create_all(bind=engine)
 
-    # Seed the admin user from .env if it doesn't exist yet
     db = SessionLocal()
     try:
+        # Seed the admin user from .env if it doesn't exist yet
         admin = db.query(User).filter(User.username == settings.auth_username).first()
         if not admin:
             admin = User(
@@ -50,5 +51,22 @@ def init_db():
             )
             db.add(admin)
             db.commit()
+
+        # Seed default symbols from .env if the table is empty
+        if db.query(TradingSymbol).count() == 0:
+            for sym in settings.symbol_list:
+                db.add(TradingSymbol(symbol=sym))
+            db.commit()
+    finally:
+        db.close()
+
+
+def load_symbols_from_db() -> list[str]:
+    """Return the list of active trading symbols from the database."""
+    from app.models.symbol import TradingSymbol
+    db = SessionLocal()
+    try:
+        rows = db.query(TradingSymbol).all()
+        return [r.symbol for r in rows]
     finally:
         db.close()

@@ -10,46 +10,104 @@ Roles:
   - admin: full access (manage users, switch mode, configure everything)
   - user:  view + configure strategies/risk, trade with own keys
   - guest: read-only (dashboard, positions, trades, logs)
+
+Security:
+  - Passwords hashed with bcrypt (salted, slow by design)
+  - API keys encrypted with Fernet (AES-128-CBC + HMAC-SHA256)
+    The encryption key is read from ENCRYPTION_KEY in .env.
+    If not set, a random key is generated at startup (keys become unreadable
+    after restart — set a stable key in production).
 """
 
-import base64
-import hashlib
-import secrets
+import logging
 from datetime import datetime, timezone
 
+import bcrypt
+from cryptography.fernet import Fernet
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float
 from app.database import Base
 
+logger = logging.getLogger(__name__)
 
-def hash_password(password: str, salt: str = "") -> str:
-    if not salt:
-        salt = secrets.token_hex(16)
-    hashed = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
-    return f"{salt}${hashed}"
+# ---------------------------------------------------------------------------
+# Fernet key — loaded lazily from app.config so we don't import at module
+# level before settings are fully initialised.
+# ---------------------------------------------------------------------------
+_fernet: "Fernet | None" = None
+
+
+def _get_fernet() -> Fernet:
+    global _fernet
+    if _fernet is None:
+        from app.config import settings
+        key = settings.encryption_key
+        if not key:
+            # Auto-generate an ephemeral key — warn operator that keys won't
+            # survive a restart unless ENCRYPTION_KEY is set in .env.
+            key = Fernet.generate_key().decode()
+            logger.warning(
+                "ENCRYPTION_KEY not set — using ephemeral key. "
+                "Stored API keys will be unreadable after restart. "
+                "Set ENCRYPTION_KEY in .env for production."
+            )
+        _fernet = Fernet(key.encode() if isinstance(key, str) else key)
+    return _fernet
+
+
+# ---------------------------------------------------------------------------
+# Password helpers (bcrypt)
+# ---------------------------------------------------------------------------
+
+def hash_password(password: str) -> str:
+    """Return a bcrypt hash of the password (includes salt)."""
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
-    if "$" not in stored_hash:
+    """Verify password against a bcrypt hash. Also supports legacy SHA256 hashes."""
+    if not stored_hash:
         return False
-    salt, _ = stored_hash.split("$", 1)
-    return hash_password(password, salt) == stored_hash
+    # Legacy SHA256 format: "salt$hexhash"
+    if stored_hash.startswith("$2b$") or stored_hash.startswith("$2a$"):
+        try:
+            return bcrypt.checkpw(password.encode(), stored_hash.encode())
+        except Exception:
+            return False
+    # Legacy SHA256 migration path
+    if "$" in stored_hash:
+        import hashlib
+        salt, _ = stored_hash.split("$", 1)
+        import hashlib
+        hashed = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
+        return f"{salt}${hashed}" == stored_hash
+    return False
 
 
-def _obfuscate(value: str) -> str:
-    """Simple base64 obfuscation for API keys stored in DB."""
+# ---------------------------------------------------------------------------
+# API key encryption helpers (Fernet)
+# ---------------------------------------------------------------------------
+
+def _encrypt(value: str) -> str:
+    """Encrypt a string with Fernet. Returns empty string for empty input."""
     if not value:
         return ""
-    return base64.b64encode(value.encode()).decode()
+    return _get_fernet().encrypt(value.encode()).decode()
 
 
-def _deobfuscate(value: str) -> str:
+def _decrypt(value: str) -> str:
+    """Decrypt a Fernet-encrypted string. Falls back gracefully on errors."""
     if not value:
         return ""
     try:
-        return base64.b64decode(value.encode()).decode()
+        return _get_fernet().decrypt(value.encode()).decode()
     except Exception:
-        return value
+        logger.warning("Failed to decrypt API key — key may have changed or data is corrupted")
+        return ""
 
+
+# ---------------------------------------------------------------------------
+# User model
+# ---------------------------------------------------------------------------
 
 class User(Base):
     __tablename__ = "users"
@@ -64,7 +122,7 @@ class User(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_login = Column(DateTime, nullable=True)
 
-    # Per-user Binance API keys (base64 obfuscated)
+    # Per-user Binance API keys (Fernet-encrypted)
     binance_api_key = Column(String, default="")
     binance_api_secret = Column(String, default="")
     binance_testnet_api_key = Column(String, default="")
@@ -80,20 +138,20 @@ class User(Base):
 
     def set_api_keys(self, api_key: str = "", api_secret: str = "",
                      testnet_key: str = "", testnet_secret: str = ""):
-        self.binance_api_key = _obfuscate(api_key)
-        self.binance_api_secret = _obfuscate(api_secret)
-        self.binance_testnet_api_key = _obfuscate(testnet_key)
-        self.binance_testnet_api_secret = _obfuscate(testnet_secret)
+        self.binance_api_key = _encrypt(api_key)
+        self.binance_api_secret = _encrypt(api_secret)
+        self.binance_testnet_api_key = _encrypt(testnet_key)
+        self.binance_testnet_api_secret = _encrypt(testnet_secret)
 
     def get_api_key(self, live: bool = False) -> str:
         if live:
-            return _deobfuscate(self.binance_api_key)
-        return _deobfuscate(self.binance_testnet_api_key)
+            return _decrypt(self.binance_api_key)
+        return _decrypt(self.binance_testnet_api_key)
 
     def get_api_secret(self, live: bool = False) -> str:
         if live:
-            return _deobfuscate(self.binance_api_secret)
-        return _deobfuscate(self.binance_testnet_api_secret)
+            return _decrypt(self.binance_api_secret)
+        return _decrypt(self.binance_testnet_api_secret)
 
     def has_api_keys(self, live: bool = False) -> bool:
         return bool(self.get_api_key(live) and self.get_api_secret(live))

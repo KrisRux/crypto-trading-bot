@@ -26,8 +26,9 @@ class BinanceWebSocket:
     The testnet does not provide reliable WebSocket streams.
     """
 
-    def __init__(self, testnet: bool = True):
-        # Always use live WS for price data — it's public and doesn't require API keys
+    def __init__(self):
+        # Always use live WS for price data — public, no auth required.
+        # Binance testnet does not provide reliable WebSocket streams.
         self.base_url = LIVE_WS
         self._callbacks: list[Callable] = []
         self._running = False

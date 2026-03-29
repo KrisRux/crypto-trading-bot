@@ -35,6 +35,9 @@ async def lifespan(app: FastAPI):
     """Start the trading engine on app startup, stop on shutdown."""
     global engine
 
+    # Warn about insecure default configuration values
+    settings.warn_insecure_defaults()
+
     # Initialize database tables
     init_db()
     logger.info("Database initialized")

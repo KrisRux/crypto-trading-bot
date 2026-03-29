@@ -1,10 +1,10 @@
 import { createContext, useContext } from 'react'
 
 export interface AuthState {
-  token: string | null
+  token: null  // always null — token lives in httpOnly cookie, not in JS
   role: string
   displayName: string
-  login: (token: string, role: string, displayName: string, timeoutMinutes?: number) => void
+  login: (role: string, displayName: string, timeoutMinutes?: number) => void
   logout: () => void
   isAuthenticated: boolean
   isAdmin: boolean

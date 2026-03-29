@@ -19,7 +19,8 @@ export default function Login() {
     setLoading(true)
     try {
       const res = await api.login(username, password)
-      login(res.access_token, res.role, res.display_name, res.session_timeout_minutes)
+      // Token is set as httpOnly cookie by the server — pass only UI hints
+      login(res.role, res.display_name, res.session_timeout_minutes)
     } catch {
       setError(t('Credenziali non valide', 'Invalid credentials'))
     } finally {

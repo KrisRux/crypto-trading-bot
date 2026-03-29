@@ -13,9 +13,9 @@ export default function Dashboard() {
   const fetchTrades = useCallback(() => api.getTrades(), [])
   const fetchEngine = useCallback(() => api.getEngineStatus(), [])
 
-  const [balance] = usePolling<Balance>(fetchBalance, 5000)
-  const [positions] = usePolling<Position[]>(fetchPositions, 5000)
-  const [trades] = usePolling<TradeItem[]>(fetchTrades, 10000)
+  const [balance, , , refetchBalance] = usePolling<Balance>(fetchBalance, 5000)
+  const [positions, , , refetchPositions] = usePolling<Position[]>(fetchPositions, 5000)
+  const [trades, , , refetchTrades] = usePolling<TradeItem[]>(fetchTrades, 10000)
   const [engine] = usePolling<EngineStatus>(fetchEngine, 5000)
 
   const dataMode = balance?.mode || 'paper'
@@ -61,7 +61,9 @@ export default function Dashboard() {
     if (!confirm(t('reset_confirm'))) return
     try {
       await api.resetPaperPortfolio()
-      window.location.reload()
+      refetchBalance()
+      refetchPositions()
+      refetchTrades()
     } catch (e) {
       alert(`${t('reset_failed')}: ${e}`)
     }
