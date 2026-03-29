@@ -151,10 +151,24 @@ class TradingEngine:
         if not within_hours:
             return
 
-        for signal in signals:
-            if signal.signal_type == SignalType.HOLD:
-                continue
-            await self._execute_order(db, user, signal)
+        actionable = [s for s in signals if s.signal_type != SignalType.HOLD]
+        buy_signals = [s for s in actionable if s.signal_type == SignalType.BUY]
+        sell_signals = [s for s in actionable if s.signal_type == SignalType.SELL]
+
+        if buy_signals and sell_signals:
+            logger.info(
+                "User %d: conflicting signals on %s — %d BUY [%s] vs %d SELL [%s], skipping",
+                user.id, symbol,
+                len(buy_signals), ", ".join(s.strategy_name for s in buy_signals),
+                len(sell_signals), ", ".join(s.strategy_name for s in sell_signals),
+            )
+            return
+
+        # Execute deduplicated signals: one BUY or one SELL per cycle per symbol
+        if buy_signals:
+            await self._execute_order(db, user, buy_signals[0])
+        elif sell_signals:
+            await self._execute_order(db, user, sell_signals[0])
 
     async def _load_lot_sizes(self):
         """Fetch step sizes from Binance exchangeInfo for all symbols."""
