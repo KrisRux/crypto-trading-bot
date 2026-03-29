@@ -78,6 +78,20 @@ const translations = {
   // -- Skills page --
   nav_skills: { it: 'Skills', en: 'Skills' },
 
+  // -- Assets page --
+  nav_assets: { it: 'Asset', en: 'Assets' },
+  assets_title: { it: 'I Miei Asset', en: 'My Assets' },
+  assets_mode_paper: { it: 'Testnet (Paper)', en: 'Testnet (Paper)' },
+  assets_mode_live: { it: 'Live', en: 'Live' },
+  assets_no_data: { it: 'Nessun asset trovato. Configura le chiavi API nelle impostazioni.', en: 'No assets found. Configure API keys in settings.' },
+  asset: { it: 'Asset', en: 'Asset' },
+  free: { it: 'Disponibile', en: 'Free' },
+  locked: { it: 'Bloccato', en: 'Locked' },
+  total_qty: { it: 'Totale', en: 'Total' },
+  price_usdt: { it: 'Prezzo (USDT)', en: 'Price (USDT)' },
+  value_usdt: { it: 'Valore (USDT)', en: 'Value (USDT)' },
+  total_value: { it: 'Valore Totale', en: 'Total Value' },
+
   // -- Settings --
   nav_settings: { it: 'Impostazioni', en: 'Settings' },
 } as const

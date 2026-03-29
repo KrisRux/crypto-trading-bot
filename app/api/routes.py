@@ -521,6 +521,56 @@ def remove_symbol(body: dict, _user: dict = Depends(require_admin)):
     return {"symbols": engine.symbols}
 
 
+# ------------------------------------------------------------------ Assets
+@router.get("/assets")
+async def get_assets(db: Session = Depends(get_db), user_info: dict = Depends(require_auth)):
+    from app.binance_client.rest_client import BinanceRestClient
+    engine = get_engine()
+    user = _get_user_obj(user_info, db)
+    user_mode = user.trading_mode or "paper"
+    is_live = user_mode == "live"
+
+    result = []
+    if not user.has_api_keys(live=is_live):
+        return result
+
+    client = BinanceRestClient(
+        api_key=user.get_api_key(live=is_live),
+        api_secret=user.get_api_secret(live=is_live),
+        testnet=not is_live,
+    )
+    try:
+        account = await client.get_account()
+        for b in account.get("balances", []):
+            asset = b["asset"]
+            free = float(b.get("free", 0))
+            locked = float(b.get("locked", 0))
+            total = free + locked
+            if total <= 0:
+                continue
+            if asset == "USDT":
+                price = 1.0
+            else:
+                price = engine.last_prices.get(asset + "USDT", 0.0)
+                if price == 0:
+                    continue  # skip assets with no known USDT price
+            result.append({
+                "asset": asset,
+                "free": free,
+                "locked": locked,
+                "total": total,
+                "price_usdt": price,
+                "value_usdt": total * price,
+            })
+    except Exception as exc:
+        logger.warning("Failed to fetch assets for user %d: %s", user.id, exc)
+    finally:
+        await client.close()
+
+    result.sort(key=lambda x: x["value_usdt"], reverse=True)
+    return result
+
+
 # ------------------------------------------------------------------ Embient Skills
 @router.get("/skills/summary")
 def skills_summary(_user: dict = Depends(require_auth)):

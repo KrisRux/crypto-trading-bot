@@ -161,6 +161,15 @@ export interface SkillsSummary {
   categories: Record<string, number>
 }
 
+export interface AssetItem {
+  asset: string
+  free: number
+  locked: number
+  total: number
+  price_usdt: number
+  value_usdt: number
+}
+
 // -- API calls --
 export const api = {
   login: (username: string, password: string) =>
@@ -199,6 +208,7 @@ export const api = {
     request<{ symbols: string[] }>('/symbols/remove', {
       method: 'POST', body: JSON.stringify({ symbol }),
     }),
+  getAssets: () => request<AssetItem[]>('/assets'),
   getSkillsSummary: () => request<SkillsSummary>('/skills/summary'),
   getSkills: (category?: string) =>
     request<SkillItem[]>(category ? `/skills?category=${category}` : '/skills'),
