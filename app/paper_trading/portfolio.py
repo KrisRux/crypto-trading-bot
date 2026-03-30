@@ -166,9 +166,16 @@ class PaperPortfolioManager:
 
     def reset(self, db: Session, user_id: int):
         portfolio = self.get_or_create(db, user_id)
+        # Delete open paper positions
         db.query(PaperPosition).filter(
             PaperPosition.user_id == user_id
-        ).delete()
+        ).delete(synchronize_session=False)
+        # Delete all paper trades so PnL/win-rate stats recalculate from zero
+        db.query(Trade).filter(
+            Trade.user_id == user_id,
+            Trade.mode == "paper",
+        ).delete(synchronize_session=False)
+        # Reset portfolio counters
         portfolio.cash_balance = portfolio.initial_capital
         portfolio.total_equity = portfolio.initial_capital
         portfolio.total_pnl = 0.0

@@ -448,6 +448,10 @@ def reset_paper_portfolio(db: Session = Depends(get_db),
     engine = get_engine()
     user_id = _get_user_id(user_info, db)
     engine.paper_portfolio.reset(db, user_id)
+    # Clear per-symbol cooldown timers so trading can resume immediately
+    stale_keys = [k for k in engine._last_trade_time if k[0] == user_id]
+    for k in stale_keys:
+        del engine._last_trade_time[k]
     return {"ok": True}
 
 
