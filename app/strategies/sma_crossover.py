@@ -15,7 +15,7 @@ class SmaCrossoverStrategy(Strategy):
     name = "sma_crossover"
     enabled = True
 
-    def __init__(self, fast_period: int = 10, slow_period: int = 30,
+    def __init__(self, fast_period: int = 20, slow_period: int = 50,
                  adx_period: int = 14, adx_threshold: float = 25.0):
         self.fast_period = fast_period
         self.slow_period = slow_period
