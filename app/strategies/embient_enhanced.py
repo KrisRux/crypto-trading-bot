@@ -156,7 +156,6 @@ class EmbientEnhancedStrategy(Strategy):
             "bb_period": self.bb_period,
             "bb_std": self.bb_std,
             "adx_trend_threshold": self.adx_trend_threshold,
-            "active_skill_rules": len(self._active_rules),
             "enabled": self.enabled,
         }
 

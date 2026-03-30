@@ -82,7 +82,12 @@ export default function Strategies() {
                       <input
                         type="number"
                         defaultValue={String(val)}
-                        onBlur={(e) => updateParam(s.name, key, e.target.value)}
+                        onBlur={(e) => {
+                          // Only send update if value actually changed
+                          if (parseFloat(e.target.value) !== Number(val)) {
+                            updateParam(s.name, key, e.target.value)
+                          }
+                        }}
                         className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-blue-500"
                       />
                     </div>
