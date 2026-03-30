@@ -64,6 +64,21 @@ function AppContent() {
       })
   }, [])
 
+  // Listen for session-expired events dispatched by the API client (any 401).
+  // This avoids window.location.href reloads that caused infinite loops on mobile.
+  useEffect(() => {
+    const handler = () => {
+      localStorage.removeItem('auth_role')
+      localStorage.removeItem('auth_name')
+      localStorage.removeItem('session_timeout')
+      setRole('')
+      setDisplayName('')
+      setIsAuthenticated(false)
+    }
+    window.addEventListener('auth:expired', handler)
+    return () => window.removeEventListener('auth:expired', handler)
+  }, [])
+
   const login = useCallback((newRole: string, newName: string, timeoutMinutes?: number) => {
     // Token is already set as httpOnly cookie by the server — we only store UI hints.
     localStorage.setItem('auth_role', newRole)

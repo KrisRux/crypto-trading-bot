@@ -22,10 +22,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   })
 
   if (res.status === 401) {
-    // Cookie expired or invalid — redirect to login (skip if already there)
-    if (window.location.pathname !== '/login') {
-      window.location.href = '/login'
-    }
+    // Notify the app that the session is expired/missing.
+    // App.tsx listens for this event and sets isAuthenticated(false),
+    // which lets React Router redirect to /login without a full page reload.
+    window.dispatchEvent(new CustomEvent('auth:expired'))
     throw new Error('Session expired')
   }
   if (!res.ok) {
