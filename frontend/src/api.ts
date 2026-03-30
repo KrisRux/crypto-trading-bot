@@ -22,8 +22,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   })
 
   if (res.status === 401) {
-    // Cookie expired or invalid — redirect to login
-    window.location.href = '/login'
+    // Cookie expired or invalid — redirect to login (skip if already there)
+    if (window.location.pathname !== '/login') {
+      window.location.href = '/login'
+    }
     throw new Error('Session expired')
   }
   if (!res.ok) {
