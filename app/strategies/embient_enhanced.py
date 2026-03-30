@@ -44,8 +44,8 @@ class EmbientEnhancedStrategy(Strategy):
         self,
         skills_library: SkillsLibrary | None = None,
         # Score thresholds (0-100)
-        buy_threshold: float = 60.0,
-        sell_threshold: float = 60.0,
+        buy_threshold: float = 65.0,
+        sell_threshold: float = 65.0,
         # SMA defaults (overridden by skill if available)
         sma_fast: int = 10,
         sma_slow: int = 30,

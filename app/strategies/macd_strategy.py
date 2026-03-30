@@ -15,22 +15,33 @@ class MacdStrategy(Strategy):
     name = "macd_crossover"
     enabled = True
 
-    def __init__(self, fast: int = 12, slow: int = 26, signal: int = 9):
+    def __init__(self, fast: int = 12, slow: int = 26, signal: int = 9,
+                 adx_period: int = 14, adx_threshold: float = 25.0):
         self.fast = fast
         self.slow = slow
         self.signal = signal
+        self.adx_period = adx_period
+        self.adx_threshold = adx_threshold
 
     def get_params(self) -> dict:
         return {
             "fast": self.fast,
             "slow": self.slow,
             "signal": self.signal,
+            "adx_period": self.adx_period,
+            "adx_threshold": self.adx_threshold,
             "enabled": self.enabled,
         }
 
     def generate_signals(self, df: pd.DataFrame, symbol: str) -> list[Signal]:
         if len(df) < self.slow + self.signal + 1:
             return []
+
+        # ADX filter: only trade MACD crossovers in trending markets (ADX > threshold)
+        if "high" in df.columns and "low" in df.columns and len(df) >= self.adx_period * 2 + 2:
+            adx = Indicators.adx(df["high"], df["low"], df["close"], self.adx_period)
+            if pd.notna(adx.iloc[-1]) and float(adx.iloc[-1]) < self.adx_threshold:
+                return []  # ranging market — MACD crossovers produce false signals
 
         macd_line, signal_line, _ = Indicators.macd(
             df["close"], self.fast, self.slow, self.signal

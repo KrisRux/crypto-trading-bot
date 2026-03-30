@@ -15,20 +15,31 @@ class SmaCrossoverStrategy(Strategy):
     name = "sma_crossover"
     enabled = True
 
-    def __init__(self, fast_period: int = 10, slow_period: int = 30):
+    def __init__(self, fast_period: int = 10, slow_period: int = 30,
+                 adx_period: int = 14, adx_threshold: float = 25.0):
         self.fast_period = fast_period
         self.slow_period = slow_period
+        self.adx_period = adx_period
+        self.adx_threshold = adx_threshold
 
     def get_params(self) -> dict:
         return {
             "fast_period": self.fast_period,
             "slow_period": self.slow_period,
+            "adx_period": self.adx_period,
+            "adx_threshold": self.adx_threshold,
             "enabled": self.enabled,
         }
 
     def generate_signals(self, df: pd.DataFrame, symbol: str) -> list[Signal]:
         if len(df) < self.slow_period + 1:
             return []
+
+        # ADX filter: only trade in trending markets (ADX > threshold)
+        if "high" in df.columns and "low" in df.columns and len(df) >= self.adx_period * 2 + 2:
+            adx = Indicators.adx(df["high"], df["low"], df["close"], self.adx_period)
+            if pd.notna(adx.iloc[-1]) and float(adx.iloc[-1]) < self.adx_threshold:
+                return []  # ranging market — SMA crossovers are noise
 
         close = df["close"]
         fast = Indicators.sma(close, self.fast_period)

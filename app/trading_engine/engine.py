@@ -8,7 +8,7 @@ portfolio; users with live keys get real orders on their own Binance account.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from sqlalchemy.orm import Session
@@ -49,6 +49,9 @@ class TradingEngine:
         self.signals_log: list[dict] = []
         # Lot size (step size decimals) per symbol, loaded from Binance at startup
         self._qty_decimals: dict[str, int] = {}
+        # Cooldown: track last BUY execution time per (user_id, symbol) to avoid overtrading
+        self._last_trade_time: dict[tuple[int, str], datetime] = {}
+        self._trade_cooldown_minutes: int = 30
 
     @property
     def last_price(self) -> float:
@@ -147,6 +150,29 @@ class TradingEngine:
             return
 
         if buy_signals:
+            # Skip if there is already an open paper position on this symbol
+            existing = db.query(Trade).filter(
+                Trade.user_id == user.id,
+                Trade.status == TradeStatus.OPEN,
+                Trade.mode == "paper",
+                Trade.symbol == symbol,
+            ).first()
+            if existing:
+                return
+
+            # Cooldown: skip if a trade was opened too recently on this symbol
+            cooldown_key = (user.id, symbol)
+            last_trade = self._last_trade_time.get(cooldown_key)
+            if last_trade is not None:
+                elapsed = datetime.now(timezone.utc) - last_trade
+                if elapsed < timedelta(minutes=self._trade_cooldown_minutes):
+                    logger.debug(
+                        "User %d [paper]: cooldown active for %s (%.0f min remaining)",
+                        user.id, symbol,
+                        (timedelta(minutes=self._trade_cooldown_minutes) - elapsed).seconds / 60,
+                    )
+                    return
+
             portfolio = self.paper_portfolio.get_or_create(
                 db, user.id, user.paper_initial_capital
             )
@@ -159,6 +185,7 @@ class TradingEngine:
             sl = self.risk_manager.calculate_stop_loss(current_price)
             tp = self.risk_manager.calculate_take_profit(current_price)
             self.paper_portfolio.open_position(db, user.id, symbol, qty, current_price, sl, tp)
+            self._last_trade_time[cooldown_key] = datetime.now(timezone.utc)
 
         elif sell_signals:
             self.paper_portfolio.close_all_positions(db, user.id, symbol, current_price)
@@ -276,6 +303,19 @@ class TradingEngine:
                                  user.id, signal.symbol, existing.id)
                     return
 
+                # Cooldown: skip if a trade was opened too recently on this symbol
+                cooldown_key = (user.id, signal.symbol)
+                last_trade = self._last_trade_time.get(cooldown_key)
+                if last_trade is not None:
+                    elapsed = datetime.now(timezone.utc) - last_trade
+                    if elapsed < timedelta(minutes=self._trade_cooldown_minutes):
+                        logger.debug(
+                            "User %d [live]: cooldown active for %s (%.0f min remaining)",
+                            user.id, signal.symbol,
+                            (timedelta(minutes=self._trade_cooldown_minutes) - elapsed).seconds / 60,
+                        )
+                        return
+
                 account = await client.get_account()
                 usdt = next(
                     (b for b in account.get("balances", []) if b["asset"] == "USDT"),
@@ -297,6 +337,7 @@ class TradingEngine:
                     return
 
                 order.user_id = user.id
+                self._last_trade_time[(user.id, signal.symbol)] = datetime.now(timezone.utc)
                 filled_price = order.filled_price or signal.price
                 trade = Trade(
                     user_id=user.id, symbol=signal.symbol, side=OrderSide.BUY,
@@ -369,7 +410,7 @@ class TradingEngine:
 
             for symbol in self.symbols:
                 try:
-                    df = await self.fetch_klines(symbol)
+                    df = await self.fetch_klines(symbol, interval="15m", limit=150)
                     if df.empty:
                         continue
 
@@ -425,7 +466,7 @@ class TradingEngine:
 
         while self.running:
             await self.run_cycle()
-            await asyncio.sleep(60)
+            await asyncio.sleep(900)  # 15 minutes — matches the 15m candle interval
 
     async def stop(self):
         self.running = False
