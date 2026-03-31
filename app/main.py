@@ -22,6 +22,7 @@ from app.strategies.rsi_strategy import RsiStrategy
 from app.strategies.macd_strategy import MacdStrategy
 from app.strategies.embient_enhanced import EmbientEnhancedStrategy
 from app.embient_skills.loader import SkillsLibrary
+from app.strategy_store import load_strategy_params, load_risk_params
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -49,18 +50,26 @@ async def lifespan(app: FastAPI):
     # Create and configure the trading engine
     engine = TradingEngine()
 
-    # Register strategies — EmbientEnhancedStrategy reads params from skills_library
-    engine.register_strategy(SmaCrossoverStrategy(fast_period=10, slow_period=30))
-    engine.register_strategy(RsiStrategy(period=14, oversold=30, overbought=70))
-    engine.register_strategy(MacdStrategy(fast=12, slow=26, signal=9))
-    engine.register_strategy(EmbientEnhancedStrategy(
-        skills_library=skills_library,
-        trend_buy_threshold=65.0,
-        trend_sell_threshold=65.0,
-        range_buy_threshold=60.0,
-        range_sell_threshold=60.0,
-        neutral_sell_threshold=72.0,
-    ))
+    # Register strategies with class defaults (may be overridden by saved params below)
+    engine.register_strategy(SmaCrossoverStrategy())
+    engine.register_strategy(RsiStrategy())
+    engine.register_strategy(MacdStrategy())
+    engine.register_strategy(EmbientEnhancedStrategy(skills_library=skills_library))
+
+    # Restore persisted params saved by the UI (survives restarts)
+    saved_strategies = load_strategy_params()
+    for strat in engine.strategies:
+        if strat.name in saved_strategies:
+            saved = saved_strategies[strat.name]
+            strat.enabled = saved.get("enabled", strat.enabled)
+            if "params" in saved:
+                strat.set_params(saved["params"])
+            logger.info("Strategy '%s': restored saved params", strat.name)
+
+    saved_risk = load_risk_params()
+    if saved_risk:
+        engine.risk_manager.set_params(saved_risk)
+        logger.info("Risk manager: restored saved params")
 
     # Make engine and skills available to API routes
     set_engine(engine, skills_library)

@@ -22,6 +22,7 @@ from app.api.auth import (
 )
 from app.models.user import User, verify_password, hash_password
 from app.config import settings
+from app.strategy_store import save_strategy_params, save_risk_params
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -418,6 +419,11 @@ def update_strategy(body: StrategyUpdate, _user: dict = Depends(require_write)):
         strat.set_params(body.params)
     logger.info("Strategy '%s' updated: enabled=%s params=%s",
                 body.name, strat.enabled, strat.get_params())
+    # Persist all strategy params so they survive restarts
+    save_strategy_params({
+        s.name: {"enabled": s.enabled, "params": s.get_params()}
+        for s in engine.strategies
+    })
     return {"ok": True}
 
 
@@ -431,6 +437,7 @@ def get_risk_params(_user: dict = Depends(require_auth)):
 def update_risk_params(body: RiskParams, _user: dict = Depends(require_write)):
     engine = get_engine()
     engine.risk_manager.set_params(body.model_dump())
+    save_risk_params(engine.risk_manager.get_params())
     return engine.risk_manager.get_params()
 
 
