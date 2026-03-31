@@ -13,6 +13,13 @@ export default function Strategies() {
   const [risk, , , refetchRisk] = usePolling<RiskParams>(fetchRisk, 10000)
 
   const [riskForm, setRiskForm] = useState<RiskParams | null>(null)
+  // Track which field was just saved: "strategyName:paramKey"
+  const [savedField, setSavedField] = useState<string | null>(null)
+
+  const flashSaved = (key: string) => {
+    setSavedField(key)
+    setTimeout(() => setSavedField(null), 1500)
+  }
 
   const toggleStrategy = async (name: string, enabled: boolean) => {
     try {
@@ -28,6 +35,7 @@ export default function Strategies() {
     if (isNaN(numVal)) return
     try {
       await api.updateStrategy({ name, params: { [paramKey]: numVal } })
+      flashSaved(`${name}:${paramKey}`)
       refetchStrats()
     } catch (e) {
       alert(`${t('update_failed')}: ${e}`)
@@ -83,12 +91,15 @@ export default function Strategies() {
                         type="number"
                         defaultValue={String(val)}
                         onBlur={(e) => {
-                          // Only send update if value actually changed
                           if (parseFloat(e.target.value) !== Number(val)) {
                             updateParam(s.name, key, e.target.value)
                           }
                         }}
-                        className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-blue-500"
+                        className={`flex-1 bg-gray-800 border rounded px-2 py-1 text-sm text-white focus:outline-none transition-colors duration-300 ${
+                          savedField === `${s.name}:${key}`
+                            ? 'border-emerald-500 focus:border-emerald-500'
+                            : 'border-gray-700 focus:border-blue-500'
+                        }`}
                       />
                     </div>
                   ))}
