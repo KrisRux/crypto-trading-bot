@@ -4,12 +4,13 @@ Embient-Enhanced Strategy — regime-aware, score-based.
 Market regimes (derived from ADX):
   TREND   : ADX >= adx_trend_threshold (default 25) — trend-following logic
   RANGE   : ADX <  adx_range_threshold  (default 20) — mean-reversion logic
-  NEUTRAL : ADX between the two thresholds            — no new entries
+  NEUTRAL : ADX between the two thresholds            — no new entries; exits only
 
 Each regime has its own buy/sell scoring function (0-100).
-Entry fires only when score >= buy_threshold (default 65).
-Exit fires when score >= sell_threshold (default 65) OR SL/TP is hit
-by the trading engine.
+Entries fire only when score >= regime threshold AND score > opposite direction.
+In NEUTRAL mode, no new entries are opened but SELL signals are allowed
+for exit management (using the higher of trend/range sell scores).
+SL/TP from the trading engine fires independently of this strategy.
 
 Code structure
 --------------
@@ -21,10 +22,19 @@ Code structure
   _score_sell_range()     → 0-100  (mean-reversion exit)
   generate_signals()      → final BUY / SELL / nothing
 
-Presets (apply via UI by editing buy_threshold / sell_threshold):
-  Conservative : threshold 72
-  Balanced     : threshold 65  ← default
-  Aggressive   : threshold 55
+Thresholds are REGIME-SPECIFIC (separate for trend and range).
+In NEUTRAL mode only neutral_sell_threshold applies (exits only).
+
+Presets (set via UI — all five threshold params):
+                    Conservative  Balanced(default)  Aggressive
+  trend_buy_thr        72            65                55
+  trend_sell_thr       72            65                55
+  range_buy_thr        68            60                50
+  range_sell_thr       68            60                50
+  neutral_sell_thr     78            72                65
+  SL %                 2.5           2.0               1.5
+  TP %                 5.0           4.0               3.0
+  max_position_pct     10            15                20
 
 Skills wired in (parameter loading only, not scoring logic):
   moving-average-crossover → SMA periods
@@ -64,9 +74,12 @@ class EmbientEnhancedStrategy(Strategy):
     def __init__(
         self,
         skills_library: SkillsLibrary | None = None,
-        # Score thresholds (0-100) — see presets in module docstring
-        buy_threshold: float = 65.0,
-        sell_threshold: float = 65.0,
+        # Per-regime score thresholds (0-100) — see presets in module docstring
+        trend_buy_threshold: float = 65.0,
+        trend_sell_threshold: float = 65.0,
+        range_buy_threshold: float = 60.0,
+        range_sell_threshold: float = 60.0,
+        neutral_sell_threshold: float = 72.0,   # exits only in neutral mode
         # SMA
         sma_fast: int = 9,
         sma_slow: int = 21,
@@ -87,9 +100,12 @@ class EmbientEnhancedStrategy(Strategy):
         adx_trend_threshold: float = 25.0,   # >= this → TREND mode
         adx_range_threshold: float = 20.0,   # <  this → RANGE mode
     ):
-        self.buy_threshold       = buy_threshold
-        self.sell_threshold      = sell_threshold
-        self.sma_fast            = sma_fast
+        self.trend_buy_threshold   = trend_buy_threshold
+        self.trend_sell_threshold  = trend_sell_threshold
+        self.range_buy_threshold   = range_buy_threshold
+        self.range_sell_threshold  = range_sell_threshold
+        self.neutral_sell_threshold = neutral_sell_threshold
+        self.sma_fast              = sma_fast
         self.sma_slow            = sma_slow
         self.rsi_period          = rsi_period
         self.rsi_oversold        = rsi_oversold
@@ -153,9 +169,12 @@ class EmbientEnhancedStrategy(Strategy):
 
     def get_params(self) -> dict:
         return {
-            "buy_threshold":       self.buy_threshold,
-            "sell_threshold":      self.sell_threshold,
-            "sma_fast":            self.sma_fast,
+            "trend_buy_threshold":   self.trend_buy_threshold,
+            "trend_sell_threshold":  self.trend_sell_threshold,
+            "range_buy_threshold":   self.range_buy_threshold,
+            "range_sell_threshold":  self.range_sell_threshold,
+            "neutral_sell_threshold": self.neutral_sell_threshold,
+            "sma_fast":              self.sma_fast,
             "sma_slow":            self.sma_slow,
             "rsi_period":          self.rsi_period,
             "rsi_oversold":        self.rsi_oversold,
@@ -506,22 +525,60 @@ class EmbientEnhancedStrategy(Strategy):
 
         regime = self._detect_regime(adx_value)
 
-        if regime == REGIME_NEUTRAL:
-            logger.debug(
-                "[%s] Embient: ADX neutral (%.1f) — no new entries",
-                symbol, adx_value or 0,
-            )
-            return []
-
         # --- Compute all indicators once ---
         ind = self._compute_indicators(df)
         current_price = ind["current_price"]
+        signals: list[Signal] = []
 
-        # --- Score both directions ---
+        # ----------------------------------------------------------------
+        # NEUTRAL mode: no new entries, exits only
+        # ----------------------------------------------------------------
+        if regime == REGIME_NEUTRAL:
+            sell_t, sell_t_r = self._score_sell_trend(ind, adx_value)
+            sell_r, sell_r_r = self._score_sell_range(ind, adx_value)
+            # Pick the more convincing exit signal
+            if sell_t >= sell_r:
+                sell_score, sell_reasons = sell_t, sell_t_r
+            else:
+                sell_score, sell_reasons = sell_r, sell_r_r
+            sell_score = max(0.0, min(100.0, sell_score))
+
+            if sell_score >= self.neutral_sell_threshold:
+                reason = (
+                    f"SELL {sell_score:.0f}/100 [neutral-exit]: "
+                    + "; ".join(sell_reasons)
+                )
+                signals.append(Signal(
+                    signal_type=SignalType.SELL,
+                    symbol=symbol,
+                    price=current_price,
+                    strategy_name=self.name,
+                    reason=reason,
+                    confidence=min(sell_score / 100.0, 1.0),
+                    metadata={
+                        "buy_score": 0, "sell_score": sell_score,
+                        "regime": regime, "adx": adx_value,
+                    },
+                ))
+                logger.info("[%s] Embient %s", symbol, reason)
+            else:
+                logger.debug(
+                    "[%s] Embient: ADX neutral (%.1f) — no entry; sell %.0f < %.0f",
+                    symbol, adx_value or 0, sell_score, self.neutral_sell_threshold,
+                )
+            return signals
+
+        # ----------------------------------------------------------------
+        # TREND / RANGE: entries and exits, regime-specific thresholds
+        # ----------------------------------------------------------------
         if regime == REGIME_TREND:
+            threshold_buy  = self.trend_buy_threshold
+            threshold_sell = self.trend_sell_threshold
             buy_score,  buy_reasons  = self._score_buy_trend(ind,  adx_value)
             sell_score, sell_reasons = self._score_sell_trend(ind, adx_value)
         else:  # REGIME_RANGE
+            threshold_buy  = self.range_buy_threshold
+            threshold_sell = self.range_sell_threshold
             buy_score,  buy_reasons  = self._score_buy_range(ind,  adx_value)
             sell_score, sell_reasons = self._score_sell_range(ind, adx_value)
 
@@ -529,9 +586,8 @@ class EmbientEnhancedStrategy(Strategy):
         buy_score  = max(0.0, min(100.0, buy_score))
         sell_score = max(0.0, min(100.0, sell_score))
 
-        signals: list[Signal] = []
-
-        if buy_score >= self.buy_threshold and buy_score > sell_score:
+        # BUY: score above threshold AND strictly greater than sell (tie → no trade)
+        if buy_score >= threshold_buy and buy_score > sell_score:
             reason = (
                 f"BUY {buy_score:.0f}/100 [{regime}]: "
                 + "; ".join(buy_reasons)
@@ -550,7 +606,8 @@ class EmbientEnhancedStrategy(Strategy):
             ))
             logger.info("[%s] Embient %s", symbol, reason)
 
-        elif sell_score >= self.sell_threshold and sell_score > buy_score:
+        # SELL: score above threshold AND strictly greater than buy (tie → no trade)
+        elif sell_score >= threshold_sell and sell_score > buy_score:
             reason = (
                 f"SELL {sell_score:.0f}/100 [{regime}]: "
                 + "; ".join(sell_reasons)
@@ -570,17 +627,22 @@ class EmbientEnhancedStrategy(Strategy):
             logger.info("[%s] Embient %s", symbol, reason)
 
         else:
-            # Detailed skip log — useful for tuning thresholds
-            if buy_score > sell_score:
+            # Detailed skip log — useful for threshold tuning
+            if buy_score == sell_score and buy_score >= threshold_buy:
+                logger.debug(
+                    "[%s] Embient TIE: buy=sell=%.0f [%s] — no trade",
+                    symbol, buy_score, regime,
+                )
+            elif buy_score > sell_score:
                 logger.debug(
                     "[%s] Embient BUY skipped: score %.0f < threshold %.0f [%s] — %s",
-                    symbol, buy_score, self.buy_threshold, regime,
+                    symbol, buy_score, threshold_buy, regime,
                     "; ".join(buy_reasons) or "no conditions met",
                 )
             elif sell_score > 0:
                 logger.debug(
                     "[%s] Embient SELL skipped: score %.0f < threshold %.0f [%s] — %s",
-                    symbol, sell_score, self.sell_threshold, regime,
+                    symbol, sell_score, threshold_sell, regime,
                     "; ".join(sell_reasons) or "no conditions met",
                 )
 
