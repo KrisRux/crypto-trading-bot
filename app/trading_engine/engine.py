@@ -196,9 +196,133 @@ class TradingEngine:
                              symbol: str, signals: list[Signal],
                              current_price: float, within_hours: bool):
         """
-        Paper trading: simulate orders using live market prices.
-        No API keys required — all state stored in the local DB.
+        Paper trading — two sub-paths:
+          • Testnet (preferred): real orders sent to Binance Testnet if keys are configured.
+          • Simulation (fallback): local virtual portfolio, no API calls.
+        Both paths track trades in the DB and share the same risk / cooldown logic.
         """
+        if user.has_api_keys(live=False):
+            await self._execute_paper_testnet(db, user, symbol, signals, current_price, within_hours)
+        else:
+            await self._execute_paper_simulated(db, user, symbol, signals, current_price, within_hours)
+
+    async def _execute_paper_testnet(self, db: Session, user: User,
+                                     symbol: str, signals: list[Signal],
+                                     current_price: float, within_hours: bool):
+        """Paper via Binance Testnet: real orders, virtual money, DB tracking."""
+        client = BinanceRestClient(
+            api_key=user.get_api_key(live=False),
+            api_secret=user.get_api_secret(live=False),
+            testnet=True,
+        )
+        order_mgr = OrderManager(client, mode="paper")
+
+        # TP/SL on open paper positions (always, even outside trading hours)
+        open_trades = db.query(Trade).filter(
+            Trade.user_id == user.id,
+            Trade.status == TradeStatus.OPEN,
+            Trade.mode == "paper",
+            Trade.symbol == symbol,
+        ).all()
+        for trade in open_trades:
+            result = self.risk_manager.should_close_position(
+                trade.entry_price, current_price, trade.stop_loss, trade.take_profit
+            )
+            if result:
+                await self._close_trade(db, user, trade, current_price, result, client, order_mgr)
+
+        if not within_hours:
+            await client.close()
+            return
+
+        actionable = [s for s in signals if s.signal_type != SignalType.HOLD]
+        buy_signals  = [s for s in actionable if s.signal_type == SignalType.BUY]
+        sell_signals = [s for s in actionable if s.signal_type == SignalType.SELL]
+
+        if buy_signals and sell_signals:
+            logger.info("User %d [paper/testnet]: conflicting signals on %s — skip", user.id, symbol)
+            await client.close()
+            return
+
+        try:
+            if buy_signals:
+                existing = db.query(Trade).filter(
+                    Trade.user_id == user.id,
+                    Trade.status == TradeStatus.OPEN,
+                    Trade.mode == "paper",
+                    Trade.symbol == symbol,
+                ).first()
+                if existing:
+                    return
+
+                cooldown_key = (user.id, symbol)
+                last_trade = self._last_trade_time.get(cooldown_key)
+                if last_trade is not None:
+                    elapsed = datetime.now(timezone.utc) - last_trade
+                    if elapsed < timedelta(minutes=self._trade_cooldown_minutes):
+                        logger.debug(
+                            "User %d [paper/testnet]: cooldown active for %s (%.0f min remaining)",
+                            user.id, symbol,
+                            (timedelta(minutes=self._trade_cooldown_minutes) - elapsed).seconds / 60,
+                        )
+                        return
+
+                account = await client.get_account()
+                usdt = next(
+                    (b for b in account.get("balances", []) if b["asset"] == "USDT"),
+                    {"free": "0"},
+                )
+                capital = float(usdt["free"])
+                qty = self._round_qty(
+                    symbol,
+                    self.risk_manager.calculate_position_size(capital, current_price)
+                )
+                if qty <= 0:
+                    return
+
+                sl = self.risk_manager.calculate_stop_loss(current_price)
+                tp = self.risk_manager.calculate_take_profit(current_price)
+                order = await order_mgr.place_market_order(db, symbol, "BUY", qty)
+                if order.status != OrderStatus.FILLED:
+                    logger.warning("User %d [paper/testnet]: BUY not filled, skip", user.id)
+                    return
+
+                order.user_id = user.id
+                self._last_trade_time[cooldown_key] = datetime.now(timezone.utc)
+                filled_price = order.filled_price or current_price
+                trade = Trade(
+                    user_id=user.id, symbol=symbol, side=OrderSide.BUY,
+                    entry_price=filled_price, quantity=qty,
+                    stop_loss=sl, take_profit=tp,
+                    status=TradeStatus.OPEN, mode="paper",
+                    strategy=buy_signals[0].strategy_name, entry_order_id=order.id,
+                )
+                db.add(trade)
+                db.commit()
+                logger.info("User %d [paper/testnet]: BUY %s qty=%.6f @ %.2f",
+                            user.id, symbol, qty, filled_price)
+
+            elif sell_signals:
+                open_trades = db.query(Trade).filter(
+                    Trade.user_id == user.id,
+                    Trade.status == TradeStatus.OPEN,
+                    Trade.mode == "paper",
+                    Trade.symbol == symbol,
+                ).all()
+                if not open_trades:
+                    logger.info("User %d [paper/testnet]: SELL %s — no open positions", user.id, symbol)
+                for trade in open_trades:
+                    await self._close_trade(db, user, trade, current_price, "signal_sell",
+                                            client, order_mgr)
+        except Exception:
+            logger.exception("User %d [paper/testnet]: order failed for %s", user.id, symbol)
+        finally:
+            await client.close()
+
+    async def _execute_paper_simulated(self, db: Session, user: User,
+                                       symbol: str, signals: list[Signal],
+                                       current_price: float, within_hours: bool):
+        """Paper simulation fallback — no API keys needed, virtual portfolio in DB."""
         # Check TP/SL on open paper positions (always, even outside trading hours)
         self.paper_portfolio.check_tp_sl_symbol(db, user.id, symbol, current_price)
 
@@ -211,13 +335,12 @@ class TradingEngine:
 
         if buy_signals and sell_signals:
             logger.info(
-                "User %d [paper]: conflicting signals on %s — skipping",
+                "User %d [paper/sim]: conflicting signals on %s — skipping",
                 user.id, symbol,
             )
             return
 
         if buy_signals:
-            # Skip if there is already an open paper position on this symbol
             existing = db.query(Trade).filter(
                 Trade.user_id == user.id,
                 Trade.status == TradeStatus.OPEN,
@@ -227,14 +350,13 @@ class TradingEngine:
             if existing:
                 return
 
-            # Cooldown: skip if a trade was opened too recently on this symbol
             cooldown_key = (user.id, symbol)
             last_trade = self._last_trade_time.get(cooldown_key)
             if last_trade is not None:
                 elapsed = datetime.now(timezone.utc) - last_trade
                 if elapsed < timedelta(minutes=self._trade_cooldown_minutes):
                     logger.debug(
-                        "User %d [paper]: cooldown active for %s (%.0f min remaining)",
+                        "User %d [paper/sim]: cooldown active for %s (%.0f min remaining)",
                         user.id, symbol,
                         (timedelta(minutes=self._trade_cooldown_minutes) - elapsed).seconds / 60,
                     )
@@ -453,8 +575,8 @@ class TradingEngine:
             trade.exit_order_id = order.id
             trade.closed_at = datetime.now(timezone.utc)
             db.commit()
-            logger.info("User %d [live]: Trade #%d closed (%s) PnL=%.2f",
-                        user.id, trade.id, reason, trade.pnl)
+            logger.info("User %d [%s]: Trade #%d closed (%s) PnL=%.2f",
+                        user.id, order_mgr.mode, trade.id, reason, trade.pnl)
         except Exception:
             logger.exception("User %d: failed to close trade #%d", user.id, trade.id)
 
