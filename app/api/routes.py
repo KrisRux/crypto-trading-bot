@@ -448,6 +448,28 @@ def get_signals(_user: dict = Depends(require_auth)):
     return engine.signals_log[-50:]
 
 
+# ------------------------------------------------------------------ Log tail (admin only)
+@router.get("/logs/tail")
+def tail_logs(lines: int = 200, _admin: dict = Depends(require_admin)):
+    """Return the last N lines of the application log file (admin only)."""
+    import os
+    log_file = "logs/trading_bot.log"
+    if not os.path.exists(log_file):
+        raise HTTPException(404, "Log file not found")
+    try:
+        with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+        tail = all_lines[-lines:]
+        return {
+            "file": log_file,
+            "total_lines": len(all_lines),
+            "returned_lines": len(tail),
+            "content": "".join(tail),
+        }
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to read log: {exc}")
+
+
 # ------------------------------------------------------------------ Paper trading extras
 @router.post("/paper/reset")
 def reset_paper_portfolio(db: Session = Depends(get_db),
