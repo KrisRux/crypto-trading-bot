@@ -55,8 +55,11 @@ async def lifespan(app: FastAPI):
     engine.register_strategy(MacdStrategy(fast=12, slow=26, signal=9))
     engine.register_strategy(EmbientEnhancedStrategy(
         skills_library=skills_library,
-        buy_threshold=55,
-        sell_threshold=55,
+        trend_buy_threshold=65.0,
+        trend_sell_threshold=65.0,
+        range_buy_threshold=60.0,
+        range_sell_threshold=60.0,
+        neutral_sell_threshold=72.0,
     ))
 
     # Make engine and skills available to API routes
