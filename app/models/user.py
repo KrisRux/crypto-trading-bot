@@ -129,7 +129,7 @@ class User(Base):
     binance_testnet_api_secret = Column(String, default="")
 
     # Per-user trading preferences
-    trading_mode = Column(String, default="paper")  # "paper" or "live"
+    trading_mode = Column(String, default="paper")  # "dry_run", "paper", or "live"
     paper_initial_capital = Column(Float, default=10000.0)
 
     # Trading schedule (UTC hours, 0-23). None = always active when enabled.

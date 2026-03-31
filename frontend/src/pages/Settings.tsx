@@ -176,7 +176,7 @@ export default function Settings() {
             )}
           </div>
         )}
-        {form.trading_enabled && (
+        {form.trading_enabled && form.trading_mode !== 'dry_run' && (
           (form.trading_mode === 'paper' && !keys?.has_testnet_keys) ||
           (form.trading_mode === 'live' && !keys?.has_live_keys)
         ) && (
@@ -262,6 +262,16 @@ export default function Settings() {
         <h3 className="text-sm font-semibold text-white">{t('Modalita Trading', 'Trading Mode')}</h3>
         <div className="flex gap-3">
           <button
+            onClick={() => setForm({ ...form, trading_mode: 'dry_run' })}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+              form.trading_mode === 'dry_run'
+                ? 'bg-amber-600 text-white'
+                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+            }`}
+          >
+            Dry Run
+          </button>
+          <button
             onClick={() => setForm({ ...form, trading_mode: 'paper' })}
             className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
               form.trading_mode === 'paper'
@@ -282,6 +292,14 @@ export default function Settings() {
             Live
           </button>
         </div>
+        {form.trading_mode === 'dry_run' && (
+          <div className="bg-amber-900/30 border border-amber-800/50 rounded-lg p-3 text-xs text-amber-300">
+            {t(
+              'Dry Run: il bot analizza il mercato e logga tutto quello che farebbe (segnali, size, SL/TP, rischio), ma non apre nessuna posizione e non chiama Binance. Nessuna chiave API necessaria.',
+              'Dry Run: the bot analyses the market and logs everything it would do (signals, size, SL/TP, risk), but opens no positions and makes no Binance API calls. No API keys required.'
+            )}
+          </div>
+        )}
         {form.trading_mode === 'live' && (
           <div className="bg-red-900/30 border border-red-800/50 rounded-lg p-3 text-xs text-red-300">
             {t(

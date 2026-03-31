@@ -118,12 +118,79 @@ class TradingEngine:
         user_mode = user.trading_mode or "paper"
         within_hours = user.is_within_trading_hours()
 
-        if user_mode == "paper":
+        if user_mode == "dry_run":
+            await self._execute_dry_run(db, user, symbol, signals, current_price, within_hours)
+        elif user_mode == "paper":
             await self._execute_paper(db, user, symbol, signals, current_price, within_hours)
-        else:
+        elif user_mode == "live":
             if not user.has_api_keys(live=True):
                 return
             await self._execute_live(db, user, symbol, signals, current_price, within_hours)
+
+    async def _execute_dry_run(self, db: Session, user: User,
+                               symbol: str, signals: list[Signal],
+                               current_price: float, within_hours: bool):
+        """
+        Dry-run mode: full signal processing with verbose logging, zero execution.
+        No trades opened, no DB writes, no API calls.
+        Use this to validate strategy behaviour before going paper or live.
+        """
+        actionable = [s for s in signals if s.signal_type != SignalType.HOLD]
+        if not actionable:
+            return
+
+        buy_signals  = [s for s in actionable if s.signal_type == SignalType.BUY]
+        sell_signals = [s for s in actionable if s.signal_type == SignalType.SELL]
+
+        if buy_signals and sell_signals:
+            logger.info(
+                "[DRY-RUN] User %d %s: conflicting BUY+SELL — would skip",
+                user.id, symbol,
+            )
+            return
+
+        if not within_hours:
+            direction = "BUY" if buy_signals else "SELL"
+            logger.info(
+                "[DRY-RUN] User %d %s: %s signal but outside trading hours — would skip",
+                user.id, symbol, direction,
+            )
+            return
+
+        if buy_signals:
+            signal = buy_signals[0]
+            portfolio = self.paper_portfolio.get_or_create(
+                db, user.id, user.paper_initial_capital
+            )
+            sim_qty     = self._round_qty(
+                symbol,
+                self.risk_manager.calculate_position_size(portfolio.cash_balance, current_price)
+            )
+            sim_sl      = self.risk_manager.calculate_stop_loss(current_price)
+            sim_tp      = self.risk_manager.calculate_take_profit(current_price)
+            sim_usd     = sim_qty * current_price
+            cash        = portfolio.cash_balance or 1.0
+            alloc_pct   = sim_usd / cash * 100
+            risk_usd    = sim_usd * (self.risk_manager.default_sl_pct / 100)
+            risk_pct    = risk_usd / cash * 100
+            reward_usd  = sim_usd * (self.risk_manager.default_tp_pct / 100)
+            logger.info(
+                "[DRY-RUN] User %d WOULD BUY %s: qty=%.6f @ %.2f | "
+                "allocated=%.2f USDT (%.1f%% cash) | SL=%.2f TP=%.2f | "
+                "max_loss=%.2f USDT (%.3f%% capital) | max_gain=%.2f USDT | "
+                "score: %s",
+                user.id, symbol, sim_qty, current_price,
+                sim_usd, alloc_pct, sim_sl, sim_tp,
+                risk_usd, risk_pct, reward_usd,
+                signal.reason,
+            )
+
+        elif sell_signals:
+            signal = sell_signals[0]
+            logger.info(
+                "[DRY-RUN] User %d WOULD SELL %s @ %.2f | score: %s",
+                user.id, symbol, current_price, signal.reason,
+            )
 
     async def _execute_paper(self, db: Session, user: User,
                              symbol: str, signals: list[Signal],
