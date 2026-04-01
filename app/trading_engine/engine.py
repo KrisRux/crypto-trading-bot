@@ -143,11 +143,13 @@ class TradingEngine:
         sell_signals = [s for s in actionable if s.signal_type == SignalType.SELL]
 
         if buy_signals and sell_signals:
-            logger.info(
-                "[DRY-RUN] User %d %s: conflicting BUY+SELL — would skip",
-                user.id, symbol,
+            resolved_buy, resolved_sell = self._resolve_signals(
+                buy_signals, sell_signals, symbol, [], current_price
             )
-            return
+            if not resolved_buy and not resolved_sell:
+                logger.info("[DRY-RUN] User %d %s: conflict unresolved — would skip", user.id, symbol)
+                return
+            buy_signals, sell_signals = resolved_buy, resolved_sell
 
         if not within_hours:
             direction = "BUY" if buy_signals else "SELL"
@@ -191,6 +193,117 @@ class TradingEngine:
                 "[DRY-RUN] User %d WOULD SELL %s @ %.2f | score: %s",
                 user.id, symbol, current_price, signal.reason,
             )
+
+    # ------------------------------------------------------------------
+    # Signal arbitration
+    # ------------------------------------------------------------------
+
+    def _resolve_signals(
+        self,
+        buy_signals: list[Signal],
+        sell_signals: list[Signal],
+        symbol: str,
+        open_trades: list,
+        current_price: float,
+    ) -> tuple[list[Signal], list[Signal]]:
+        """
+        Resolve conflicting BUY vs SELL signals using ADX-based priority.
+
+        ADX >= 25 (TREND):
+          embient_enhanced has absolute priority for new entries.
+          rsi_reversal SELL allowed only as exit of an open profitable position.
+
+        ADX < 25 (RANGE):
+          rsi_reversal has priority for contrarian entries.
+          embient wins only if its score >= 75.
+
+        Returns (resolved_buy, resolved_sell).
+        Both empty = skip (unresolvable conflict).
+        """
+        if not (buy_signals and sell_signals):
+            return buy_signals, sell_signals
+
+        embient_buy  = next((s for s in buy_signals  if s.strategy_name == "embient_enhanced"), None)
+        embient_sell = next((s for s in sell_signals if s.strategy_name == "embient_enhanced"), None)
+        rsi_buy      = next((s for s in buy_signals  if s.strategy_name == "rsi_reversal"),     None)
+        rsi_sell     = next((s for s in sell_signals if s.strategy_name == "rsi_reversal"),     None)
+
+        # ADX lives in embient metadata
+        embient_any = embient_buy or embient_sell
+        adx: float | None = (embient_any.metadata or {}).get("adx") if embient_any else None
+
+        if adx is None:
+            logger.info("[%s] conflict: ADX unavailable — skip", symbol)
+            return [], []
+
+        if adx >= 25:
+            # ── TREND: embient priority ──────────────────────────────
+            # rsi SELL allowed as exit only if there is an open profitable position
+            if rsi_sell and open_trades:
+                profitable = next(
+                    (t for t in open_trades if current_price > t.entry_price > 0),
+                    None,
+                )
+                if profitable:
+                    profit_pct = (current_price - profitable.entry_price) / profitable.entry_price * 100
+                    logger.info(
+                        "[%s] conflict resolved: reversal exit only (ADX=%.1f trend, profit=+%.2f%%)",
+                        symbol, adx, profit_pct,
+                    )
+                    return [], [rsi_sell]
+
+            # embient entry wins
+            if embient_buy:
+                logger.info(
+                    "[%s] conflict resolved: embient wins (ADX=%.1f trend mode), reversal ignored",
+                    symbol, adx,
+                )
+                return [embient_buy], []
+            if embient_sell:
+                logger.info(
+                    "[%s] conflict resolved: embient wins (ADX=%.1f trend mode), reversal ignored",
+                    symbol, adx,
+                )
+                return [], [embient_sell]
+
+            logger.info("[%s] conflict: trend mode, no embient signal — skip", symbol)
+            return [], []
+
+        else:
+            # ── RANGE (ADX < 25): rsi priority ──────────────────────
+            # embient wins only if score >= 75
+
+            if embient_buy:
+                score = float((embient_buy.metadata or {}).get("buy_score", 0))
+                if score >= 75:
+                    logger.info(
+                        "[%s] conflict resolved: embient wins (ADX=%.1f range, score=%.0f>=75)",
+                        symbol, adx, score,
+                    )
+                    return [embient_buy], []
+                logger.info(
+                    "[%s] conflict resolved: reversal wins (ADX=%.1f range, embient BUY score=%.0f<75)",
+                    symbol, adx, score,
+                )
+            elif embient_sell:
+                score = float((embient_sell.metadata or {}).get("sell_score", 0))
+                if score >= 75:
+                    logger.info(
+                        "[%s] conflict resolved: embient wins (ADX=%.1f range, score=%.0f>=75)",
+                        symbol, adx, score,
+                    )
+                    return [], [embient_sell]
+                logger.info(
+                    "[%s] conflict resolved: reversal wins (ADX=%.1f range, embient SELL score=%.0f<75)",
+                    symbol, adx, score,
+                )
+            else:
+                logger.info(
+                    "[%s] conflict resolved: reversal priority (ADX=%.1f range mode)",
+                    symbol, adx,
+                )
+
+            return ([rsi_buy] if rsi_buy else []), ([rsi_sell] if rsi_sell else [])
 
     async def _execute_paper(self, db: Session, user: User,
                              symbol: str, signals: list[Signal],
@@ -240,9 +353,12 @@ class TradingEngine:
         sell_signals = [s for s in actionable if s.signal_type == SignalType.SELL]
 
         if buy_signals and sell_signals:
-            logger.info("User %d [paper/testnet]: conflicting signals on %s — skip", user.id, symbol)
-            await client.close()
-            return
+            buy_signals, sell_signals = self._resolve_signals(
+                buy_signals, sell_signals, symbol, open_trades, current_price
+            )
+            if not buy_signals and not sell_signals:
+                await client.close()
+                return
 
         try:
             if buy_signals:
@@ -333,20 +449,22 @@ class TradingEngine:
         buy_signals = [s for s in actionable if s.signal_type == SignalType.BUY]
         sell_signals = [s for s in actionable if s.signal_type == SignalType.SELL]
 
+        open_trades_sim = db.query(Trade).filter(
+            Trade.user_id == user.id,
+            Trade.status == TradeStatus.OPEN,
+            Trade.mode == "paper",
+            Trade.symbol == symbol,
+        ).all()
+
         if buy_signals and sell_signals:
-            logger.info(
-                "User %d [paper/sim]: conflicting signals on %s — skipping",
-                user.id, symbol,
+            buy_signals, sell_signals = self._resolve_signals(
+                buy_signals, sell_signals, symbol, open_trades_sim, current_price
             )
-            return
+            if not buy_signals and not sell_signals:
+                return
 
         if buy_signals:
-            existing = db.query(Trade).filter(
-                Trade.user_id == user.id,
-                Trade.status == TradeStatus.OPEN,
-                Trade.mode == "paper",
-                Trade.symbol == symbol,
-            ).first()
+            existing = next(iter(open_trades_sim), None)
             if existing:
                 return
 
@@ -414,12 +532,12 @@ class TradingEngine:
         sell_signals = [s for s in actionable if s.signal_type == SignalType.SELL]
 
         if buy_signals and sell_signals:
-            logger.info(
-                "User %d [live]: conflicting signals on %s — skipping",
-                user.id, symbol,
+            buy_signals, sell_signals = self._resolve_signals(
+                buy_signals, sell_signals, symbol, open_trades, current_price
             )
-            await client.close()
-            return
+            if not buy_signals and not sell_signals:
+                await client.close()
+                return
 
         try:
             if buy_signals:
