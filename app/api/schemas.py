@@ -24,6 +24,7 @@ class PositionResponse(BaseModel):
     entry_price: float
     current_price: float | None
     unrealized_pnl: float
+    unrealized_pnl_pct: float
     stop_loss: float | None
     take_profit: float | None
     opened_at: datetime | None

@@ -66,6 +66,7 @@ export interface Position {
   entry_price: number
   current_price: number | null
   unrealized_pnl: number
+  unrealized_pnl_pct: number
   stop_loss: number | null
   take_profit: number | null
   opened_at: string | null
@@ -180,6 +181,8 @@ export const api = {
   logout: () => request<{ ok: boolean }>('/logout', { method: 'POST' }),
   getBalance: () => request<Balance>('/balance'),
   getPositions: () => request<Position[]>('/positions'),
+  closePosition: (tradeId: number) =>
+    request<{ ok: boolean; closed_at_price: number }>(`/positions/${tradeId}/close`, { method: 'POST' }),
   getOrders: () => request<OrderItem[]>('/orders'),
   getTrades: () => request<TradeItem[]>('/trades'),
   getPrice: (symbol: string) => request<PriceData>(`/price/${symbol}`),

@@ -56,6 +56,29 @@ export default function Dashboard() {
     return positions.filter((p) => p.symbol === posFilterSymbol)
   }, [positions, posFilterSymbol])
 
+  const [closingId, setClosingId] = useState<number | null>(null)
+
+  const handleClosePosition = async (p: Position) => {
+    const confirmed = confirm(
+      l(
+        `Chiudere la posizione ${p.symbol} (${p.quantity.toFixed(6)}) al prezzo corrente di mercato?`,
+        `Close position ${p.symbol} (${p.quantity.toFixed(6)}) at current market price?`
+      )
+    )
+    if (!confirmed) return
+    setClosingId(p.id)
+    try {
+      await api.closePosition(p.id)
+      refetchPositions()
+      refetchTrades()
+      refetchBalance()
+    } catch (e) {
+      alert(`${l('Chiusura fallita', 'Close failed')}: ${e}`)
+    } finally {
+      setClosingId(null)
+    }
+  }
+
   const handleReset = async () => {
     if (dataMode !== 'paper') return
     if (!confirm(t('reset_confirm'))) return
@@ -191,8 +214,10 @@ export default function Dashboard() {
                   <th className="text-right py-2 px-3">{t('entry')}</th>
                   <th className="text-right py-2 px-3">{t('current')}</th>
                   <th className="text-right py-2 px-3">{t('pnl')}</th>
+                  <th className="text-right py-2 px-3">{t('pnl')} %</th>
                   <th className="text-right py-2 px-3">SL</th>
                   <th className="text-right py-2 px-3">TP</th>
+                  <th className="py-2 px-3"></th>
                 </tr>
               </thead>
               <tbody>
@@ -216,8 +241,24 @@ export default function Dashboard() {
                     }`}>
                       {p.unrealized_pnl.toFixed(2)}
                     </td>
+                    <td className={`py-2 px-3 text-right font-medium ${
+                      p.unrealized_pnl_pct >= 0 ? 'text-emerald-400' : 'text-red-400'
+                    }`}>
+                      {p.unrealized_pnl_pct.toFixed(2)}%
+                    </td>
                     <td className="py-2 px-3 text-right text-red-400">{p.stop_loss?.toLocaleString() ?? '-'}</td>
                     <td className="py-2 px-3 text-right text-emerald-400">{p.take_profit?.toLocaleString() ?? '-'}</td>
+                    <td className="py-2 px-3">
+                      {p.side !== 'HOLD' && (
+                        <button
+                          onClick={() => handleClosePosition(p)}
+                          disabled={closingId === p.id}
+                          className="px-2 py-1 bg-red-900/60 hover:bg-red-800/70 border border-red-800/50 text-red-300 text-xs rounded transition-colors disabled:opacity-40"
+                        >
+                          {closingId === p.id ? '...' : l('Chiudi', 'Close')}
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

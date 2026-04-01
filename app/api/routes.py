@@ -334,15 +334,89 @@ async def get_positions(db: Session = Depends(get_db), user_info: dict = Depends
     result = []
     for t in open_trades:
         cp = engine.last_prices.get(t.symbol, 0)
+        upnl = (cp - t.entry_price) * t.quantity if cp else 0
+        upnl_pct = ((cp - t.entry_price) / t.entry_price * 100) if (cp and t.entry_price) else 0
         result.append(PositionResponse(
             id=t.id, symbol=t.symbol, side=t.side.value,
             quantity=t.quantity, entry_price=t.entry_price,
             current_price=cp,
-            unrealized_pnl=(cp - t.entry_price) * t.quantity if cp else 0,
+            unrealized_pnl=upnl,
+            unrealized_pnl_pct=upnl_pct,
             stop_loss=t.stop_loss, take_profit=t.take_profit,
             opened_at=t.opened_at,
         ))
     return result
+
+
+@router.post("/positions/{trade_id}/close")
+async def close_position_manual(
+    trade_id: int,
+    db: Session = Depends(get_db),
+    user_info: dict = Depends(require_write),
+):
+    """Manually close a single open position at current market price."""
+    from app.binance_client.rest_client import BinanceRestClient
+    from app.trading_engine.order_manager import OrderManager
+
+    engine = get_engine()
+    user = _get_user_obj(user_info, db)
+    user_mode = user.trading_mode or "paper"
+
+    trade = db.query(Trade).filter(
+        Trade.id == trade_id,
+        Trade.user_id == user.id,
+        Trade.status == TradeStatus.OPEN,
+    ).first()
+    if not trade:
+        raise HTTPException(404, "Position not found or already closed")
+
+    current_price = engine.last_prices.get(trade.symbol, 0)
+    if current_price <= 0:
+        raise HTTPException(400, f"No live price available for {trade.symbol}")
+
+    if user_mode == "live":
+        client = BinanceRestClient(
+            api_key=user.get_api_key(live=True),
+            api_secret=user.get_api_secret(live=True),
+            testnet=False,
+        )
+        order_mgr = OrderManager(client, mode="live")
+        try:
+            await engine._close_trade(db, user, trade, current_price, "manual_close", client, order_mgr)
+        finally:
+            await client.close()
+
+    elif user_mode == "paper" and user.has_api_keys(live=False):
+        client = BinanceRestClient(
+            api_key=user.get_api_key(live=False),
+            api_secret=user.get_api_secret(live=False),
+            testnet=True,
+        )
+        order_mgr = OrderManager(client, mode="paper")
+        try:
+            await engine._close_trade(db, user, trade, current_price, "manual_close", client, order_mgr)
+        finally:
+            await client.close()
+
+    else:
+        # Paper simulation — close via portfolio manager
+        position = db.query(PaperPosition).filter(
+            PaperPosition.user_id == user.id,
+            PaperPosition.symbol == trade.symbol,
+        ).first()
+        if position:
+            engine.paper_portfolio.close_position(db, position, current_price, "manual_close")
+        else:
+            trade.exit_price = current_price
+            trade.pnl = (current_price - trade.entry_price) * trade.quantity
+            trade.pnl_pct = ((current_price - trade.entry_price) / trade.entry_price) * 100
+            trade.status = TradeStatus.CLOSED
+            trade.closed_at = datetime.now(timezone.utc)
+            db.commit()
+
+    logger.info("User '%s': manually closed position #%d %s @ %.2f",
+                user_info["sub"], trade_id, trade.symbol, current_price)
+    return {"ok": True, "closed_at_price": current_price}
 
 
 @router.get("/orders", response_model=list[OrderResponse])
