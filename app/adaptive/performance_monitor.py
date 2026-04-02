@@ -72,7 +72,8 @@ class PerformanceMonitor:
 
     def compute(self, db: Session) -> PerformanceSnapshot:
         """Compute all metrics from closed trades in the DB."""
-        now = datetime.now(timezone.utc)
+        # Use naive UTC datetime — SQLite stores naive timestamps
+        now = datetime.utcnow()
 
         # Fetch recent closed trades (last 24h + extra for streak calc)
         cutoff_48h = now - timedelta(hours=48)
