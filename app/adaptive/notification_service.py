@@ -88,7 +88,7 @@ class NotificationService:
             return False
 
         # Build message
-        level_emoji = {"INFO": "\u2139\ufe0f", "WARNING": "\u26a0\ufe0f", "CRITICAL": "\ud83d\udea8"}.get(level, "")
+        level_emoji = {"INFO": "\u2139\ufe0f", "WARNING": "\u26a0\ufe0f", "CRITICAL": "\U0001F6A8"}.get(level, "")
         full_text = f"{level_emoji} <b>[{level}]</b>\n\n{text}"
 
         # Send
@@ -133,7 +133,7 @@ class NotificationService:
     async def notify_approval_required(self, from_profile: str, to_profile: str,
                                        reason: str, request_id: int):
         await self.send(
-            f"\ud83d\udd10 <b>Approval Required</b>\n\n"
+            f"\U0001F510 <b>Approval Required</b>\n\n"
             f"Profile: <code>{from_profile}</code> \u2192 <code>{to_profile}</code>\n"
             f"<b>Reason:</b> {reason}\n"
             f"<b>Request ID:</b> #{request_id}\n\n"
@@ -144,7 +144,7 @@ class NotificationService:
 
     async def notify_drawdown_breach(self, drawdown_pct: float, threshold: float):
         await self.send(
-            f"\ud83d\udea8 <b>Drawdown Threshold Breached</b>\n\n"
+            f"\U0001F6A8 <b>Drawdown Threshold Breached</b>\n\n"
             f"<b>Current:</b> {drawdown_pct:.2f}%\n"
             f"<b>Threshold:</b> {threshold:.2f}%\n\n"
             f"Switching to defensive profile.",
@@ -167,14 +167,14 @@ class NotificationService:
 
     async def notify_bot_paused(self, reason: str):
         await self.send(
-            f"\ud83d\uded1 <b>Bot Paused</b>\n\n<b>Reason:</b> {reason}",
+            f"\U0001F6D1 <b>Bot Paused</b>\n\n<b>Reason:</b> {reason}",
             level="CRITICAL",
             deduplicate=False,
         )
 
     async def notify_daily_summary(self, metrics: dict):
         await self.send(
-            f"\ud83d\udcca <b>Daily Summary</b>\n\n"
+            f"\U0001F4CA <b>Daily Summary</b>\n\n"
             f"<b>PnL 24h:</b> {metrics.get('pnl_24h', 0):.2f} USDT\n"
             f"<b>Win Rate (last 10):</b> {metrics.get('win_rate_last_10', 0):.0f}%\n"
             f"<b>Trades:</b> {metrics.get('trades_per_hour', 0) * 24:.0f} (est. daily)\n"
