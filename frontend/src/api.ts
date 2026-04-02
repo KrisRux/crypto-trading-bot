@@ -171,6 +171,24 @@ export interface AssetItem {
   value_usdt: number
 }
 
+export interface AdaptiveStatus {
+  active_profile: string
+  regime: {
+    global_regime: string
+    symbols: Record<string, { regime: string; adx: number; atr_pct: number; bb_width_pct: number; volume_ratio: number }>
+  }
+  performance: {
+    pnl_1h: number; pnl_6h: number; pnl_24h: number
+    win_rate_last_10: number; drawdown_intraday: number
+    consecutive_losses: number; trades_per_hour: number
+  }
+  advisor: {
+    suggested_profile: string | null
+    explanation: string
+    confidence: number
+  }
+}
+
 // -- API calls --
 export const api = {
   login: (username: string, password: string) =>
@@ -219,4 +237,5 @@ export const api = {
   getSkills: (category?: string) =>
     request<SkillItem[]>(category ? `/skills?category=${category}` : '/skills'),
   getSkill: (name: string) => request<SkillItem>(`/skills/${name}`),
+  getAdaptiveStatus: () => request<AdaptiveStatus>('/adaptive/status'),
 }

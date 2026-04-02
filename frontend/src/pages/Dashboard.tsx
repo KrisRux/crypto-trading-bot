@@ -1,5 +1,5 @@
 import { useCallback, useState, useMemo } from 'react'
-import { api, Balance, Position, TradeItem, EngineStatus } from '../api'
+import { api, Balance, Position, TradeItem, EngineStatus, AdaptiveStatus } from '../api'
 import { usePolling } from '../hooks/usePolling'
 import { useLang } from '../hooks/useLang'
 import StatCard from '../components/StatCard'
@@ -12,11 +12,13 @@ export default function Dashboard() {
   const fetchPositions = useCallback(() => api.getPositions(), [])
   const fetchTrades = useCallback(() => api.getTrades(), [])
   const fetchEngine = useCallback(() => api.getEngineStatus(), [])
+  const fetchAdaptive = useCallback(() => api.getAdaptiveStatus(), [])
 
   const [balance, , , refetchBalance] = usePolling<Balance>(fetchBalance, 5000)
   const [positions, , , refetchPositions] = usePolling<Position[]>(fetchPositions, 5000)
   const [trades, , , refetchTrades] = usePolling<TradeItem[]>(fetchTrades, 10000)
   const [engine] = usePolling<EngineStatus>(fetchEngine, 5000)
+  const [adaptive] = usePolling<AdaptiveStatus>(fetchAdaptive, 15000)
 
   const dataMode = balance?.mode || 'paper'
 
@@ -130,6 +132,67 @@ export default function Dashboard() {
           }
         </span>
       </div>
+
+      {/* Adaptive Layer Status */}
+      {adaptive && (
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Profile */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500 uppercase tracking-wider">{l('Profilo', 'Profile')}</span>
+              <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
+                adaptive.active_profile === 'defensive'
+                  ? 'bg-yellow-900/50 text-yellow-300 border border-yellow-800/50'
+                  : adaptive.active_profile === 'aggressive_trend'
+                    ? 'bg-red-900/50 text-red-300 border border-red-800/50'
+                    : 'bg-blue-900/50 text-blue-300 border border-blue-800/50'
+              }`}>
+                {adaptive.active_profile}
+              </span>
+            </div>
+            {/* Regime */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500 uppercase tracking-wider">{l('Regime', 'Regime')}</span>
+              <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
+                adaptive.regime.global_regime === 'trend'
+                  ? 'bg-emerald-900/50 text-emerald-300 border border-emerald-800/50'
+                  : adaptive.regime.global_regime === 'volatile' || adaptive.regime.global_regime === 'defensive'
+                    ? 'bg-red-900/50 text-red-300 border border-red-800/50'
+                    : 'bg-gray-800 text-gray-300 border border-gray-700'
+              }`}>
+                {adaptive.regime.global_regime}
+              </span>
+            </div>
+            {/* Key metrics */}
+            <div className="flex items-center gap-4 ml-auto text-xs">
+              <span className={adaptive.performance.pnl_6h >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                PnL 6h: {adaptive.performance.pnl_6h >= 0 ? '+' : ''}{adaptive.performance.pnl_6h?.toFixed(2)}
+              </span>
+              <span className="text-gray-400">
+                WR: {adaptive.performance.win_rate_last_10?.toFixed(0)}%
+              </span>
+              <span className={adaptive.performance.drawdown_intraday > 1.5 ? 'text-red-400' : 'text-gray-400'}>
+                DD: {adaptive.performance.drawdown_intraday?.toFixed(2)}%
+              </span>
+              {adaptive.performance.consecutive_losses >= 3 && (
+                <span className="text-red-400 font-medium">
+                  {adaptive.performance.consecutive_losses} {l('perdite consecutive', 'consec. losses')}
+                </span>
+              )}
+            </div>
+          </div>
+          {/* Advisor suggestion */}
+          {adaptive.advisor?.suggested_profile && adaptive.advisor.suggested_profile !== adaptive.active_profile && (
+            <div className="mt-2 bg-blue-900/20 border border-blue-800/40 rounded px-3 py-2 text-xs text-blue-300">
+              <span className="font-medium">{l('Advisor suggerisce', 'Advisor suggests')}:</span>{' '}
+              {adaptive.active_profile} → {adaptive.advisor.suggested_profile}
+              <span className="text-blue-400/70 ml-1">
+                ({(adaptive.advisor.confidence * 100).toFixed(0)}% {l('confidenza', 'confidence')})
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Stats row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
