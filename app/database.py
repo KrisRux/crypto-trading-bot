@@ -2,6 +2,7 @@
 Database setup with SQLAlchemy async engine.
 """
 
+import sqlalchemy as sa
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from app.config import settings
@@ -29,6 +30,20 @@ def get_db():
         db.close()
 
 
+def _migrate_add_columns(eng, table: str, columns: list[tuple[str, str]]):
+    """Add columns to an existing table if they don't exist (SQLite safe)."""
+    import logging
+    _log = logging.getLogger(__name__)
+    with eng.connect() as conn:
+        result = conn.execute(sa.text(f"PRAGMA table_info({table})"))
+        existing = {row[1] for row in result}
+        for col_name, col_def in columns:
+            if col_name not in existing:
+                conn.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}"))
+                conn.commit()
+                _log.info("Migration: added column %s.%s", table, col_name)
+
+
 def init_db():
     """Create all tables, seed admin user, and seed default symbols if needed."""
     from app.models import trade, portfolio, user, symbol, approval  # noqa: F401
@@ -37,6 +52,12 @@ def init_db():
     from app.config import settings
 
     Base.metadata.create_all(bind=engine)
+
+    # Lightweight migration: add columns that don't exist yet on older DBs
+    _migrate_add_columns(engine, "users", [
+        ("telegram_chat_id", "VARCHAR DEFAULT ''"),
+        ("telegram_enabled", "BOOLEAN DEFAULT 0"),
+    ])
 
     db = SessionLocal()
     try:
