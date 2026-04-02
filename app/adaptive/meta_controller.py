@@ -51,6 +51,10 @@ class MetaController:
 
         self._last_global_regime: str | None = None
         self._daily_summary_sent: str | None = None
+        # Avoid spamming: track whether alert was already sent this "episode"
+        self._drawdown_alerted: bool = False
+        self._consec_losses_alerted: bool = False
+        self._api_errors_alerted: bool = False
 
         logger.info(
             "MetaController initialized (profile=%s, telegram=%s)",
@@ -102,21 +106,33 @@ class MetaController:
             perf_snap = self.perf_monitor.compute(db)
             perf_dict = perf_snap.to_dict()
 
-            # HIGH notifications based on performance
-            if perf_snap.consecutive_losses >= 3:
-                await self.notifier.notify_consecutive_losses(
-                    perf_snap.consecutive_losses, chat_ids=chat_ids,
-                )
-
+            # HIGH notifications — send once per episode, reset when condition clears
             if perf_snap.drawdown_intraday >= 1.5:
-                await self.notifier.notify_drawdown_breach(
-                    perf_snap.drawdown_intraday, 1.5, chat_ids=chat_ids,
-                )
+                if not self._drawdown_alerted:
+                    await self.notifier.notify_drawdown_breach(
+                        perf_snap.drawdown_intraday, 1.5, chat_ids=chat_ids,
+                    )
+                    self._drawdown_alerted = True
+            else:
+                self._drawdown_alerted = False
+
+            if perf_snap.consecutive_losses >= 3:
+                if not self._consec_losses_alerted:
+                    await self.notifier.notify_consecutive_losses(
+                        perf_snap.consecutive_losses, chat_ids=chat_ids,
+                    )
+                    self._consec_losses_alerted = True
+            else:
+                self._consec_losses_alerted = False
 
             if perf_snap.api_error_count >= 5:
-                await self.notifier.notify_api_errors(
-                    perf_snap.api_error_count, chat_ids=chat_ids,
-                )
+                if not self._api_errors_alerted:
+                    await self.notifier.notify_api_errors(
+                        perf_snap.api_error_count, chat_ids=chat_ids,
+                    )
+                    self._api_errors_alerted = True
+            else:
+                self._api_errors_alerted = False
 
             # 3. Evaluate profile switch
             switch = self.profile_manager.evaluate_switch(perf_dict, global_regime)
