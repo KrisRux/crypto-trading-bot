@@ -415,7 +415,7 @@ async def close_position_manual(
             db.commit()
 
     logger.info("User '%s': manually closed position #%d %s @ %.2f",
-                user_info["sub"], trade_id, trade.symbol, current_price)
+                user_info["username"], trade_id, trade.symbol, current_price)
     return {"ok": True, "closed_at_price": current_price}
 
 
