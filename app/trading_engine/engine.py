@@ -21,6 +21,7 @@ from app.models.trade import Trade, TradeStatus, OrderSide, OrderStatus
 from app.models.user import User
 from app.paper_trading.portfolio import PaperPortfolioManager
 from app.strategies.base import Strategy, Signal, SignalType
+from app.strategies.indicators import Indicators
 from app.trading_engine.order_manager import OrderManager
 from app.trading_engine.risk_manager import RiskManager
 
@@ -51,7 +52,11 @@ class TradingEngine:
         self._qty_decimals: dict[str, int] = {}
         # Cooldown: track last BUY execution time per (user_id, symbol) to avoid overtrading
         self._last_trade_time: dict[tuple[int, str], datetime] = {}
-        self._trade_cooldown_minutes: int = 30
+        self._trade_cooldown_minutes: int = 15
+
+    # ADX thresholds for regime gate (shared with embient strategy)
+    _ADX_PERIOD = 14
+    _TREND_ADX_THRESHOLD = 25.0
 
     @property
     def last_price(self) -> float:
@@ -195,6 +200,82 @@ class TradingEngine:
             )
 
     # ------------------------------------------------------------------
+    # Regime detection + gate
+    # ------------------------------------------------------------------
+
+    def _get_adx(self, df: pd.DataFrame) -> float | None:
+        """Compute current ADX from OHLCV DataFrame. Returns None if not computable."""
+        try:
+            if "high" in df.columns and "low" in df.columns and len(df) >= self._ADX_PERIOD * 2:
+                adx_series = Indicators.adx(df["high"], df["low"], df["close"], self._ADX_PERIOD)
+                val = adx_series.iloc[-1]
+                if pd.notna(val):
+                    return float(val)
+        except Exception:
+            logger.debug("ADX computation failed")
+        return None
+
+    def _apply_regime_gate(
+        self, signals: list[Signal], adx: float | None, symbol: str
+    ) -> list[Signal]:
+        """
+        Pre-filter signals based on ADX regime BEFORE conflict resolution.
+
+        TREND (ADX >= 25):
+          rsi_reversal → BLOCKED entirely (no contrarian entries in trend)
+          macd_crossover → kept only if direction matches embient signal
+          embient_enhanced → pass through
+
+        RANGE (ADX < 25):
+          rsi_reversal → OK
+          embient_enhanced → only if score >= 80
+          macd_crossover → pass through
+
+        ADX None → no filtering.
+        """
+        if adx is None or not signals:
+            return signals
+
+        if adx >= self._TREND_ADX_THRESHOLD:
+            # Determine embient direction (if any signal was generated)
+            embient_sigs = [s for s in signals if s.strategy_name == "embient_enhanced"]
+            embient_dir = embient_sigs[0].signal_type if embient_sigs else None
+
+            filtered = []
+            for sig in signals:
+                if sig.strategy_name == "rsi_reversal":
+                    logger.info(
+                        "REGIME: TREND (ADX=%.1f) → %s reversal BLOCKED [rsi_reversal]",
+                        adx, sig.signal_type.value,
+                    )
+                    continue
+                if sig.strategy_name == "macd_crossover" and embient_dir is not None:
+                    if sig.signal_type != embient_dir:
+                        logger.info(
+                            "REGIME: TREND (ADX=%.1f) → MACD %s blocked (misaligned, embient=%s)",
+                            adx, sig.signal_type.value, embient_dir.value,
+                        )
+                        continue
+                filtered.append(sig)
+            return filtered
+
+        else:
+            # RANGE: embient only if score >= 80
+            filtered = []
+            for sig in signals:
+                if sig.strategy_name == "embient_enhanced":
+                    score_key = "buy_score" if sig.signal_type == SignalType.BUY else "sell_score"
+                    score = float((sig.metadata or {}).get(score_key, 0))
+                    if score < 80:
+                        logger.info(
+                            "REGIME: RANGE (ADX=%.1f) → embient %s blocked (score=%.0f<80)",
+                            adx, sig.signal_type.value, score,
+                        )
+                        continue
+                filtered.append(sig)
+            return filtered
+
+    # ------------------------------------------------------------------
     # Signal arbitration
     # ------------------------------------------------------------------
 
@@ -275,26 +356,26 @@ class TradingEngine:
 
             if embient_buy:
                 score = float((embient_buy.metadata or {}).get("buy_score", 0))
-                if score >= 75:
+                if score >= 80:
                     logger.info(
-                        "[%s] conflict resolved: embient wins (ADX=%.1f range, score=%.0f>=75)",
+                        "[%s] conflict resolved: embient wins (ADX=%.1f range, score=%.0f>=80)",
                         symbol, adx, score,
                     )
                     return [embient_buy], []
                 logger.info(
-                    "[%s] conflict resolved: reversal wins (ADX=%.1f range, embient BUY score=%.0f<75)",
+                    "[%s] conflict resolved: reversal wins (ADX=%.1f range, embient BUY score=%.0f<80)",
                     symbol, adx, score,
                 )
             elif embient_sell:
                 score = float((embient_sell.metadata or {}).get("sell_score", 0))
-                if score >= 75:
+                if score >= 80:
                     logger.info(
-                        "[%s] conflict resolved: embient wins (ADX=%.1f range, score=%.0f>=75)",
+                        "[%s] conflict resolved: embient wins (ADX=%.1f range, score=%.0f>=80)",
                         symbol, adx, score,
                     )
                     return [], [embient_sell]
                 logger.info(
-                    "[%s] conflict resolved: reversal wins (ADX=%.1f range, embient SELL score=%.0f<75)",
+                    "[%s] conflict resolved: reversal wins (ADX=%.1f range, embient SELL score=%.0f<80)",
                     symbol, adx, score,
                 )
             else:
@@ -376,10 +457,11 @@ class TradingEngine:
                 if last_trade is not None:
                     elapsed = datetime.now(timezone.utc) - last_trade
                     if elapsed < timedelta(minutes=self._trade_cooldown_minutes):
-                        logger.debug(
-                            "User %d [paper/testnet]: cooldown active for %s (%.0f min remaining)",
-                            user.id, symbol,
+                        logger.info(
+                            "COOLDOWN: %s skipped (%.0f min remaining) [user=%d paper/testnet]",
+                            symbol,
                             (timedelta(minutes=self._trade_cooldown_minutes) - elapsed).seconds / 60,
+                            user.id,
                         )
                         return
 
@@ -473,10 +555,11 @@ class TradingEngine:
             if last_trade is not None:
                 elapsed = datetime.now(timezone.utc) - last_trade
                 if elapsed < timedelta(minutes=self._trade_cooldown_minutes):
-                    logger.debug(
-                        "User %d [paper/sim]: cooldown active for %s (%.0f min remaining)",
-                        user.id, symbol,
+                    logger.info(
+                        "COOLDOWN: %s skipped (%.0f min remaining) [user=%d paper/sim]",
+                        symbol,
                         (timedelta(minutes=self._trade_cooldown_minutes) - elapsed).seconds / 60,
+                        user.id,
                     )
                     return
 
@@ -616,10 +699,11 @@ class TradingEngine:
                 if last_trade is not None:
                     elapsed = datetime.now(timezone.utc) - last_trade
                     if elapsed < timedelta(minutes=self._trade_cooldown_minutes):
-                        logger.debug(
-                            "User %d [live]: cooldown active for %s (%.0f min remaining)",
-                            user.id, signal.symbol,
+                        logger.info(
+                            "COOLDOWN: %s skipped (%.0f min remaining) [user=%d live]",
+                            signal.symbol,
                             (timedelta(minutes=self._trade_cooldown_minutes) - elapsed).seconds / 60,
+                            user.id,
                         )
                         return
 
@@ -726,6 +810,13 @@ class TradingEngine:
 
                     # Generate signals (shared across all users)
                     signals = self._run_strategies(df, symbol)
+
+                    # Regime gate: filter signals based on ADX before execution
+                    adx = self._get_adx(df)
+                    if adx is not None and signals:
+                        regime_label = "TREND" if adx >= self._TREND_ADX_THRESHOLD else "RANGE"
+                        logger.info("REGIME: %s (ADX=%.1f) [%s]", regime_label, adx, symbol)
+                    signals = self._apply_regime_gate(signals, adx, symbol)
 
                     # Log signals
                     for signal in signals:
