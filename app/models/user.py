@@ -136,6 +136,10 @@ class User(Base):
     trading_start_hour = Column(Integer, nullable=True)  # e.g. 8
     trading_end_hour = Column(Integer, nullable=True)    # e.g. 22
 
+    # Telegram notifications (per-user)
+    telegram_chat_id = Column(String, default="")
+    telegram_enabled = Column(Boolean, default=False)
+
     def set_api_keys(self, api_key: str = "", api_secret: str = "",
                      testnet_key: str = "", testnet_secret: str = ""):
         self.binance_api_key = _encrypt(api_key)

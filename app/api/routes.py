@@ -207,6 +207,8 @@ def get_api_keys(db: Session = Depends(get_db), user_info: dict = Depends(requir
         "has_testnet_keys": user.has_api_keys(live=False),
         "binance_api_key": user.get_api_key(live=True)[:8] + "..." if user.has_api_keys(live=True) else "",
         "binance_testnet_api_key": user.get_api_key(live=False)[:8] + "..." if user.has_api_keys(live=False) else "",
+        "telegram_chat_id": user.telegram_chat_id or "",
+        "telegram_enabled": user.telegram_enabled,
     }
 
 
@@ -230,6 +232,12 @@ async def update_api_keys(body: dict, db: Session = Depends(get_db),
     if "trading_end_hour" in body:
         val = body["trading_end_hour"]
         user.trading_end_hour = int(val) if val is not None and val != "" else None
+
+    # Telegram per-user settings
+    if "telegram_chat_id" in body:
+        user.telegram_chat_id = str(body["telegram_chat_id"]).strip()
+    if "telegram_enabled" in body:
+        user.telegram_enabled = bool(body["telegram_enabled"])
 
     # Validate and save API keys
     api_key = body.get("binance_api_key", "")
@@ -744,6 +752,67 @@ def reject_request(request_id: int, db: Session = Depends(get_db),
     if not req:
         raise HTTPException(404, "Approval request not found")
     return {"ok": True, "status": req.status, "id": req.id}
+
+
+@router.put("/adaptive/profiles/{profile_name}")
+def update_profile(profile_name: str, body: dict, _admin: dict = Depends(require_admin)):
+    """Update a profile's parameters (admin only). Persisted to profiles.json."""
+    mc = get_meta_controller()
+    pm = mc.profile_manager
+    if profile_name not in pm.profiles:
+        raise HTTPException(404, f"Profile '{profile_name}' not found")
+    profile = pm.profiles[profile_name]
+    # Merge incoming fields
+    if "risk" in body:
+        profile.setdefault("risk", {}).update(body["risk"])
+    if "strategies" in body:
+        for strat_name, strat_params in body["strategies"].items():
+            profile.setdefault("strategies", {}).setdefault(strat_name, {}).update(strat_params)
+    if "description" in body:
+        profile["description"] = body["description"]
+    if "auto_apply" in body:
+        profile["auto_apply"] = bool(body["auto_apply"])
+    if "requires_approval" in body:
+        profile["requires_approval"] = bool(body["requires_approval"])
+    if "regime" in body:
+        profile.setdefault("regime", {}).update(body["regime"])
+    # Save to disk
+    pm._data["profiles"][profile_name] = profile
+    pm._profiles[profile_name] = profile
+    pm._save_active_profile()
+    logger.info("Profile '%s' updated via API: %s", profile_name, list(body.keys()))
+    return {"ok": True, "profile": profile}
+
+
+@router.put("/adaptive/switching-rules")
+def update_switching_rules(body: dict, _admin: dict = Depends(require_admin)):
+    """Update switching rules (admin only). Persisted to profiles.json."""
+    mc = get_meta_controller()
+    pm = mc.profile_manager
+    for key in ("cooldown_minutes", "min_trades_for_upgrade",
+                "max_profile_changes_per_day", "hysteresis_minutes"):
+        if key in body:
+            pm._switching_rules[key] = int(body[key])
+    pm._data["switching_rules"] = pm._switching_rules
+    pm._save_active_profile()
+    logger.info("Switching rules updated: %s", pm._switching_rules)
+    return {"ok": True, "switching_rules": pm._switching_rules}
+
+
+@router.post("/adaptive/telegram/test")
+async def test_telegram(db: Session = Depends(get_db), user_info: dict = Depends(require_auth)):
+    """Send a test Telegram notification to the current user."""
+    mc = get_meta_controller()
+    user = _get_user_obj(user_info, db)
+    if not user.telegram_chat_id:
+        raise HTTPException(400, "Telegram chat_id not configured for this user")
+    sent = await mc.notifier.send(
+        "<b>Test Notification</b>\n\nCryptoBot Telegram is working!",
+        level="INFO", chat_id=user.telegram_chat_id, deduplicate=False,
+    )
+    if not sent:
+        raise HTTPException(502, "Failed to send Telegram message — check bot token")
+    return {"ok": True, "message": "Test message sent"}
 
 
 # ------------------------------------------------------------------ Assets

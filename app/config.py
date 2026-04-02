@@ -41,9 +41,8 @@ class Settings(BaseSettings):
     # If left empty an ephemeral key is generated at startup (keys won't survive restarts).
     encryption_key: str = Field(default="", alias="ENCRYPTION_KEY")
 
-    # Telegram notifications
+    # Telegram notifications (bot token is server-wide; chat_id is per-user in DB)
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
-    telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
 
     # Server
     backend_host: str = Field(default="0.0.0.0", alias="BACKEND_HOST")

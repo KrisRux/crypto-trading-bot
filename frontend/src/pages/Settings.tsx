@@ -13,6 +13,8 @@ interface KeysState {
   has_testnet_keys: boolean
   binance_api_key: string
   binance_testnet_api_key: string
+  telegram_chat_id: string
+  telegram_enabled: boolean
 }
 
 export default function Settings() {
@@ -31,10 +33,13 @@ export default function Settings() {
     binance_api_secret: '',
     binance_testnet_api_key: '',
     binance_testnet_api_secret: '',
+    telegram_chat_id: '',
+    telegram_enabled: false,
   })
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
   const [clearingType, setClearingType] = useState<'live' | 'testnet' | null>(null)
+  const [testingTelegram, setTestingTelegram] = useState(false)
 
   const loadKeys = useCallback(() => {
     api.getMe()  // ensures cookie is valid before fetching settings
@@ -51,6 +56,8 @@ export default function Settings() {
           paper_initial_capital: data.paper_initial_capital || 10000,
           trading_start_hour: data.trading_start_hour,
           trading_end_hour: data.trading_end_hour,
+          telegram_chat_id: data.telegram_chat_id || '',
+          telegram_enabled: data.telegram_enabled || false,
         }))
       })
       .catch(() => {})
@@ -68,6 +75,8 @@ export default function Settings() {
         paper_initial_capital: form.paper_initial_capital,
         trading_start_hour: form.trading_start_hour,
         trading_end_hour: form.trading_end_hour,
+        telegram_chat_id: form.telegram_chat_id,
+        telegram_enabled: form.telegram_enabled,
       }
       if (form.binance_api_key) body.binance_api_key = form.binance_api_key
       if (form.binance_api_secret) body.binance_api_secret = form.binance_api_secret
@@ -400,6 +409,74 @@ export default function Settings() {
           onChange={(e) => setForm({ ...form, binance_api_secret: e.target.value })}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
         />
+      </section>
+
+      {/* Telegram Notifications */}
+      <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-white">
+              {t('Notifiche Telegram', 'Telegram Notifications')}
+            </h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {t(
+                'Ricevi notifiche su Telegram per cambi profilo, drawdown, perdite consecutive e report giornaliero.',
+                'Receive Telegram notifications for profile switches, drawdown, consecutive losses, and daily reports.'
+              )}
+            </p>
+          </div>
+          <button
+            onClick={() => setForm({ ...form, telegram_enabled: !form.telegram_enabled })}
+            className={`relative w-12 h-6 rounded-full transition-colors ${
+              form.telegram_enabled ? 'bg-blue-600' : 'bg-gray-700'
+            }`}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+              form.telegram_enabled ? 'translate-x-6' : ''
+            }`} />
+          </button>
+        </div>
+        <input
+          type="text"
+          placeholder="Telegram Chat ID (es. 17519601)"
+          value={form.telegram_chat_id}
+          onChange={(e) => setForm({ ...form, telegram_chat_id: e.target.value })}
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
+        />
+        <div className="flex items-center gap-3">
+          <p className="text-xs text-gray-500 flex-1">
+            {t(
+              'Invia /start al bot Telegram del progetto, poi usa getUpdates per trovare il tuo Chat ID.',
+              'Send /start to the project Telegram bot, then use getUpdates to find your Chat ID.'
+            )}
+          </p>
+          {form.telegram_chat_id && (
+            <button
+              onClick={async () => {
+                setTestingTelegram(true)
+                try {
+                  const resp = await fetch('/api/adaptive/telegram/test', {
+                    method: 'POST', credentials: 'include',
+                  })
+                  if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({ detail: 'Error' }))
+                    alert(err.detail || 'Errore invio test')
+                  } else {
+                    alert(t('Messaggio di test inviato!', 'Test message sent!'))
+                  }
+                } catch {
+                  alert(t('Errore di rete', 'Network error'))
+                } finally {
+                  setTestingTelegram(false)
+                }
+              }}
+              disabled={testingTelegram}
+              className="px-3 py-1.5 bg-blue-900/50 hover:bg-blue-800/60 border border-blue-800/50 text-blue-300 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap"
+            >
+              {testingTelegram ? '...' : t('Invia Test', 'Send Test')}
+            </button>
+          )}
+        </div>
       </section>
 
       {/* Save */}

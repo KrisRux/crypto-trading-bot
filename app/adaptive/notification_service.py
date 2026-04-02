@@ -5,12 +5,15 @@ Sends structured HTML messages via Telegram HTTP API.
 Supports severity levels (INFO, WARNING, CRITICAL), deduplication,
 and rate limiting to prevent spam.
 
-Config via env vars:
-  TELEGRAM_BOT_TOKEN  — Bot token from @BotFather
-  TELEGRAM_CHAT_ID    — Target chat/group ID
+Bot token is server-wide (from env). Chat ID is per-user (from DB).
+The service can broadcast to all users with Telegram enabled, or send
+to a specific chat_id.
+
+Config:
+  TELEGRAM_BOT_TOKEN  — Bot token from @BotFather (server-wide, in .env)
+  telegram_chat_id    — Per-user, stored in DB (User model)
 """
 
-import asyncio
 import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
@@ -29,72 +32,71 @@ class NotificationService:
     MAX_MESSAGES_PER_MINUTE = 10
     DEDUP_WINDOW_SECONDS = 300  # 5 min dedup for similar messages
 
-    def __init__(self, bot_token: str = "", chat_id: str = ""):
+    def __init__(self, bot_token: str = ""):
         self._bot_token = bot_token
-        self._chat_id = chat_id
-        self._enabled = bool(bot_token and chat_id)
+        self._enabled = bool(bot_token)
         # Rate limit state
         self._sent_timestamps: list[datetime] = []
-        # Dedup: hash → last sent time
+        # Dedup: hash -> last sent time
         self._dedup_cache: dict[str, datetime] = {}
 
         if self._enabled:
-            logger.info("Telegram notifications enabled (chat_id=%s)", chat_id)
+            logger.info("Telegram notifications enabled (bot token configured)")
         else:
-            logger.info("Telegram notifications disabled (missing token or chat_id)")
+            logger.info("Telegram notifications disabled (missing bot token)")
 
     @property
     def enabled(self) -> bool:
         return self._enabled
 
-    async def send(self, text: str, level: str = "INFO", deduplicate: bool = True) -> bool:
+    async def send(self, text: str, level: str = "INFO",
+                   chat_id: str = "", deduplicate: bool = True) -> bool:
         """
-        Send an HTML message to Telegram.
+        Send an HTML message to a specific Telegram chat.
 
         Args:
             text: HTML-formatted message body.
-            level: INFO | WARNING | CRITICAL — prefixed to message.
+            level: INFO | WARNING | CRITICAL.
+            chat_id: target chat ID. If empty, message is skipped.
             deduplicate: skip if a similar message was sent recently.
 
         Returns True if sent, False if skipped or failed.
         """
-        if not self._enabled:
-            logger.debug("Telegram disabled, message skipped: %s", text[:80])
+        if not self._enabled or not chat_id:
             return False
 
-        # Dedup check
+        # Dedup check (per chat_id)
         if deduplicate:
-            msg_hash = hashlib.md5(text.encode()).hexdigest()[:12]
+            dedup_key = f"{chat_id}:{hashlib.md5(text.encode()).hexdigest()[:12]}"
             now = datetime.now(timezone.utc)
-            last_sent = self._dedup_cache.get(msg_hash)
+            last_sent = self._dedup_cache.get(dedup_key)
             if last_sent and (now - last_sent).total_seconds() < self.DEDUP_WINDOW_SECONDS:
-                logger.debug("Telegram dedup: skipping duplicate message")
                 return False
-            self._dedup_cache[msg_hash] = now
-            # Prune old dedup entries
+            self._dedup_cache[dedup_key] = now
+            # Prune old entries
             cutoff = now - timedelta(seconds=self.DEDUP_WINDOW_SECONDS * 2)
-            self._dedup_cache = {
-                k: v for k, v in self._dedup_cache.items() if v > cutoff
-            }
+            self._dedup_cache = {k: v for k, v in self._dedup_cache.items() if v > cutoff}
 
         # Rate limit check
         now = datetime.now(timezone.utc)
         self._sent_timestamps = [
-            t for t in self._sent_timestamps
-            if (now - t).total_seconds() < 60
+            t for t in self._sent_timestamps if (now - t).total_seconds() < 60
         ]
         if len(self._sent_timestamps) >= self.MAX_MESSAGES_PER_MINUTE:
-            logger.warning("Telegram rate limit reached, message queued for later")
+            logger.warning("Telegram rate limit reached, skipping")
             return False
 
         # Build message
-        level_emoji = {"INFO": "\u2139\ufe0f", "WARNING": "\u26a0\ufe0f", "CRITICAL": "\U0001F6A8"}.get(level, "")
+        level_emoji = {
+            "INFO": "\u2139\ufe0f",
+            "WARNING": "\u26a0\ufe0f",
+            "CRITICAL": "\U0001F6A8",
+        }.get(level, "")
         full_text = f"{level_emoji} <b>[{level}]</b>\n\n{text}"
 
-        # Send
         url = self.TELEGRAM_API.format(token=self._bot_token)
         payload = {
-            "chat_id": self._chat_id,
+            "chat_id": chat_id,
             "text": full_text,
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
@@ -105,7 +107,7 @@ class NotificationService:
                 resp = await client.post(url, json=payload)
                 if resp.status_code == 200:
                     self._sent_timestamps.append(now)
-                    logger.info("Telegram sent [%s]: %s", level, text[:80])
+                    logger.info("Telegram sent [%s] to %s: %s", level, chat_id, text[:80])
                     return True
                 else:
                     logger.warning("Telegram API error %d: %s", resp.status_code, resp.text[:200])
@@ -114,66 +116,80 @@ class NotificationService:
             logger.exception("Telegram send failed")
             return False
 
+    async def broadcast(self, text: str, level: str = "INFO",
+                        chat_ids: list[str] | None = None,
+                        deduplicate: bool = True) -> int:
+        """
+        Send to multiple chat_ids. Returns count of successful sends.
+        """
+        if not chat_ids:
+            return 0
+        sent = 0
+        for cid in chat_ids:
+            if await self.send(text, level=level, chat_id=cid, deduplicate=deduplicate):
+                sent += 1
+        return sent
+
     # ------------------------------------------------------------------
-    # Convenience methods for common notifications
+    # Convenience methods (accept chat_ids list for broadcast)
     # ------------------------------------------------------------------
 
     async def notify_profile_switch(self, from_profile: str, to_profile: str,
-                                    reason: str, metrics: dict):
-        await self.send(
+                                    reason: str, metrics: dict, chat_ids: list[str] = None):
+        await self.broadcast(
             f"<b>Profile Switch</b>\n"
             f"<code>{from_profile}</code> \u2192 <code>{to_profile}</code>\n\n"
             f"<b>Reason:</b> {reason}\n"
             f"<b>PnL 6h:</b> {metrics.get('pnl_6h', 'N/A')}\n"
             f"<b>Win Rate:</b> {metrics.get('win_rate_last_10', 'N/A')}%\n"
             f"<b>Drawdown:</b> {metrics.get('drawdown_intraday', 'N/A')}%",
-            level="WARNING",
+            level="WARNING", chat_ids=chat_ids or [],
         )
 
     async def notify_approval_required(self, from_profile: str, to_profile: str,
-                                       reason: str, request_id: int):
-        await self.send(
+                                       reason: str, request_id: int, chat_ids: list[str] = None):
+        await self.broadcast(
             f"\U0001F510 <b>Approval Required</b>\n\n"
             f"Profile: <code>{from_profile}</code> \u2192 <code>{to_profile}</code>\n"
             f"<b>Reason:</b> {reason}\n"
             f"<b>Request ID:</b> #{request_id}\n\n"
             f"Approve via API: <code>POST /api/approvals/{request_id}/approve</code>",
-            level="CRITICAL",
-            deduplicate=False,
+            level="CRITICAL", chat_ids=chat_ids or [], deduplicate=False,
         )
 
-    async def notify_drawdown_breach(self, drawdown_pct: float, threshold: float):
-        await self.send(
+    async def notify_drawdown_breach(self, drawdown_pct: float, threshold: float,
+                                     chat_ids: list[str] = None):
+        await self.broadcast(
             f"\U0001F6A8 <b>Drawdown Threshold Breached</b>\n\n"
             f"<b>Current:</b> {drawdown_pct:.2f}%\n"
             f"<b>Threshold:</b> {threshold:.2f}%\n\n"
             f"Switching to defensive profile.",
-            level="CRITICAL",
+            level="CRITICAL", chat_ids=chat_ids or [],
         )
 
-    async def notify_consecutive_losses(self, count: int):
-        await self.send(
+    async def notify_consecutive_losses(self, count: int, chat_ids: list[str] = None):
+        await self.broadcast(
             f"\u26a0\ufe0f <b>{count} Consecutive Losses</b>\n\n"
             f"Bot is evaluating a profile switch to defensive mode.",
-            level="WARNING",
+            level="WARNING", chat_ids=chat_ids or [],
         )
 
-    async def notify_regime_change(self, old_regime: str, new_regime: str):
-        await self.send(
+    async def notify_regime_change(self, old_regime: str, new_regime: str,
+                                   chat_ids: list[str] = None):
+        await self.broadcast(
             f"<b>Global Regime Change</b>\n"
             f"<code>{old_regime}</code> \u2192 <code>{new_regime}</code>",
-            level="INFO",
+            level="INFO", chat_ids=chat_ids or [],
         )
 
-    async def notify_bot_paused(self, reason: str):
-        await self.send(
+    async def notify_bot_paused(self, reason: str, chat_ids: list[str] = None):
+        await self.broadcast(
             f"\U0001F6D1 <b>Bot Paused</b>\n\n<b>Reason:</b> {reason}",
-            level="CRITICAL",
-            deduplicate=False,
+            level="CRITICAL", chat_ids=chat_ids or [], deduplicate=False,
         )
 
-    async def notify_daily_summary(self, metrics: dict):
-        await self.send(
+    async def notify_daily_summary(self, metrics: dict, chat_ids: list[str] = None):
+        await self.broadcast(
             f"\U0001F4CA <b>Daily Summary</b>\n\n"
             f"<b>PnL 24h:</b> {metrics.get('pnl_24h', 0):.2f} USDT\n"
             f"<b>Win Rate (last 10):</b> {metrics.get('win_rate_last_10', 0):.0f}%\n"
@@ -181,13 +197,13 @@ class NotificationService:
             f"<b>Max Drawdown:</b> {metrics.get('drawdown_intraday', 0):.2f}%\n"
             f"<b>Cooldown hits:</b> {metrics.get('cooldown_hits', 0)}\n"
             f"<b>API errors:</b> {metrics.get('api_error_count', 0)}",
-            level="INFO",
+            level="INFO", chat_ids=chat_ids or [],
         )
 
-    async def notify_api_errors(self, count: int):
-        await self.send(
+    async def notify_api_errors(self, count: int, chat_ids: list[str] = None):
+        await self.broadcast(
             f"\u26a0\ufe0f <b>Persistent API Errors</b>\n\n"
             f"<b>Count:</b> {count} errors detected.\n"
             f"Check exchange connectivity.",
-            level="CRITICAL",
+            level="CRITICAL", chat_ids=chat_ids or [],
         )
