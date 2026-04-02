@@ -30,18 +30,26 @@ router = APIRouter(prefix="/api")
 
 _engine = None
 _skills_library = None
+_meta_controller = None
 
 
-def set_engine(engine, skills_library=None):
-    global _engine, _skills_library
+def set_engine(engine, skills_library=None, meta_controller=None):
+    global _engine, _skills_library, _meta_controller
     _engine = engine
     _skills_library = skills_library
+    _meta_controller = meta_controller
 
 
 def get_engine():
     if _engine is None:
         raise HTTPException(500, "Trading engine not initialized")
     return _engine
+
+
+def get_meta_controller():
+    if _meta_controller is None:
+        raise HTTPException(500, "MetaController not initialized")
+    return _meta_controller
 
 
 # ------------------------------------------------------------------ Auth
@@ -632,6 +640,110 @@ def clear_api_keys(key_type: str = "all", db: Session = Depends(get_db),
     db.commit()
     logger.info("User '%s' cleared %s API keys", user.username, key_type)
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ Adaptive layer
+@router.get("/adaptive/status")
+def adaptive_status(_user: dict = Depends(require_auth)):
+    """Current adaptive layer status: regime, profile, performance, advisor."""
+    mc = get_meta_controller()
+    regime = mc.regime_service.global_snapshot()
+    perf = mc.perf_monitor.snapshot.to_dict() if mc.perf_monitor.snapshot else {}
+    advisor = mc.advisor.last_advice or {}
+    return {
+        "active_profile": mc.profile_manager.active_profile,
+        "regime": regime,
+        "performance": perf,
+        "advisor": advisor,
+        "switch_history": mc.profile_manager.switch_history[-10:],
+    }
+
+
+@router.get("/adaptive/profiles")
+def list_profiles(_user: dict = Depends(require_auth)):
+    """Return all available profiles and the active one."""
+    mc = get_meta_controller()
+    return {
+        "active": mc.profile_manager.active_profile,
+        "profiles": mc.profile_manager.profiles,
+        "switching_rules": mc.profile_manager.switching_rules,
+    }
+
+
+@router.post("/adaptive/profiles/{profile_name}/apply")
+def apply_profile_manual(profile_name: str, db: Session = Depends(get_db),
+                         _admin: dict = Depends(require_admin)):
+    """Manually apply a profile (admin only). Bypasses switching rules."""
+    mc = get_meta_controller()
+    engine = get_engine()
+    if profile_name not in mc.profile_manager.profiles:
+        raise HTTPException(404, f"Profile '{profile_name}' not found")
+    applied = mc.profile_manager.apply_profile(profile_name, engine, "manual override (admin)")
+    if not applied:
+        raise HTTPException(500, "Failed to apply profile")
+    return {"ok": True, "active_profile": profile_name}
+
+
+@router.get("/approvals")
+def list_approvals(db: Session = Depends(get_db), _user: dict = Depends(require_auth)):
+    """List all approval requests."""
+    mc = get_meta_controller()
+    reqs = mc.approval_service.get_all(db)
+    return [
+        {
+            "id": r.id,
+            "request_type": r.request_type,
+            "from_profile": r.from_profile,
+            "to_profile": r.to_profile,
+            "reason": r.reason,
+            "status": r.status,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None,
+            "resolved_by": r.resolved_by,
+            "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+        }
+        for r in reqs
+    ]
+
+
+@router.get("/approvals/pending")
+def pending_approvals(db: Session = Depends(get_db), _user: dict = Depends(require_auth)):
+    """List pending approval requests."""
+    mc = get_meta_controller()
+    reqs = mc.approval_service.get_pending(db)
+    return [
+        {
+            "id": r.id,
+            "from_profile": r.from_profile,
+            "to_profile": r.to_profile,
+            "reason": r.reason,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+        }
+        for r in reqs
+    ]
+
+
+@router.post("/approvals/{request_id}/approve")
+def approve_request(request_id: int, db: Session = Depends(get_db),
+                    user_info: dict = Depends(require_admin)):
+    """Approve a pending profile switch request (admin only)."""
+    mc = get_meta_controller()
+    req = mc.approval_service.approve(db, request_id, resolved_by=user_info["username"])
+    if not req:
+        raise HTTPException(404, "Approval request not found")
+    return {"ok": True, "status": req.status, "id": req.id}
+
+
+@router.post("/approvals/{request_id}/reject")
+def reject_request(request_id: int, db: Session = Depends(get_db),
+                   user_info: dict = Depends(require_admin)):
+    """Reject a pending profile switch request (admin only)."""
+    mc = get_meta_controller()
+    req = mc.approval_service.reject(db, request_id, resolved_by=user_info["username"])
+    if not req:
+        raise HTTPException(404, "Approval request not found")
+    return {"ok": True, "status": req.status, "id": req.id}
 
 
 # ------------------------------------------------------------------ Assets

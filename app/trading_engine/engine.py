@@ -53,6 +53,8 @@ class TradingEngine:
         # Cooldown: track last BUY execution time per (user_id, symbol) to avoid overtrading
         self._last_trade_time: dict[tuple[int, str], datetime] = {}
         self._trade_cooldown_minutes: int = 15
+        # Adaptive layer (set externally after construction)
+        self.meta_controller = None
 
     # ADX thresholds for regime gate (shared with embient strategy)
     _ADX_PERIOD = 14
@@ -799,12 +801,15 @@ class TradingEngine:
                 User.trading_enabled == True,
             ).all()
 
+            cycle_dataframes: dict[str, pd.DataFrame] = {}
+
             for symbol in self.symbols:
                 try:
                     df = await self.fetch_klines(symbol, interval="15m", limit=150)
                     if df.empty:
                         continue
 
+                    cycle_dataframes[symbol] = df
                     current_price = float(df["close"].iloc[-1])
                     self.last_prices[symbol] = current_price
 
@@ -846,6 +851,13 @@ class TradingEngine:
 
                 except Exception:
                     logger.exception("Error processing symbol %s", symbol)
+
+            # Adaptive layer: evaluate regime, performance, profile after cycle
+            if self.meta_controller:
+                try:
+                    await self.meta_controller.evaluate(db, cycle_dataframes)
+                except Exception:
+                    logger.exception("MetaController evaluation failed")
         except Exception:
             logger.exception("Error in trading cycle")
         finally:

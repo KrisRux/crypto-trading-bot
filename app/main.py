@@ -23,6 +23,7 @@ from app.strategies.macd_strategy import MacdStrategy
 from app.strategies.embient_enhanced import EmbientEnhancedStrategy
 from app.embient_skills.loader import SkillsLibrary
 from app.strategy_store import load_strategy_params, load_risk_params
+from app.adaptive.meta_controller import MetaController
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -71,8 +72,22 @@ async def lifespan(app: FastAPI):
         engine.risk_manager.set_params(saved_risk)
         logger.info("Risk manager: restored saved params")
 
-    # Make engine and skills available to API routes
-    set_engine(engine, skills_library)
+    # Initialize adaptive layer (meta-controller)
+    meta_controller = MetaController(
+        engine,
+        bot_token=settings.telegram_bot_token,
+        chat_id=settings.telegram_chat_id,
+    )
+    engine.meta_controller = meta_controller
+
+    # Apply active profile from config on startup
+    active_profile = meta_controller.profile_manager.active_profile
+    if active_profile != "normal":
+        meta_controller.profile_manager.apply_profile(active_profile, engine, "startup restore")
+        logger.info("Restored active profile: %s", active_profile)
+
+    # Make engine, skills, and meta_controller available to API routes
+    set_engine(engine, skills_library, meta_controller)
 
     # Start the engine in the background
     engine_task = asyncio.create_task(engine.start())

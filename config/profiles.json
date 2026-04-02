@@ -1,0 +1,113 @@
+{
+  "profiles": {
+    "normal": {
+      "description": "Balanced trading profile — default operating mode",
+      "auto_apply": true,
+      "requires_approval": false,
+      "risk": {
+        "max_position_pct": 1.5,
+        "default_sl_pct": 3.0,
+        "default_tp_pct": 5.0
+      },
+      "strategies": {
+        "embient_enhanced": {
+          "trend_buy_threshold": 80.0,
+          "trend_sell_threshold": 75.0,
+          "range_buy_threshold": 80.0,
+          "range_sell_threshold": 75.0,
+          "neutral_sell_threshold": 70.0
+        },
+        "rsi_reversal": {
+          "oversold": 25.0,
+          "overbought": 75.0,
+          "enabled_in_trend": false
+        },
+        "macd_crossover": {
+          "mode": "confirm_only"
+        },
+        "sma_crossover": {
+          "adx_threshold": 25.0
+        }
+      },
+      "regime": {
+        "adx_trend_threshold": 25,
+        "adx_range_threshold": 20
+      }
+    },
+    "defensive": {
+      "description": "Conservative profile — tighter thresholds, smaller positions",
+      "auto_apply": true,
+      "requires_approval": false,
+      "risk": {
+        "max_position_pct": 1.0,
+        "default_sl_pct": 3.0,
+        "default_tp_pct": 5.0
+      },
+      "strategies": {
+        "embient_enhanced": {
+          "trend_buy_threshold": 85.0,
+          "trend_sell_threshold": 80.0,
+          "range_buy_threshold": 85.0,
+          "range_sell_threshold": 80.0,
+          "neutral_sell_threshold": 75.0
+        },
+        "rsi_reversal": {
+          "oversold": 22.0,
+          "overbought": 78.0,
+          "enabled_in_trend": false
+        },
+        "macd_crossover": {
+          "mode": "confirm_only"
+        },
+        "sma_crossover": {
+          "adx_threshold": 25.0
+        }
+      },
+      "regime": {
+        "adx_trend_threshold": 25,
+        "adx_range_threshold": 20
+      }
+    },
+    "aggressive_trend": {
+      "description": "Aggressive trend-following — wider TP, lower thresholds. Requires manual approval.",
+      "auto_apply": false,
+      "requires_approval": true,
+      "risk": {
+        "max_position_pct": 1.5,
+        "default_sl_pct": 3.0,
+        "default_tp_pct": 6.0
+      },
+      "strategies": {
+        "embient_enhanced": {
+          "trend_buy_threshold": 75.0,
+          "trend_sell_threshold": 75.0,
+          "range_buy_threshold": 80.0,
+          "range_sell_threshold": 75.0,
+          "neutral_sell_threshold": 70.0
+        },
+        "rsi_reversal": {
+          "oversold": 25.0,
+          "overbought": 75.0,
+          "enabled_in_trend": false
+        },
+        "macd_crossover": {
+          "mode": "confirm_only"
+        },
+        "sma_crossover": {
+          "adx_threshold": 25.0
+        }
+      },
+      "regime": {
+        "adx_trend_threshold": 25,
+        "adx_range_threshold": 20
+      }
+    }
+  },
+  "switching_rules": {
+    "cooldown_minutes": 60,
+    "min_trades_for_upgrade": 5,
+    "max_profile_changes_per_day": 4,
+    "hysteresis_minutes": 30
+  },
+  "active_profile": "normal"
+}

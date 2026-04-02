@@ -31,7 +31,7 @@ def get_db():
 
 def init_db():
     """Create all tables, seed admin user, and seed default symbols if needed."""
-    from app.models import trade, portfolio, user, symbol  # noqa: F401
+    from app.models import trade, portfolio, user, symbol, approval  # noqa: F401
     from app.models.user import User, hash_password
     from app.models.symbol import TradingSymbol
     from app.config import settings
