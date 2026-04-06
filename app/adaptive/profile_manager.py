@@ -227,13 +227,17 @@ class ProfileManager:
 
         # Update active profile
         self._active_profile = profile_name
-        self._last_switch_time = datetime.now(timezone.utc)
-        self._switch_history.append({
-            "from": old,
-            "to": profile_name,
-            "at": self._last_switch_time.isoformat(),
-            "reason": reason,
-        })
+
+        # Only track as a real switch if the profile actually changed
+        # (startup restore of same profile should NOT trigger cooldown)
+        if old != profile_name:
+            self._last_switch_time = datetime.now(timezone.utc)
+            self._switch_history.append({
+                "from": old,
+                "to": profile_name,
+                "at": self._last_switch_time.isoformat(),
+                "reason": reason,
+            })
 
         # Persist active profile to JSON
         self._save_active_profile()
