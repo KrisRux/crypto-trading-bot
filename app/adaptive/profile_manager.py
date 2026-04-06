@@ -119,7 +119,6 @@ class ProfileManager:
         consec_losses = perf.get("consecutive_losses", 0)
         drawdown = perf.get("drawdown_intraday", 0)
         win_rate = perf.get("win_rate_last_10", 50)
-        drawdown_24h = perf.get("pnl_24h", 0)
 
         # Rule 1: normal → defensive
         if current == "normal":
@@ -128,9 +127,8 @@ class ProfileManager:
 
         # Rule 2: defensive → normal
         if current == "defensive":
-            min_trades = self._switching_rules.get("min_trades_for_upgrade", 5)
-            # Require positive conditions to upgrade back
-            if win_rate >= 55 and abs(drawdown_24h) < 1 and perf.get("api_error_count", 0) <= 2:
+            # Require positive conditions: low drawdown, decent win rate, few errors
+            if win_rate >= 55 and drawdown < 1 and perf.get("api_error_count", 0) <= 2:
                 return "normal"
 
         # Rule 3: normal → aggressive_trend (requires approval)
