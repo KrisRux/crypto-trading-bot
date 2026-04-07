@@ -658,13 +658,34 @@ def adaptive_status(_user: dict = Depends(require_auth)):
     regime = mc.regime_service.global_snapshot()
     perf = mc.perf_monitor.snapshot.to_dict() if mc.perf_monitor.snapshot else {}
     advisor = mc.advisor.last_advice or {}
+    # Guardrails status
+    guardrails_status = {}
+    if _engine:
+        guardrails_status = _engine.guardrails.status()
+
     return {
         "active_profile": mc.profile_manager.active_profile,
         "regime": regime,
         "performance": perf,
         "advisor": advisor,
         "switch_history": mc.profile_manager.switch_history[-10:],
+        "guardrails": guardrails_status,
     }
+
+
+@router.get("/adaptive/guardrails")
+def guardrails_status_endpoint(_user: dict = Depends(require_auth)):
+    """Detailed guardrails status: kill switch, cooldowns, stats, risk multiplier."""
+    engine = get_engine()
+    return engine.guardrails.status()
+
+
+@router.post("/adaptive/guardrails/reload")
+def reload_guardrails(_admin: dict = Depends(require_admin)):
+    """Hot-reload guardrails config from disk (admin only)."""
+    engine = get_engine()
+    engine.guardrails.reload_config()
+    return {"ok": True, "message": "Guardrails config reloaded"}
 
 
 @router.get("/adaptive/profiles")

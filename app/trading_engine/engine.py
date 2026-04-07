@@ -24,6 +24,7 @@ from app.strategies.base import Strategy, Signal, SignalType
 from app.strategies.indicators import Indicators
 from app.trading_engine.order_manager import OrderManager
 from app.trading_engine.risk_manager import RiskManager
+from app.adaptive.guardrails import Guardrails
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,8 @@ class TradingEngine:
         self._trade_cooldown_minutes: int = 15
         # Adaptive layer (set externally after construction)
         self.meta_controller = None
+        # Guardrails — centralized pre-trade validation
+        self.guardrails = Guardrails()
 
     # ADX thresholds for regime gate (shared with embient strategy)
     _ADX_PERIOD = 14
@@ -278,6 +281,61 @@ class TradingEngine:
             return filtered
 
     # ------------------------------------------------------------------
+    # Guardrails integration
+    # ------------------------------------------------------------------
+
+    def _apply_guardrails(self, signals: list[Signal], symbol: str,
+                          global_regime: str, sym_snap) -> list[Signal]:
+        """
+        Filter BUY signals through the centralized guardrails.
+        SELL signals always pass (we never block exits).
+        """
+        filtered = []
+        for sig in signals:
+            if sig.signal_type != SignalType.BUY:
+                filtered.append(sig)
+                continue
+
+            # Extract score from signal metadata
+            score = None
+            meta = sig.metadata or {}
+            if "buy_score" in meta:
+                score = float(meta["buy_score"])
+            elif sig.confidence and sig.confidence > 0:
+                score = sig.confidence * 100  # normalize 0-1 to 0-100
+
+            verdict = self.guardrails.can_open_new_trade(
+                symbol=symbol,
+                global_regime=global_regime,
+                symbol_regime=sym_snap.regime,
+                adx=sym_snap.adx,
+                volume_ratio=sym_snap.volume_ratio,
+                bb_width_pct=sym_snap.bb_width_pct,
+                signal_score=score,
+                strategy_name=sig.strategy_name,
+            )
+            if verdict.allowed:
+                filtered.append(sig)
+            # else: already logged inside guardrails
+
+        return filtered
+
+    def _record_trade_close(self, trade: Trade, reason: str):
+        """Record a trade close result in guardrails for cooldown/breaker tracking."""
+        is_win = (trade.pnl or 0) > 0
+        was_stoploss = (reason == "sl")
+        strategy = trade.strategy or "unknown"
+        self.guardrails.record_trade_result(
+            trade.symbol, strategy, is_win, was_stoploss=was_stoploss,
+        )
+        # Also record entry for throttle tracking
+        if is_win:
+            logger.debug("GUARDRAILS: recorded WIN for %s [%s]", trade.symbol, strategy)
+        else:
+            logger.debug("GUARDRAILS: recorded LOSS for %s [%s] (sl=%s)",
+                          trade.symbol, strategy, was_stoploss)
+
+    # ------------------------------------------------------------------
     # Signal arbitration
     # ------------------------------------------------------------------
 
@@ -473,10 +531,12 @@ class TradingEngine:
                     {"free": "0"},
                 )
                 capital = float(usdt["free"])
-                qty = self._round_qty(
-                    symbol,
-                    self.risk_manager.calculate_position_size(capital, current_price)
-                )
+                base_qty = self.risk_manager.calculate_position_size(capital, current_price)
+                risk_mult = self.guardrails.get_risk_multiplier()
+                qty = self._round_qty(symbol, base_qty * risk_mult)
+                if risk_mult < 1.0:
+                    logger.info("RISK_SCALING: applied multiplier=%.2f to %s qty=%.6f→%.6f",
+                                risk_mult, symbol, base_qty, qty)
                 if qty <= 0:
                     return
 
@@ -489,6 +549,8 @@ class TradingEngine:
 
                 order.user_id = user.id
                 self._last_trade_time[cooldown_key] = datetime.now(timezone.utc)
+                # Record entry in throttle
+                self.guardrails.entry_throttle.record_entry(symbol)
                 filled_price = order.filled_price or current_price
                 trade = Trade(
                     user_id=user.id, symbol=symbol, side=OrderSide.BUY,
@@ -499,8 +561,8 @@ class TradingEngine:
                 )
                 db.add(trade)
                 db.commit()
-                logger.info("User %d [paper/testnet]: BUY %s qty=%.6f @ %.2f",
-                            user.id, symbol, qty, filled_price)
+                logger.info("User %d [paper/testnet]: BUY %s qty=%.6f @ %.2f (risk_mult=%.2f)",
+                            user.id, symbol, qty, filled_price, risk_mult)
 
             elif sell_signals:
                 open_trades = db.query(Trade).filter(
@@ -524,7 +586,16 @@ class TradingEngine:
                                        current_price: float, within_hours: bool):
         """Paper simulation fallback — no API keys needed, virtual portfolio in DB."""
         # Check TP/SL on open paper positions (always, even outside trading hours)
-        self.paper_portfolio.check_tp_sl_symbol(db, user.id, symbol, current_price)
+        closed_positions = self.paper_portfolio.check_tp_sl_symbol(db, user.id, symbol, current_price)
+        for pos, reason in (closed_positions or []):
+            # Record in guardrails for cooldown/breaker tracking
+            pnl = (current_price - pos.entry_price) * pos.quantity if pos.entry_price else 0
+            is_win = pnl > 0
+            was_sl = (reason == "stop_loss")
+            self.guardrails.record_trade_result(
+                symbol, getattr(pos, "strategy", "unknown") or "unknown",
+                is_win, was_stoploss=was_sl,
+            )
 
         if not within_hours:
             return
@@ -568,16 +639,19 @@ class TradingEngine:
             portfolio = self.paper_portfolio.get_or_create(
                 db, user.id, user.paper_initial_capital
             )
-            qty = self._round_qty(
-                symbol,
-                self.risk_manager.calculate_position_size(portfolio.cash_balance, current_price)
-            )
+            base_qty = self.risk_manager.calculate_position_size(portfolio.cash_balance, current_price)
+            risk_mult = self.guardrails.get_risk_multiplier()
+            qty = self._round_qty(symbol, base_qty * risk_mult)
+            if risk_mult < 1.0:
+                logger.info("RISK_SCALING: applied multiplier=%.2f to %s qty=%.6f→%.6f",
+                            risk_mult, symbol, base_qty, qty)
             if qty <= 0:
                 return
             sl = self.risk_manager.calculate_stop_loss(current_price)
             tp = self.risk_manager.calculate_take_profit(current_price)
             self.paper_portfolio.open_position(db, user.id, symbol, qty, current_price, sl, tp)
             self._last_trade_time[cooldown_key] = datetime.now(timezone.utc)
+            self.guardrails.entry_throttle.record_entry(symbol)
 
         elif sell_signals:
             self.paper_portfolio.close_all_positions(db, user.id, symbol, current_price)
@@ -715,10 +789,12 @@ class TradingEngine:
                     {"free": "0"}
                 )
                 capital = float(usdt["free"])
-                qty = self._round_qty(
-                    signal.symbol,
-                    self.risk_manager.calculate_position_size(capital, signal.price)
-                )
+                base_qty = self.risk_manager.calculate_position_size(capital, signal.price)
+                risk_mult = self.guardrails.get_risk_multiplier()
+                qty = self._round_qty(signal.symbol, base_qty * risk_mult)
+                if risk_mult < 1.0:
+                    logger.info("RISK_SCALING: applied multiplier=%.2f to %s qty=%.6f→%.6f",
+                                risk_mult, signal.symbol, base_qty, qty)
                 if qty <= 0:
                     return
 
@@ -731,6 +807,7 @@ class TradingEngine:
 
                 order.user_id = user.id
                 self._last_trade_time[(user.id, signal.symbol)] = datetime.now(timezone.utc)
+                self.guardrails.entry_throttle.record_entry(signal.symbol)
                 filled_price = order.filled_price or signal.price
                 trade = Trade(
                     user_id=user.id, symbol=signal.symbol, side=OrderSide.BUY,
@@ -741,8 +818,8 @@ class TradingEngine:
                 )
                 db.add(trade)
                 db.commit()
-                logger.info("User %d [live]: BUY %s qty=%.6f @ %.2f",
-                            user.id, signal.symbol, qty, filled_price)
+                logger.info("User %d [live]: BUY %s qty=%.6f @ %.2f (risk_mult=%.2f)",
+                            user.id, signal.symbol, qty, filled_price, risk_mult)
 
             elif signal.signal_type == SignalType.SELL:
                 open_trades = db.query(Trade).filter(
@@ -781,6 +858,8 @@ class TradingEngine:
             db.commit()
             logger.info("User %d [%s]: Trade #%d closed (%s) PnL=%.2f",
                         user.id, order_mgr.mode, trade.id, reason, trade.pnl)
+            # Record result in guardrails (for cooldown/breaker tracking)
+            self._record_trade_close(trade, reason)
         except Exception:
             logger.exception("User %d: failed to close trade #%d", user.id, trade.id)
 
@@ -803,6 +882,18 @@ class TradingEngine:
 
             cycle_dataframes: dict[str, pd.DataFrame] = {}
 
+            # Candle key for entry throttle (15m candle)
+            candle_key = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+            self.guardrails.new_candle(candle_key)
+
+            # Compute regime snapshots FIRST so guardrails can use them
+            regime_snapshots: dict[str, object] = {}
+            global_regime = "unknown"
+            if self.meta_controller:
+                regime_svc = self.meta_controller.regime_service
+            else:
+                regime_svc = None
+
             for symbol in self.symbols:
                 try:
                     df = await self.fetch_klines(symbol, interval="15m", limit=150)
@@ -810,6 +901,31 @@ class TradingEngine:
                         continue
 
                     cycle_dataframes[symbol] = df
+
+                    # Compute regime for this symbol (needed by guardrails)
+                    if regime_svc:
+                        snap = regime_svc.compute(df, symbol)
+                        regime_snapshots[symbol] = snap
+
+                except Exception:
+                    logger.exception("Error fetching/computing regime for %s", symbol)
+
+            # Get global regime
+            if regime_svc:
+                global_regime = regime_svc.global_regime()
+
+            # Update guardrails with performance (from meta_controller if available)
+            if self.meta_controller and self.meta_controller.perf_monitor.snapshot:
+                perf_dict = self.meta_controller.perf_monitor.snapshot.to_dict()
+                perf_dict["global_regime"] = global_regime
+                self.guardrails.update_performance(perf_dict)
+
+            for symbol in self.symbols:
+                try:
+                    df = cycle_dataframes.get(symbol)
+                    if df is None or df.empty:
+                        continue
+
                     current_price = float(df["close"].iloc[-1])
                     self.last_prices[symbol] = current_price
 
@@ -822,6 +938,11 @@ class TradingEngine:
                         regime_label = "TREND" if adx >= self._TREND_ADX_THRESHOLD else "RANGE"
                         logger.info("REGIME: %s (ADX=%.1f) [%s]", regime_label, adx, symbol)
                     signals = self._apply_regime_gate(signals, adx, symbol)
+
+                    # Guardrails: filter BUY signals through centralized gate
+                    sym_snap = regime_snapshots.get(symbol)
+                    if sym_snap and signals:
+                        signals = self._apply_guardrails(signals, symbol, global_regime, sym_snap)
 
                     # Log signals
                     for signal in signals:

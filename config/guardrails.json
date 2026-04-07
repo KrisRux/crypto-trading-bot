@@ -1,0 +1,73 @@
+{
+  "kill_switch": {
+    "consecutive_losses_threshold": 6,
+    "low_win_rate_threshold": 15,
+    "intraday_drawdown_threshold": 2.0,
+    "pnl_24h_threshold": -6.0,
+    "pause_minutes_losses": 90,
+    "pause_minutes_drawdown": 120
+  },
+  "symbol_cooldown": {
+    "consecutive_losses_threshold": 3,
+    "cooldown_minutes_losses": 60,
+    "stoploss_cluster_count": 2,
+    "stoploss_cluster_window_minutes": 90,
+    "cooldown_minutes_cluster": 90
+  },
+  "trade_gate": {
+    "defensive": {
+      "require_symbol_trend": true,
+      "min_adx": 30,
+      "min_volume_ratio": 1.6,
+      "min_bb_width_pct": 1.2
+    },
+    "range": {
+      "require_symbol_trend": true,
+      "min_adx": 32,
+      "min_volume_ratio": 1.8,
+      "min_bb_width_pct": 1.4
+    },
+    "trend": {
+      "require_symbol_trend": true,
+      "min_adx": 25,
+      "min_volume_ratio": 1.0,
+      "min_bb_width_pct": 0.0
+    },
+    "volatile": {
+      "require_symbol_trend": true,
+      "min_adx": 28,
+      "min_volume_ratio": 1.4,
+      "min_bb_width_pct": 1.0
+    },
+    "block_entry_on_symbol_regime": ["range", "defensive"]
+  },
+  "dynamic_score": {
+    "base_min_score": 80,
+    "min_score_after_3_losses": 88,
+    "min_score_after_5_losses": 92,
+    "extra_score_in_bad_regime": 5,
+    "bad_regimes": ["range", "defensive"],
+    "max_score_cap": 95
+  },
+  "entry_throttle": {
+    "max_entries_per_symbol_per_candle": 1,
+    "max_entries_per_hour": {
+      "defensive": 2,
+      "range": 3,
+      "trend": 5,
+      "volatile": 3
+    },
+    "default_max_entries_per_hour": 3
+  },
+  "risk_scaling": {
+    "consecutive_losses_3_multiplier": 0.75,
+    "consecutive_losses_5_multiplier": 0.50,
+    "drawdown_threshold": 1.5,
+    "drawdown_min_multiplier": 0.50,
+    "kill_switch_blocks_entry": true
+  },
+  "strategy_circuit_breaker": {
+    "consecutive_losses_threshold": 4,
+    "pause_minutes": 120
+  }
+}
