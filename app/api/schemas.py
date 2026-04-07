@@ -23,6 +23,7 @@ class PositionResponse(BaseModel):
     quantity: float
     entry_price: float
     current_price: float | None
+    position_value_usdt: float
     unrealized_pnl: float
     unrealized_pnl_pct: float
     stop_loss: float | None

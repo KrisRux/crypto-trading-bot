@@ -352,10 +352,12 @@ async def get_positions(db: Session = Depends(get_db), user_info: dict = Depends
         cp = engine.last_prices.get(t.symbol, 0)
         upnl = (cp - t.entry_price) * t.quantity if cp else 0
         upnl_pct = ((cp - t.entry_price) / t.entry_price * 100) if (cp and t.entry_price) else 0
+        pos_value = cp * t.quantity if cp else t.entry_price * t.quantity
         result.append(PositionResponse(
             id=t.id, symbol=t.symbol, side=t.side.value,
             quantity=t.quantity, entry_price=t.entry_price,
             current_price=cp,
+            position_value_usdt=pos_value,
             unrealized_pnl=upnl,
             unrealized_pnl_pct=upnl_pct,
             stop_loss=t.stop_loss, take_profit=t.take_profit,

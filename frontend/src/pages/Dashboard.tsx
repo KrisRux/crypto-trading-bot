@@ -276,6 +276,7 @@ export default function Dashboard() {
                   <th className="text-right py-2 px-3">{t('qty')}</th>
                   <th className="text-right py-2 px-3">{t('entry')}</th>
                   <th className="text-right py-2 px-3">{t('current')}</th>
+                  <th className="text-right py-2 px-3">{l('Valore', 'Value')} $</th>
                   <th className="text-right py-2 px-3">{t('pnl')}</th>
                   <th className="text-right py-2 px-3">{t('pnl')} %</th>
                   <th className="text-right py-2 px-3">SL</th>
@@ -299,6 +300,7 @@ export default function Dashboard() {
                     <td className="py-2 px-3 text-right">{p.quantity.toFixed(6)}</td>
                     <td className="py-2 px-3 text-right">{p.entry_price.toLocaleString()}</td>
                     <td className="py-2 px-3 text-right">{p.current_price?.toLocaleString() ?? '-'}</td>
+                    <td className="py-2 px-3 text-right text-yellow-300 font-medium">{p.position_value_usdt.toFixed(2)}</td>
                     <td className={`py-2 px-3 text-right font-medium ${
                       p.unrealized_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'
                     }`}>

@@ -65,6 +65,7 @@ export interface Position {
   quantity: number
   entry_price: number
   current_price: number | null
+  position_value_usdt: number
   unrealized_pnl: number
   unrealized_pnl_pct: number
   stop_loss: number | null
