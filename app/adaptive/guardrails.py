@@ -76,6 +76,17 @@ class GuardrailStats:
             "total_passed": self.total_passed,
         }
 
+    def reset(self):
+        """Reset daily counters."""
+        self.blocked_kill_switch = 0
+        self.blocked_symbol_cooldown = 0
+        self.blocked_trade_gate = 0
+        self.blocked_dynamic_score = 0
+        self.blocked_entry_throttle = 0
+        self.blocked_strategy_breaker = 0
+        self.total_blocked = 0
+        self.total_passed = 0
+
 
 def _load_config() -> dict:
     try:
@@ -592,21 +603,50 @@ class Guardrails:
         logger.info("Guardrails initialized from %s", CONFIG_PATH)
 
     def reload_config(self):
-        """Hot-reload config from disk."""
+        """Hot-reload config from disk. Only updates thresholds, preserves runtime state."""
         self._cfg = _load_config()
-        self.kill_switch = KillSwitch(self._cfg)
-        self.symbol_cooldown = SymbolCooldown(self._cfg)
+        # Stateless components: safe to recreate (they only hold thresholds)
         self.trade_gate = TradeGate(self._cfg)
         self.dynamic_score = DynamicScoreFilter(self._cfg)
-        self.entry_throttle = EntryThrottle(self._cfg)
         self.risk_scaler = RiskScaler(self._cfg)
-        self.strategy_breaker = StrategyCircuitBreaker(self._cfg)
-        logger.info("Guardrails config reloaded")
+        # Stateful components: update thresholds without destroying state
+        ks_cfg = self._cfg.get("kill_switch", {})
+        self.kill_switch.consec_loss_thresh = ks_cfg.get("consecutive_losses_threshold", 6)
+        self.kill_switch.low_wr_thresh = ks_cfg.get("low_win_rate_threshold", 15)
+        self.kill_switch.dd_thresh = ks_cfg.get("intraday_drawdown_threshold", 2.0)
+        self.kill_switch.pnl_24h_thresh = ks_cfg.get("pnl_24h_threshold", -6.0)
+        self.kill_switch.pause_min_losses = ks_cfg.get("pause_minutes_losses", 90)
+        self.kill_switch.pause_min_dd = ks_cfg.get("pause_minutes_drawdown", 120)
+
+        sc_cfg = self._cfg.get("symbol_cooldown", {})
+        self.symbol_cooldown.consec_loss_thresh = sc_cfg.get("consecutive_losses_threshold", 3)
+        self.symbol_cooldown.cooldown_min_losses = sc_cfg.get("cooldown_minutes_losses", 60)
+        self.symbol_cooldown.sl_cluster_count = sc_cfg.get("stoploss_cluster_count", 2)
+        self.symbol_cooldown.sl_cluster_window = sc_cfg.get("stoploss_cluster_window_minutes", 90)
+        self.symbol_cooldown.cooldown_min_cluster = sc_cfg.get("cooldown_minutes_cluster", 90)
+
+        et_cfg = self._cfg.get("entry_throttle", {})
+        self.entry_throttle.max_per_symbol_per_candle = et_cfg.get("max_entries_per_symbol_per_candle", 1)
+        self.entry_throttle.max_per_hour = et_cfg.get("max_entries_per_hour", {"defensive": 2, "range": 3, "trend": 5, "volatile": 3})
+        self.entry_throttle.default_max_per_hour = et_cfg.get("default_max_entries_per_hour", 3)
+
+        scb_cfg = self._cfg.get("strategy_circuit_breaker", {})
+        self.strategy_breaker.consec_thresh = scb_cfg.get("consecutive_losses_threshold", 4)
+        self.strategy_breaker.pause_min = scb_cfg.get("pause_minutes", 120)
+
+        logger.info("Guardrails config reloaded (state preserved)")
 
     def update_performance(self, perf: dict):
         """Update cached performance snapshot and re-evaluate kill switch."""
         self._perf = perf
         self.kill_switch.update(perf)
+        # Reset stats daily at midnight UTC
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if not hasattr(self, "_stats_date") or self._stats_date != today:
+            if hasattr(self, "_stats_date"):
+                logger.info("GUARDRAILS: daily stats reset | %s", self.stats.to_dict())
+            self.stats.reset()
+            self._stats_date = today
 
     def new_candle(self, candle_key: str):
         """Notify entry throttle of a new candle."""

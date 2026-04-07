@@ -328,7 +328,6 @@ class TradingEngine:
         self.guardrails.record_trade_result(
             trade.symbol, strategy, is_win, was_stoploss=was_stoploss,
         )
-        # Also record entry for throttle tracking
         if is_win:
             logger.debug("GUARDRAILS: recorded WIN for %s [%s]", trade.symbol, strategy)
         else:
@@ -592,9 +591,16 @@ class TradingEngine:
             pnl = (current_price - pos.entry_price) * pos.quantity if pos.entry_price else 0
             is_win = pnl > 0
             was_sl = (reason == "stop_loss")
+            # PaperPosition has no 'strategy' — look up the associated Trade record
+            assoc_trade = db.query(Trade).filter(
+                Trade.user_id == user.id,
+                Trade.symbol == symbol,
+                Trade.mode == "paper",
+                Trade.status == TradeStatus.CLOSED,
+            ).order_by(Trade.closed_at.desc()).first()
+            strat_name = assoc_trade.strategy if assoc_trade and assoc_trade.strategy else "unknown"
             self.guardrails.record_trade_result(
-                symbol, getattr(pos, "strategy", "unknown") or "unknown",
-                is_win, was_stoploss=was_sl,
+                symbol, strat_name, is_win, was_stoploss=was_sl,
             )
 
         if not within_hours:
@@ -654,7 +660,19 @@ class TradingEngine:
             self.guardrails.entry_throttle.record_entry(symbol)
 
         elif sell_signals:
+            # Record which trades were open before closing (for guardrails tracking)
+            open_before_close = db.query(Trade).filter(
+                Trade.user_id == user.id,
+                Trade.status == TradeStatus.OPEN,
+                Trade.mode == "paper",
+                Trade.symbol == symbol,
+            ).all()
             self.paper_portfolio.close_all_positions(db, user.id, symbol, current_price)
+            # Record results in guardrails
+            for t in open_before_close:
+                db.refresh(t)  # re-read after close_all_positions committed
+                if t.status == TradeStatus.CLOSED:
+                    self._record_trade_close(t, "signal_sell")
 
     async def _execute_live(self, db: Session, user: User,
                             symbol: str, signals: list[Signal],
@@ -882,8 +900,10 @@ class TradingEngine:
 
             cycle_dataframes: dict[str, pd.DataFrame] = {}
 
-            # Candle key for entry throttle (15m candle)
-            candle_key = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+            # Candle key for entry throttle (aligned to 15m candle boundaries)
+            now_utc = datetime.now(timezone.utc)
+            candle_minute = (now_utc.minute // 15) * 15
+            candle_key = now_utc.strftime(f"%Y%m%d_%H{candle_minute:02d}")
             self.guardrails.new_candle(candle_key)
 
             # Compute regime snapshots FIRST so guardrails can use them
@@ -914,11 +934,15 @@ class TradingEngine:
             if regime_svc:
                 global_regime = regime_svc.global_regime()
 
-            # Update guardrails with performance (from meta_controller if available)
-            if self.meta_controller and self.meta_controller.perf_monitor.snapshot:
-                perf_dict = self.meta_controller.perf_monitor.snapshot.to_dict()
-                perf_dict["global_regime"] = global_regime
-                self.guardrails.update_performance(perf_dict)
+            # Update guardrails with performance (compute fresh if no snapshot yet)
+            if self.meta_controller:
+                if not self.meta_controller.perf_monitor.snapshot:
+                    # First cycle: compute perf now so guardrails have data
+                    self.meta_controller.perf_monitor.compute(db)
+                if self.meta_controller.perf_monitor.snapshot:
+                    perf_dict = self.meta_controller.perf_monitor.snapshot.to_dict()
+                    perf_dict["global_regime"] = global_regime
+                    self.guardrails.update_performance(perf_dict)
 
             for symbol in self.symbols:
                 try:
@@ -941,8 +965,21 @@ class TradingEngine:
 
                     # Guardrails: filter BUY signals through centralized gate
                     sym_snap = regime_snapshots.get(symbol)
-                    if sym_snap and signals:
-                        signals = self._apply_guardrails(signals, symbol, global_regime, sym_snap)
+                    if signals:
+                        if sym_snap:
+                            signals = self._apply_guardrails(signals, symbol, global_regime, sym_snap)
+                        else:
+                            # No regime data — apply kill switch and throttle checks only
+                            # (conservative: block BUY if kill switch is active)
+                            buy_signals_present = any(s.signal_type == SignalType.BUY for s in signals)
+                            if buy_signals_present:
+                                ks_verdict = self.guardrails.kill_switch.check()
+                                if not ks_verdict.allowed:
+                                    signals = [s for s in signals if s.signal_type != SignalType.BUY]
+                                    logger.warning(
+                                        "GUARDRAILS: no regime data for %s, kill switch active — BUY blocked",
+                                        symbol,
+                                    )
 
                     # Log signals
                     for signal in signals:

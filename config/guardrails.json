@@ -63,8 +63,7 @@
     "consecutive_losses_3_multiplier": 0.75,
     "consecutive_losses_5_multiplier": 0.50,
     "drawdown_threshold": 1.5,
-    "drawdown_min_multiplier": 0.50,
-    "kill_switch_blocks_entry": true
+    "drawdown_min_multiplier": 0.50
   },
   "strategy_circuit_breaker": {
     "consecutive_losses_threshold": 4,

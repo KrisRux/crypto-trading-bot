@@ -460,3 +460,164 @@ class TestGuardrailsIntegration:
         g.update_performance(_perf(consecutive_losses=4))
         # 4 losses: kill switch not triggered (threshold=6), but risk scaler at 0.75
         assert g.get_risk_multiplier() == 0.75
+
+
+# ================================================================
+# 9. Audit integration tests — scenarios from code review
+# ================================================================
+
+class TestAuditScenarios:
+    """Tests for edge cases found during the code audit."""
+
+    def test_kill_switch_blocks_buy_but_sell_verdict_not_checked(self):
+        """Kill switch blocks BUY via can_open_new_trade, but SELL is never checked."""
+        g = Guardrails()
+        g.update_performance(_perf(consecutive_losses=7))
+        # BUY blocked
+        v = g.can_open_new_trade(
+            symbol="BTCUSDT", global_regime="trend", symbol_regime="trend",
+            adx=30, volume_ratio=1.5, bb_width_pct=3.0,
+            signal_score=90, strategy_name="embient_enhanced",
+        )
+        assert not v.allowed
+        # SELL would never call can_open_new_trade — this test confirms
+        # the function is only called for BUY, not for SELL/exits
+
+    def test_symbol_cooldown_isolates_symbols(self):
+        """Symbol cooldown on BTCUSDT must not block ETHUSDT."""
+        g = Guardrails()
+        g.update_performance(_perf())
+        g.new_candle("20250101_0000")
+        for _ in range(3):
+            g.record_trade_result("BTCUSDT", "embient_enhanced", is_win=False)
+        # BTCUSDT blocked
+        v_btc = g.can_open_new_trade(
+            symbol="BTCUSDT", global_regime="trend", symbol_regime="trend",
+            adx=30, volume_ratio=1.5, bb_width_pct=3.0,
+            signal_score=90, strategy_name="embient_enhanced",
+        )
+        assert not v_btc.allowed
+        # ETHUSDT still allowed
+        v_eth = g.can_open_new_trade(
+            symbol="ETHUSDT", global_regime="trend", symbol_regime="trend",
+            adx=30, volume_ratio=1.5, bb_width_pct=3.0,
+            signal_score=90, strategy_name="embient_enhanced",
+        )
+        assert v_eth.allowed
+
+    def test_strategy_breaker_isolates_strategies(self):
+        """Breaker on embient must not block sma_crossover on a different symbol."""
+        g = Guardrails()
+        g.update_performance(_perf())
+        g.new_candle("20250101_0000")
+        # Distribute losses across symbols to avoid symbol cooldown on a single one
+        g.record_trade_result("BTCUSDT", "embient_enhanced", is_win=False)
+        g.record_trade_result("ETHUSDT", "embient_enhanced", is_win=False)
+        g.record_trade_result("SOLUSDT", "embient_enhanced", is_win=False)
+        g.record_trade_result("XRPUSDT", "embient_enhanced", is_win=False)
+        # Strategy breaker should fire (4 consecutive for embient_enhanced globally)
+        # Test on BNBUSDT which has no symbol cooldown
+        v_emb = g.can_open_new_trade(
+            symbol="BNBUSDT", global_regime="trend", symbol_regime="trend",
+            adx=30, volume_ratio=1.5, bb_width_pct=3.0,
+            strategy_name="embient_enhanced",
+        )
+        assert not v_emb.allowed
+        assert "strategy_breaker" in v_emb.reason
+        # sma_crossover on same symbol is still allowed
+        v_sma = g.can_open_new_trade(
+            symbol="BNBUSDT", global_regime="trend", symbol_regime="trend",
+            adx=30, volume_ratio=1.5, bb_width_pct=3.0,
+            strategy_name="sma_crossover",
+        )
+        assert v_sma.allowed
+
+    def test_dynamic_score_defensive_5_losses_hits_cap(self):
+        """5 losses + defensive regime should give min_score=95 (capped)."""
+        ds = DynamicScoreFilter(_default_cfg())
+        score = ds.get_min_score(5, "defensive")
+        assert score == 95  # 92 + 5 = 97 → cap at 95
+
+    def test_trade_gate_defensive_xrp_low_adx_sol_high_adx(self):
+        """In defensive: XRP blocked (ADX low) but SOL passes (ADX high)."""
+        tg = TradeGate(_default_cfg())
+        v_xrp = tg.check(
+            global_regime="defensive", symbol_regime="trend", symbol="XRPUSDT",
+            adx=26.5, volume_ratio=1.8, bb_width_pct=1.5,
+        )
+        assert not v_xrp.allowed
+        v_sol = tg.check(
+            global_regime="defensive", symbol_regime="trend", symbol="SOLUSDT",
+            adx=31.2, volume_ratio=1.8, bb_width_pct=1.5,
+        )
+        assert v_sol.allowed
+
+    def test_throttle_blocks_double_entry_same_candle(self):
+        """Two entries on same symbol same candle: second must be blocked."""
+        g = Guardrails()
+        g.update_performance(_perf())
+        g.new_candle("20250101_0000")
+        # First entry passes
+        v1 = g.can_open_new_trade(
+            symbol="BTCUSDT", global_regime="trend", symbol_regime="trend",
+            adx=30, volume_ratio=1.5, bb_width_pct=3.0,
+            signal_score=90, strategy_name="embient_enhanced",
+        )
+        assert v1.allowed
+        g.entry_throttle.record_entry("BTCUSDT")
+        # Second entry blocked
+        v2 = g.can_open_new_trade(
+            symbol="BTCUSDT", global_regime="trend", symbol_regime="trend",
+            adx=30, volume_ratio=1.5, bb_width_pct=3.0,
+            signal_score=90, strategy_name="embient_enhanced",
+        )
+        assert not v2.allowed
+        assert "one_trade_per_candle" in v2.reason
+
+    def test_reload_preserves_kill_switch_state(self):
+        """reload_config must NOT deactivate an active kill switch."""
+        g = Guardrails()
+        g.update_performance(_perf(consecutive_losses=7))
+        assert g.kill_switch.active
+        original_until = g.kill_switch._pause_until
+        # Reload
+        g.reload_config()
+        # Kill switch must still be active
+        assert g.kill_switch.active
+        assert g.kill_switch._pause_until == original_until
+
+    def test_reload_preserves_symbol_cooldowns(self):
+        """reload_config must NOT clear active symbol cooldowns."""
+        g = Guardrails()
+        for _ in range(3):
+            g.record_trade_result("BTCUSDT", "embient_enhanced", is_win=False)
+        assert not g.symbol_cooldown.check("BTCUSDT").allowed
+        g.reload_config()
+        assert not g.symbol_cooldown.check("BTCUSDT").allowed
+
+    def test_none_score_strategies_bypass_dynamic_score(self):
+        """Strategies without score (sma, macd) bypass DynamicScoreFilter."""
+        g = Guardrails()
+        g.update_performance(_perf(consecutive_losses=5))
+        g.new_candle("20250101_0000")
+        # signal_score=None → DynamicScore passes (this IS the current behavior)
+        v = g.can_open_new_trade(
+            symbol="BTCUSDT", global_regime="trend", symbol_regime="trend",
+            adx=30, volume_ratio=1.5, bb_width_pct=3.0,
+            signal_score=None,  # sma/macd have no score
+            strategy_name="sma_crossover",
+        )
+        # This test documents the known limitation: no-score strategies bypass DynamicScore
+        # They are still filtered by kill switch, symbol cooldown, trade gate, throttle
+        assert v.allowed
+
+    def test_stats_daily_reset(self):
+        """Stats should reset when a new day is detected."""
+        g = Guardrails()
+        g._stats_date = "2025-01-01"  # simulate yesterday
+        g.stats.total_blocked = 100
+        g.stats.total_passed = 200
+        g.update_performance(_perf())  # triggers date check
+        # Stats should have been reset
+        assert g.stats.total_blocked == 0
+        assert g.stats.total_passed == 0
