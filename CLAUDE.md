@@ -65,6 +65,18 @@ Layer esterno al motore, non tocca mai l'esecuzione degli ordini direttamente.
 - **approval_service.py**: Richieste approvazione in DB (pending/approved/rejected/expired), per cambi profilo aggressivi
 - **llm_advisor.py**: Advisor READ-ONLY. Legge stato e produce spiegazioni + suggerimenti. MAI modifica parametri
 - **meta_controller.py**: Orchestratore chiamato dopo ogni ciclo. Coordina: regime → performance → switch evaluation → notifications → advisor
+- **guardrails.py**: Layer centralizzato pre-trade con kill switch, symbol cooldown, trade gate regime-aware, dynamic score, entry throttle, risk scaling, strategy circuit breaker. Punto unico: `can_open_new_trade()`. Config da `config/guardrails.json` (hot-reload via API).
+
+### Guardrails (`config/guardrails.json`)
+Layer di protezione centralizzato con 7 componenti:
+- **KillSwitch**: pausa globale su consecutive_losses>=6 (90min), win_rate<=15% (90min), drawdown>=2% (120min), pnl_24h<=-6 (120min)
+- **SymbolCooldown**: per-simbolo dopo 3 loss consecutive (60min) o 2 SL ravvicinati in 90min (90min)
+- **TradeGate**: soglie regime-aware (ADX/volume/BB width) per global regime (defensive: ADX>=30, range: ADX>=32, trend: ADX>=25)
+- **DynamicScoreFilter**: min score 80 (base), 88 (3+ loss), 92 (5+ loss), +5 in regime range/defensive, cap 95
+- **EntryThrottle**: max 1 entry/simbolo/candle, max orarie per regime (defensive:2, range:3, trend:5)
+- **RiskScaler**: multiplier size 0.75 (3+ loss), 0.50 (5+ loss o drawdown>=1.5%)
+- **StrategyCircuitBreaker**: pausa strategia dopo 4 loss consecutive (2h), anche per coppia simbolo+strategia
+API: `GET /adaptive/guardrails`, `POST /adaptive/guardrails/reload`
 
 ### Profili (`config/profiles.json`)
 Tre profili con parametri rischio + soglie strategie + flag auto_apply/requires_approval:
@@ -95,7 +107,7 @@ Endpoints principali:
 - Auth: login, logout, me, CRUD utenti
 - Trading: balance, positions, orders, trades, signals, close position
 - Config: strategies CRUD, risk CRUD, symbols add/remove, settings/keys
-- Adaptive: status, profiles CRUD, switching-rules, telegram test
+- Adaptive: status, profiles CRUD, switching-rules, telegram test, guardrails status/reload
 - Approvals: list, pending, approve, reject
 
 ## Configurazione
@@ -168,7 +180,8 @@ app/
 │   ├── notification_service.py
 │   ├── approval_service.py
 │   ├── llm_advisor.py
-│   └── meta_controller.py
+│   ├── meta_controller.py
+│   └── guardrails.py
 ├── binance_client/
 ├── strategies/
 ├── trading_engine/
@@ -176,6 +189,7 @@ app/
 ├── models/
 └── embient_skills/
 config/profiles.json
+config/guardrails.json
 frontend/
 tests/
 deploy/
