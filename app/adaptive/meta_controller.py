@@ -13,6 +13,7 @@ This is a layer on top of the trading engine — it never touches order executio
 directly. All parameter changes go through ProfileManager.apply_profile().
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -217,3 +218,64 @@ class MetaController:
         if now.hour == 0 and now.minute < 20:
             await self.notifier.notify_daily_summary(perf_dict, chat_ids=chat_ids)
             self._daily_summary_sent = today
+
+    # ------------------------------------------------------------------
+    # Telegram callback polling (inline approval buttons)
+    # ------------------------------------------------------------------
+
+    async def start_callback_polling(self):
+        """Background loop that polls Telegram for inline button callbacks."""
+        logger.info("Telegram callback polling started")
+        while True:
+            try:
+                callbacks = await self.notifier.poll_callbacks()
+                for cb in callbacks:
+                    await self._process_callback(cb)
+            except asyncio.CancelledError:
+                logger.info("Telegram callback polling stopped")
+                return
+            except Exception:
+                logger.exception("Callback polling error")
+            await asyncio.sleep(10)
+
+    async def _process_callback(self, cb: dict):
+        """Process a single Telegram callback query (approve/reject)."""
+        from app.database import SessionLocal
+
+        action = cb["action"]
+        request_id = cb["id"]
+        from_user = cb["from_user"]
+        callback_query_id = cb["callback_query_id"]
+        chat_id = cb["chat_id"]
+
+        db = SessionLocal()
+        try:
+            if action == "approve":
+                req = self.approval_service.approve(db, request_id, resolved_by=f"telegram:{from_user}")
+            else:
+                req = self.approval_service.reject(db, request_id, resolved_by=f"telegram:{from_user}")
+
+            if req is None:
+                await self.notifier.answer_callback(callback_query_id, f"Request #{request_id} not found.")
+                return
+
+            if req.status in ("approved", "rejected"):
+                status_text = f"Request #{request_id} {req.status.upper()} by {from_user}"
+                await self.notifier.answer_callback(callback_query_id, status_text)
+                # Send confirmation message to chat
+                await self.notifier.send(
+                    f"\u2705 <b>Request #{request_id} {req.status.upper()}</b>\n"
+                    f"<b>By:</b> {from_user}\n"
+                    f"<b>Profile:</b> <code>{req.from_profile}</code> \u2192 <code>{req.to_profile}</code>",
+                    level="INFO", chat_id=chat_id, deduplicate=False,
+                )
+                logger.info("Telegram approval callback: #%d %s by %s", request_id, req.status, from_user)
+            elif req.status == "expired":
+                await self.notifier.answer_callback(callback_query_id, f"Request #{request_id} has expired.")
+            else:
+                await self.notifier.answer_callback(
+                    callback_query_id,
+                    f"Request #{request_id} is already {req.status}.",
+                )
+        finally:
+            db.close()

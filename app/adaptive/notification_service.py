@@ -15,6 +15,7 @@ Config:
 """
 
 import hashlib
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 class NotificationService:
     """Async Telegram notification sender with dedup and rate limiting."""
 
-    TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
+    TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 
     # Rate limit: max messages per window
     MAX_MESSAGES_PER_MINUTE = 10
@@ -39,6 +40,8 @@ class NotificationService:
         self._sent_timestamps: list[datetime] = []
         # Dedup: hash -> last sent time
         self._dedup_cache: dict[str, datetime] = {}
+        # Telegram callback polling offset
+        self._callback_offset: int = 0
 
         if self._enabled:
             logger.info("Telegram notifications enabled (bot token configured)")
@@ -94,7 +97,7 @@ class NotificationService:
         }.get(level, "")
         full_text = f"{level_emoji} <b>[{level}]</b>\n\n{text}"
 
-        url = self.TELEGRAM_API.format(token=self._bot_token)
+        url = self.TELEGRAM_API.format(token=self._bot_token, method="sendMessage")
         payload = {
             "chat_id": chat_id,
             "text": full_text,
@@ -148,14 +151,54 @@ class NotificationService:
 
     async def notify_approval_required(self, from_profile: str, to_profile: str,
                                        reason: str, request_id: int, chat_ids: list[str] = None):
-        await self.broadcast(
+        """Send approval request with inline Approve/Reject buttons."""
+        text = (
             f"\U0001F510 <b>Approval Required</b>\n\n"
             f"Profile: <code>{from_profile}</code> \u2192 <code>{to_profile}</code>\n"
             f"<b>Reason:</b> {reason}\n"
             f"<b>Request ID:</b> #{request_id}\n\n"
-            f"Approve via API: <code>POST /api/approvals/{request_id}/approve</code>",
-            level="CRITICAL", chat_ids=chat_ids or [], deduplicate=False,
+            f"Use the buttons below or API:\n"
+            f"<code>POST /api/approvals/{request_id}/approve</code>"
         )
+        inline_keyboard = {
+            "inline_keyboard": [[
+                {"text": "\u2705 Approve", "callback_data": json.dumps({"action": "approve", "id": request_id})},
+                {"text": "\u274c Reject", "callback_data": json.dumps({"action": "reject", "id": request_id})},
+            ]]
+        }
+        for cid in (chat_ids or []):
+            await self._send_with_keyboard(text, inline_keyboard, chat_id=cid)
+
+    async def _send_with_keyboard(self, text: str, reply_markup: dict,
+                                   chat_id: str = "") -> bool:
+        """Send a message with inline keyboard to a specific chat."""
+        if not self._enabled or not chat_id:
+            return False
+
+        level_emoji = "\U0001F6A8"
+        full_text = f"{level_emoji} <b>[CRITICAL]</b>\n\n{text}"
+
+        url = self.TELEGRAM_API.format(token=self._bot_token, method="sendMessage")
+        payload = {
+            "chat_id": chat_id,
+            "text": full_text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+            "reply_markup": reply_markup,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    self._sent_timestamps.append(datetime.now(timezone.utc))
+                    logger.info("Telegram sent approval keyboard to %s", chat_id)
+                    return True
+                else:
+                    logger.warning("Telegram keyboard error %d: %s", resp.status_code, resp.text[:200])
+                    return False
+        except Exception:
+            logger.exception("Telegram keyboard send failed")
+            return False
 
     async def notify_drawdown_breach(self, drawdown_pct: float, threshold: float,
                                      chat_ids: list[str] = None):
@@ -207,3 +250,78 @@ class NotificationService:
             f"Check exchange connectivity.",
             level="CRITICAL", chat_ids=chat_ids or [],
         )
+
+    # ------------------------------------------------------------------
+    # Telegram callback query polling (for inline approvals)
+    # ------------------------------------------------------------------
+
+    async def poll_callbacks(self) -> list[dict]:
+        """
+        Poll Telegram getUpdates for callback_query events.
+        Returns a list of parsed callback dicts:
+          [{"callback_query_id": str, "action": str, "id": int, "chat_id": str, "from_user": str}]
+        """
+        if not self._enabled:
+            return []
+
+        url = self.TELEGRAM_API.format(token=self._bot_token, method="getUpdates")
+        params = {
+            "offset": self._callback_offset,
+            "timeout": 5,
+            "allowed_updates": json.dumps(["callback_query"]),
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(url, params=params)
+                if resp.status_code != 200:
+                    logger.warning("Telegram getUpdates error %d", resp.status_code)
+                    return []
+                data = resp.json()
+        except Exception:
+            logger.exception("Telegram getUpdates failed")
+            return []
+
+        results = []
+        for update in data.get("result", []):
+            update_id = update["update_id"]
+            self._callback_offset = update_id + 1
+
+            cb = update.get("callback_query")
+            if not cb or not cb.get("data"):
+                continue
+
+            try:
+                payload = json.loads(cb["data"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            action = payload.get("action")
+            req_id = payload.get("id")
+            if action not in ("approve", "reject") or req_id is None:
+                continue
+
+            from_user = cb.get("from", {}).get("first_name", "telegram_user")
+            chat_id = str(cb.get("message", {}).get("chat", {}).get("id", ""))
+            results.append({
+                "callback_query_id": cb["id"],
+                "action": action,
+                "id": int(req_id),
+                "chat_id": chat_id,
+                "from_user": from_user,
+            })
+
+        return results
+
+    async def answer_callback(self, callback_query_id: str, text: str) -> bool:
+        """Answer a Telegram callback query (shows a toast notification to the user)."""
+        if not self._enabled:
+            return False
+        url = self.TELEGRAM_API.format(token=self._bot_token, method="answerCallbackQuery")
+        payload = {"callback_query_id": callback_query_id, "text": text, "show_alert": True}
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(url, json=payload)
+                return resp.status_code == 200
+        except Exception:
+            logger.exception("answerCallbackQuery failed")
+            return False

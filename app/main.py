@@ -92,14 +92,23 @@ async def lifespan(app: FastAPI):
     engine_task = asyncio.create_task(engine.start())
     logger.info("Trading engine started")
 
+    # Start Telegram callback polling for inline approvals
+    callback_task = asyncio.create_task(meta_controller.start_callback_polling())
+    logger.info("Telegram callback polling started")
+
     yield  # App is running
 
     # Shutdown
     logger.info("Shutting down trading engine...")
+    callback_task.cancel()
     await engine.stop()
     engine_task.cancel()
     try:
         await engine_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await callback_task
     except asyncio.CancelledError:
         pass
     logger.info("Shutdown complete")
