@@ -50,7 +50,7 @@ class RsiStrategy(Strategy):
                 price=current_price,
                 strategy_name=self.name,
                 reason=f"RSI crossed up from oversold ({curr_rsi:.1f})",
-                confidence=0.60,
+                confidence=0.82,
                 metadata={"rsi": float(curr_rsi)},
             )]
 
@@ -62,7 +62,7 @@ class RsiStrategy(Strategy):
                 price=current_price,
                 strategy_name=self.name,
                 reason=f"RSI crossed down from overbought ({curr_rsi:.1f})",
-                confidence=0.60,
+                confidence=0.82,
                 metadata={"rsi": float(curr_rsi)},
             )]
 

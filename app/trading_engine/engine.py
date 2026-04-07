@@ -8,6 +8,7 @@ portfolio; users with live keys get real orders on their own Binance account.
 
 import asyncio
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -49,8 +50,8 @@ class TradingEngine:
         self.running = False
         self.last_prices: dict[str, float] = {s: 0.0 for s in self.symbols}
         self.signals_log: list[dict] = []
-        # Lot size (step size decimals) per symbol, loaded from Binance at startup
-        self._qty_decimals: dict[str, int] = {}
+        # Binance symbol filters loaded from exchangeInfo at startup
+        self._symbol_filters: dict[str, dict] = {}  # symbol -> {step_size, min_qty, max_qty, min_notional}
         # Cooldown: track last BUY execution time per (user_id, symbol) to avoid overtrading
         self._last_trade_time: dict[tuple[int, str], datetime] = {}
         self._trade_cooldown_minutes: int = 15
@@ -538,6 +539,11 @@ class TradingEngine:
                                 risk_mult, symbol, base_qty, qty)
                 if qty <= 0:
                     return
+                valid, reason = self._validate_qty(symbol, qty, current_price)
+                if not valid:
+                    logger.info("ORDER_VALIDATION: skipped BUY %s | %s [user=%d paper/testnet]",
+                                symbol, reason, user.id)
+                    return
 
                 sl = self.risk_manager.calculate_stop_loss(current_price)
                 tp = self.risk_manager.calculate_take_profit(current_price)
@@ -653,6 +659,11 @@ class TradingEngine:
                             risk_mult, symbol, base_qty, qty)
             if qty <= 0:
                 return
+            valid, reason = self._validate_qty(symbol, qty, current_price)
+            if not valid:
+                logger.info("ORDER_VALIDATION: skipped BUY %s | %s [user=%d paper/sim]",
+                            symbol, reason, user.id)
+                return
             sl = self.risk_manager.calculate_stop_loss(current_price)
             tp = self.risk_manager.calculate_take_profit(current_price)
             self.paper_portfolio.open_position(db, user.id, symbol, qty, current_price, sl, tp)
@@ -725,51 +736,74 @@ class TradingEngine:
             await client.close()
 
     async def _load_lot_sizes(self):
-        """Fetch step sizes from Binance exchangeInfo for all symbols."""
+        """Fetch LOT_SIZE + MIN_NOTIONAL filters from Binance exchangeInfo."""
         try:
             info = await self.market_client.get_exchange_info()
             for s in info.get("symbols", []):
-                sym = s["symbol"]
-                for f in s.get("filters", []):
-                    if f["filterType"] == "LOT_SIZE":
-                        step = f["stepSize"]  # e.g. "0.00100000"
-                        # Count decimals: "0.00100000" -> 3
-                        if "." in step:
-                            stripped = step.rstrip("0")
-                            decimals = len(stripped.split(".")[1]) if "." in stripped else 0
-                        else:
-                            decimals = 0
-                        self._qty_decimals[sym] = decimals
-                        break
-            logger.info("Loaded lot sizes for %d symbols", len(self._qty_decimals))
+                self._parse_symbol_filters(s)
+            logger.info("Loaded filters for %d symbols", len(self._symbol_filters))
         except Exception:
-            logger.exception("Failed to load lot sizes, using defaults")
+            logger.exception("Failed to load symbol filters, using defaults")
 
     async def _load_lot_size_for(self, symbol: str):
-        """Fetch and cache the lot size for a single newly-added symbol."""
+        """Fetch and cache filters for a single newly-added symbol."""
         try:
             info = await self.market_client.get_exchange_info()
             for s in info.get("symbols", []):
-                if s["symbol"] != symbol:
-                    continue
-                for f in s.get("filters", []):
-                    if f["filterType"] == "LOT_SIZE":
-                        step = f["stepSize"]
-                        if "." in step:
-                            stripped = step.rstrip("0")
-                            decimals = len(stripped.split(".")[1]) if "." in stripped else 0
-                        else:
-                            decimals = 0
-                        self._qty_decimals[symbol] = decimals
-                        logger.info("Loaded lot size for %s: %d decimals", symbol, decimals)
-                break
+                if s["symbol"] == symbol:
+                    self._parse_symbol_filters(s)
+                    logger.info("Loaded filters for %s: %s", symbol, self._symbol_filters.get(symbol))
+                    break
         except Exception:
-            logger.exception("Failed to load lot size for %s, using default", symbol)
+            logger.exception("Failed to load filters for %s, using defaults", symbol)
+
+    def _parse_symbol_filters(self, sym_info: dict):
+        """Extract LOT_SIZE and MIN_NOTIONAL from a single symbol's exchangeInfo entry."""
+        sym = sym_info["symbol"]
+        filt = {"step_size": 0.0001, "min_qty": 0.0001, "max_qty": 99999999.0, "min_notional": 10.0}
+        for f in sym_info.get("filters", []):
+            if f["filterType"] == "LOT_SIZE":
+                filt["step_size"] = float(f["stepSize"])
+                filt["min_qty"] = float(f["minQty"])
+                filt["max_qty"] = float(f["maxQty"])
+            elif f["filterType"] == "NOTIONAL":
+                filt["min_notional"] = float(f.get("minNotional", 10.0))
+            elif f["filterType"] == "MIN_NOTIONAL":
+                filt["min_notional"] = float(f.get("minNotional", 10.0))
+        self._symbol_filters[sym] = filt
 
     def _round_qty(self, symbol: str, qty: float) -> float:
-        """Round quantity to Binance-allowed step size."""
-        decimals = self._qty_decimals.get(symbol, 4)
-        return round(qty, decimals)
+        """Round quantity DOWN to the nearest valid stepSize multiple."""
+        filt = self._symbol_filters.get(symbol)
+        if not filt:
+            return round(qty, 4)
+        step = filt["step_size"]
+        if step <= 0:
+            return round(qty, 4)
+        # Floor to step_size multiple (never round UP — Binance rejects overshoot)
+        return math.floor(qty / step) * step
+
+    def _validate_qty(self, symbol: str, qty: float, price: float) -> tuple[bool, str]:
+        """
+        Validate qty against Binance LOT_SIZE and MIN_NOTIONAL filters.
+        Returns (is_valid, reason). If invalid, reason explains why.
+        """
+        filt = self._symbol_filters.get(symbol)
+        if not filt:
+            # No filters loaded — allow (Binance will reject if wrong)
+            return True, ""
+
+        if qty < filt["min_qty"]:
+            return False, f"qty={qty:.8f} < minQty={filt['min_qty']}"
+
+        if qty > filt["max_qty"]:
+            return False, f"qty={qty:.8f} > maxQty={filt['max_qty']}"
+
+        notional = qty * price
+        if notional < filt["min_notional"]:
+            return False, f"notional={notional:.2f} < minNotional={filt['min_notional']}"
+
+        return True, ""
 
     async def _execute_order(self, db: Session, user: User, signal: Signal,
                              client: BinanceRestClient, order_mgr: "OrderManager"):
@@ -814,6 +848,11 @@ class TradingEngine:
                     logger.info("RISK_SCALING: applied multiplier=%.2f to %s qty=%.6f→%.6f",
                                 risk_mult, signal.symbol, base_qty, qty)
                 if qty <= 0:
+                    return
+                valid, reason = self._validate_qty(signal.symbol, qty, signal.price)
+                if not valid:
+                    logger.info("ORDER_VALIDATION: skipped BUY %s | %s [user=%d live]",
+                                signal.symbol, reason, user.id)
                     return
 
                 sl = self.risk_manager.calculate_stop_loss(signal.price)

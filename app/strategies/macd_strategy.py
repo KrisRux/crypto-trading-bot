@@ -63,7 +63,7 @@ class MacdStrategy(Strategy):
                 price=current_price,
                 strategy_name=self.name,
                 reason="MACD bullish crossover",
-                confidence=0.60,
+                confidence=0.82,
             )]
 
         # MACD crosses below signal -> SELL
@@ -74,7 +74,7 @@ class MacdStrategy(Strategy):
                 price=current_price,
                 strategy_name=self.name,
                 reason="MACD bearish crossover",
-                confidence=0.60,
+                confidence=0.82,
             )]
 
         return []

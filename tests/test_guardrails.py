@@ -595,21 +595,42 @@ class TestAuditScenarios:
         g.reload_config()
         assert not g.symbol_cooldown.check("BTCUSDT").allowed
 
-    def test_none_score_strategies_bypass_dynamic_score(self):
-        """Strategies without score (sma, macd) bypass DynamicScoreFilter."""
+    def test_sma_macd_rsi_confidence_passes_base_threshold(self):
+        """sma(0.85→85), macd(0.82→82), rsi(0.82→82) all pass base_min=80 in trend."""
         g = Guardrails()
-        g.update_performance(_perf(consecutive_losses=5))
+        g.update_performance(_perf())
         g.new_candle("20250101_0000")
-        # signal_score=None → DynamicScore passes (this IS the current behavior)
+        # sma_crossover: confidence=0.85 → score=85 >= base_min=80
         v = g.can_open_new_trade(
             symbol="BTCUSDT", global_regime="trend", symbol_regime="trend",
             adx=30, volume_ratio=1.5, bb_width_pct=3.0,
-            signal_score=None,  # sma/macd have no score
+            signal_score=85,  # 0.85 * 100
             strategy_name="sma_crossover",
         )
-        # This test documents the known limitation: no-score strategies bypass DynamicScore
-        # They are still filtered by kill switch, symbol cooldown, trade gate, throttle
         assert v.allowed
+        # macd_crossover: confidence=0.82 → score=82
+        g.new_candle("20250101_0015")
+        v = g.can_open_new_trade(
+            symbol="ETHUSDT", global_regime="trend", symbol_regime="trend",
+            adx=30, volume_ratio=1.5, bb_width_pct=3.0,
+            signal_score=82,  # 0.82 * 100
+            strategy_name="macd_crossover",
+        )
+        assert v.allowed
+
+    def test_sma_blocked_after_3_losses(self):
+        """sma(85) blocked when 3+ losses raise threshold to 88."""
+        g = Guardrails()
+        g.update_performance(_perf(consecutive_losses=3))
+        g.new_candle("20250101_0000")
+        v = g.can_open_new_trade(
+            symbol="BTCUSDT", global_regime="trend", symbol_regime="trend",
+            adx=30, volume_ratio=1.5, bb_width_pct=3.0,
+            signal_score=85,  # 85 < 88 (min after 3 losses)
+            strategy_name="sma_crossover",
+        )
+        assert not v.allowed
+        assert "dynamic_score" in v.reason
 
     def test_stats_daily_reset(self):
         """Stats should reset when a new day is detected."""

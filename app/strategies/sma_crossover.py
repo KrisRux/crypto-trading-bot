@@ -62,7 +62,7 @@ class SmaCrossoverStrategy(Strategy):
                 price=current_price,
                 strategy_name=self.name,
                 reason=f"SMA golden cross (fast={self.fast_period} > slow={self.slow_period})",
-                confidence=0.65,
+                confidence=0.85,
             )]
 
         # Death cross: fast crosses below slow -> SELL
@@ -73,7 +73,7 @@ class SmaCrossoverStrategy(Strategy):
                 price=current_price,
                 strategy_name=self.name,
                 reason=f"SMA death cross (fast={self.fast_period} < slow={self.slow_period})",
-                confidence=0.65,
+                confidence=0.85,
             )]
 
         return []
