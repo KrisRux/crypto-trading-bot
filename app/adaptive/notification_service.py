@@ -265,18 +265,24 @@ class NotificationService:
             return []
 
         url = self.TELEGRAM_API.format(token=self._bot_token, method="getUpdates")
-        params = {
+        # Use POST with JSON body — more reliable than GET query params for
+        # allowed_updates (avoids URL-encoding issues with JSON arrays)
+        payload = {
             "offset": self._callback_offset,
             "timeout": 5,
-            "allowed_updates": json.dumps(["callback_query"]),
+            "allowed_updates": ["callback_query"],
         }
         try:
             async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(url, params=params)
+                resp = await client.post(url, json=payload)
                 if resp.status_code != 200:
-                    logger.warning("Telegram getUpdates error %d", resp.status_code)
+                    logger.warning("Telegram getUpdates error %d: %s",
+                                   resp.status_code, resp.text[:200])
                     return []
                 data = resp.json()
+                if not data.get("ok"):
+                    logger.warning("Telegram getUpdates not ok: %s", data.get("description", ""))
+                    return []
         except Exception:
             logger.exception("Telegram getUpdates failed")
             return []
@@ -284,6 +290,8 @@ class NotificationService:
         results = []
         for update in data.get("result", []):
             update_id = update["update_id"]
+            # Always advance offset — even for non-callback updates — to prevent
+            # old message updates from blocking the queue
             self._callback_offset = update_id + 1
 
             cb = update.get("callback_query")
@@ -291,17 +299,21 @@ class NotificationService:
                 continue
 
             try:
-                payload = json.loads(cb["data"])
+                payload_data = json.loads(cb["data"])
             except (json.JSONDecodeError, TypeError):
+                logger.warning("Telegram callback: invalid JSON in data: %s", cb.get("data"))
                 continue
 
-            action = payload.get("action")
-            req_id = payload.get("id")
+            action = payload_data.get("action")
+            req_id = payload_data.get("id")
             if action not in ("approve", "reject") or req_id is None:
+                logger.warning("Telegram callback: unknown action=%s id=%s", action, req_id)
                 continue
 
             from_user = cb.get("from", {}).get("first_name", "telegram_user")
             chat_id = str(cb.get("message", {}).get("chat", {}).get("id", ""))
+            logger.info("Telegram callback received: action=%s request_id=%d from=%s",
+                        action, req_id, from_user)
             results.append({
                 "callback_query_id": cb["id"],
                 "action": action,

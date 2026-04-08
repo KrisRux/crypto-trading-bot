@@ -225,6 +225,11 @@ class MetaController:
 
     async def start_callback_polling(self):
         """Background loop that polls Telegram for inline button callbacks."""
+        # Flush old updates at startup so we don't process stale callbacks
+        try:
+            await self._flush_old_updates()
+        except Exception:
+            logger.exception("Failed to flush old Telegram updates")
         logger.info("Telegram callback polling started")
         while True:
             try:
@@ -237,6 +242,32 @@ class MetaController:
             except Exception:
                 logger.exception("Callback polling error")
             await asyncio.sleep(10)
+
+    async def _flush_old_updates(self):
+        """Consume all pending Telegram updates so polling starts fresh."""
+        import httpx
+        if not self.notifier.enabled:
+            return
+        url = self.notifier.TELEGRAM_API.format(
+            token=self.notifier._bot_token, method="getUpdates",
+        )
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(url, json={"offset": -1, "timeout": 0})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    results = data.get("result", [])
+                    if results:
+                        last_id = results[-1]["update_id"]
+                        self.notifier._callback_offset = last_id + 1
+                        logger.info(
+                            "Flushed %d old Telegram updates, offset set to %d",
+                            len(results), self.notifier._callback_offset,
+                        )
+                    else:
+                        logger.info("No old Telegram updates to flush")
+        except Exception:
+            logger.exception("Failed to flush Telegram updates")
 
     async def _process_callback(self, cb: dict):
         """Process a single Telegram callback query (approve/reject)."""
