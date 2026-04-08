@@ -8,7 +8,7 @@ Approval can be given via the REST API or (future) Telegram callback.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -45,7 +45,7 @@ class ApprovalService:
             logger.info("Approval already pending for → %s (id=%d)", to_profile, existing.id)
             return existing
 
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
         req = ApprovalRequest(
             request_type="profile_switch",
             from_profile=from_profile,
@@ -80,7 +80,7 @@ class ApprovalService:
             return req
 
         req.status = "approved"
-        req.resolved_at = datetime.now(timezone.utc)
+        req.resolved_at = datetime.utcnow()
         req.resolved_by = resolved_by
         db.commit()
         logger.info("Approval #%d APPROVED by %s", request_id, resolved_by)
@@ -95,7 +95,7 @@ class ApprovalService:
             return req
 
         req.status = "rejected"
-        req.resolved_at = datetime.now(timezone.utc)
+        req.resolved_at = datetime.utcnow()
         req.resolved_by = resolved_by
         db.commit()
         logger.info("Approval #%d REJECTED by %s", request_id, resolved_by)
@@ -142,7 +142,7 @@ class ApprovalService:
         )
 
     def _expire_if_needed(self, req: ApprovalRequest):
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
         if req.expires_at and now >= req.expires_at:
             req.status = "expired"
             req.resolved_at = now
