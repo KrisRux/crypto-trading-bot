@@ -172,6 +172,39 @@ export interface AssetItem {
   value_usdt: number
 }
 
+export interface DiagEvent {
+  ts: string | null
+  type: string
+  symbol: string
+  level: string
+  reason?: string
+  source?: string
+  regime?: string
+  adx?: number
+  atr?: number
+  bb?: number
+  vol?: number
+  pnl1h?: number
+  pnl6h?: number
+  pnl24h?: number
+  wr?: number
+  dd?: number
+  consec?: number
+  tph?: number
+  side?: string
+  price?: number
+  strategy?: string
+  from?: string
+  to?: string
+  action?: string
+  multiplier?: number
+}
+
+export interface DiagnosticsData {
+  status: AdaptiveStatus & { guardrails?: { kill_switch?: { active: boolean }; stats?: Record<string, number>; risk_multiplier?: number; dynamic_score_min?: number; symbol_cooldowns?: Record<string, unknown> } }
+  events: DiagEvent[]
+}
+
 export interface AdaptiveStatus {
   active_profile: string
   regime: {
@@ -239,4 +272,5 @@ export const api = {
     request<SkillItem[]>(category ? `/skills?category=${category}` : '/skills'),
   getSkill: (name: string) => request<SkillItem>(`/skills/${name}`),
   getAdaptiveStatus: () => request<AdaptiveStatus>('/adaptive/status'),
+  getDiagnostics: () => request<DiagnosticsData>('/diagnostics'),
 }

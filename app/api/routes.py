@@ -677,10 +677,8 @@ def adaptive_status(_user: dict = Depends(require_auth)):
 
 @router.get("/diagnostics")
 def get_diagnostics(lines: int = 3000, _admin: dict = Depends(require_admin)):
-    """Serve the diagnostics dashboard HTML with live data pre-injected (admin only)."""
-    import json as _json, os
-    from fastapi.responses import HTMLResponse
-
+    """Combined diagnostics payload: adaptive status + parsed log events (admin only)."""
+    import os, re
     mc = get_meta_controller()
     engine = get_engine()
 
@@ -689,48 +687,80 @@ def get_diagnostics(lines: int = 3000, _admin: dict = Depends(require_admin)):
     perf = mc.perf_monitor.snapshot.to_dict() if mc.perf_monitor.snapshot else {}
     advisor = mc.advisor.last_advice or {}
     guardrails = engine.guardrails.status() if engine else {}
-    status_obj = {
-        "active_profile": mc.profile_manager.active_profile,
-        "regime": regime, "performance": perf, "advisor": advisor,
-        "switch_history": mc.profile_manager.switch_history[-10:],
-        "guardrails": guardrails,
-    }
 
-    # Log tail
-    log_content = ""
+    # Parse log file into structured events
+    events: list[dict] = []
     log_file = "logs/trading_bot.log"
     if os.path.exists(log_file):
         try:
             with open(log_file, "r", encoding="utf-8", errors="replace") as f:
                 all_lines = f.readlines()
-            log_content = "".join(all_lines[-lines:])
+            for line in all_lines[-lines:]:
+                ev = _parse_log_line(line)
+                if ev:
+                    events.append(ev)
         except Exception:
-            log_content = ""
+            pass
 
-    # Read dashboard HTML template
-    html_path = os.path.join(os.path.dirname(__file__), "..", "..", "dashboard", "diagnostics.html")
-    try:
-        with open(html_path, "r", encoding="utf-8") as f:
-            html = f.read()
-    except FileNotFoundError:
-        raise HTTPException(404, "Dashboard template not found")
+    return {
+        "status": {
+            "active_profile": mc.profile_manager.active_profile,
+            "regime": regime, "performance": perf, "advisor": advisor,
+            "switch_history": mc.profile_manager.switch_history[-10:],
+            "guardrails": guardrails,
+        },
+        "events": events,
+    }
 
-    # Inject auto-load script before </body>
-    init_script = (
-        "<script>\n"
-        "window.addEventListener('DOMContentLoaded', function() {\n"
-        f"  loadJsonStatus({_json.dumps(status_obj)});\n"
-        f"  var logText = {_json.dumps(log_content)};\n"
-        "  if (logText) parseLog(logText);\n"
-        "  document.getElementById('dropZone').classList.add('hidden');\n"
-        "  document.getElementById('btnAnalyze').disabled = false;\n"
-        "  analyze();\n"
-        "});\n"
-        "</script>\n"
-    )
-    html = html.replace("</body>", init_script + "</body>")
 
-    return HTMLResponse(content=html)
+def _parse_log_line(line: str) -> dict | None:
+    """Parse a single log line into a structured event dict."""
+    import re
+    ts_m = re.match(r'^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', line)
+    ts = ts_m.group(1) if ts_m else None
+    m = None
+
+    if (m := re.search(r'REGIME_SERVICE:\s*(\w+)\s*.*?(\w+)\s*\(ADX=([\d.]+)\s+ATR%=([\d.]+)\s+BB%=([\d.]+)\s+Vol=([\d.]+)', line)):
+        return {"ts": ts, "type": "regime", "symbol": m.group(1), "level": "info",
+                "regime": m.group(2).lower(), "adx": float(m.group(3)), "atr": float(m.group(4)),
+                "bb": float(m.group(5)), "vol": float(m.group(6))}
+    if (m := re.search(r'PERF_MONITOR:.*?PnL\s+1h=([-\d.]+)\s+6h=([-\d.]+)\s+24h=([-\d.]+)\s*\|\s*WR=([\d.]+)%?\s*\|\s*DD=([\d.]+)%?\s*\|\s*ConsecLoss=(\d+)\s*\|\s*Trades\/h=([\d.]+)', line)):
+        return {"ts": ts, "type": "perf", "symbol": "", "level": "info",
+                "pnl1h": float(m.group(1)), "pnl6h": float(m.group(2)), "pnl24h": float(m.group(3)),
+                "wr": float(m.group(4)), "dd": float(m.group(5)), "consec": int(m.group(6)), "tph": float(m.group(7))}
+    if (m := re.search(r'TRADE_GATE:\s*blocked\s*\|\s*symbol=(\w+)\s*\|\s*reason=(\S+)', line)):
+        return {"ts": ts, "type": "block", "symbol": m.group(1), "level": "blocked", "reason": m.group(2), "source": "trade_gate"}
+    if (m := re.search(r'TRADE_GATE:\s*passed\s*\|\s*symbol=(\w+)', line)):
+        return {"ts": ts, "type": "pass", "symbol": m.group(1), "level": "passed", "source": "trade_gate"}
+    if (m := re.search(r'DYNAMIC_SCORE:\s*blocked\s*\|\s*symbol=(\w+).*?score=([\d.]+)\s*<\s*min=([\d.]+)', line)):
+        return {"ts": ts, "type": "block", "symbol": m.group(1), "level": "blocked",
+                "reason": f"score_{m.group(2)}<{m.group(3)}", "source": "dynamic_score"}
+    if (m := re.search(r'DYNAMIC_SCORE:\s*passed\s*\|\s*symbol=(\w+)', line)):
+        return {"ts": ts, "type": "pass", "symbol": m.group(1), "level": "passed", "source": "dynamic_score"}
+    if (m := re.search(r'Signal:\s*(BUY|SELL)\s+(\w+)\s+@\s*([\d.]+)\s*\[(\w+)\]', line)):
+        return {"ts": ts, "type": "signal", "symbol": m.group(2), "level": "signal",
+                "side": m.group(1), "price": float(m.group(3)), "strategy": m.group(4)}
+    if (m := re.search(r'MARKET\s+(BUY|SELL)\s+filled.*?(\w+USDT)', line)) or \
+       (m := re.search(r'\[paper.*?\]:\s*BUY\s+(\w+)', line)):
+        sym = m.group(2) if m.lastindex and m.lastindex >= 2 else m.group(1)
+        return {"ts": ts, "type": "fill", "symbol": sym, "level": "fill"}
+    if (m := re.search(r'PROFILE:\s*(\w+)\s*->\s*(\w+)', line)):
+        return {"ts": ts, "type": "profile", "symbol": "", "level": "profile", "from": m.group(1), "to": m.group(2)}
+    if (m := re.search(r'KILL_SWITCH:\s*(activated|expired|active)', line)):
+        return {"ts": ts, "type": "kill_switch", "symbol": "", "level": "blocked" if m.group(1) == "activated" else "info", "action": m.group(1)}
+    if (m := re.search(r'SYMBOL_COOLDOWN:\s*blocked\s*\|\s*symbol=(\w+)', line)):
+        return {"ts": ts, "type": "block", "symbol": m.group(1), "level": "blocked", "reason": "symbol_cooldown", "source": "cooldown"}
+    if (m := re.search(r'ENTRY_THROTTLE:\s*blocked\s*\|\s*symbol=(\w+).*?reason=(\S+)', line)):
+        return {"ts": ts, "type": "block", "symbol": m.group(1), "level": "blocked", "reason": m.group(2), "source": "throttle"}
+    if (m := re.search(r'STRATEGY_BREAKER:\s*blocked\s*\|\s*strategy=(\w+)', line)):
+        return {"ts": ts, "type": "block", "symbol": "", "level": "blocked", "reason": f"breaker_{m.group(1)}", "source": "strategy_breaker"}
+    if (m := re.search(r'REGIME_CHANGE:\s*(\w+)\s*->\s*(\w+)', line)):
+        return {"ts": ts, "type": "regime_change", "symbol": "", "level": "info", "from": m.group(1), "to": m.group(2)}
+    if (m := re.search(r'RISK_SCALING:.*?multiplier=([\d.]+)', line)):
+        return {"ts": ts, "type": "risk", "symbol": "", "level": "info", "multiplier": float(m.group(1))}
+    if (m := re.search(r'ORDER_VALIDATION:\s*skipped.*?(\w+USDT)\s*\|\s*(.+?)(?:\s*\[|$)', line)):
+        return {"ts": ts, "type": "block", "symbol": m.group(1), "level": "blocked", "reason": f"validation_{m.group(2).strip()}", "source": "order_validation"}
+    return None
 
 
 @router.get("/adaptive/guardrails")
