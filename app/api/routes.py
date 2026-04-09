@@ -491,7 +491,7 @@ async def get_price(symbol: str, _user: dict = Depends(require_auth)):
 
 # ------------------------------------------------------------------ Strategies
 @router.get("/strategies", response_model=list[StrategyInfo])
-def get_strategies(_user: dict = Depends(require_auth)):
+def get_strategies(_admin: dict = Depends(require_admin)):
     engine = get_engine()
     return [
         StrategyInfo(name=s.name, enabled=s.enabled, params=s.get_params())
@@ -500,7 +500,7 @@ def get_strategies(_user: dict = Depends(require_auth)):
 
 
 @router.put("/strategies")
-def update_strategy(body: StrategyUpdate, _user: dict = Depends(require_write)):
+def update_strategy(body: StrategyUpdate, _admin: dict = Depends(require_admin)):
     engine = get_engine()
     strat = next((s for s in engine.strategies if s.name == body.name), None)
     if not strat:
@@ -521,12 +521,12 @@ def update_strategy(body: StrategyUpdate, _user: dict = Depends(require_write)):
 
 # ------------------------------------------------------------------ Risk
 @router.get("/risk", response_model=RiskParams)
-def get_risk_params(_user: dict = Depends(require_auth)):
+def get_risk_params(_admin: dict = Depends(require_admin)):
     return get_engine().risk_manager.get_params()
 
 
 @router.put("/risk", response_model=RiskParams)
-def update_risk_params(body: RiskParams, _user: dict = Depends(require_write)):
+def update_risk_params(body: RiskParams, _admin: dict = Depends(require_admin)):
     engine = get_engine()
     engine.risk_manager.set_params(body.model_dump())
     save_risk_params(engine.risk_manager.get_params())
@@ -982,14 +982,14 @@ async def get_assets(db: Session = Depends(get_db), user_info: dict = Depends(re
 
 # ------------------------------------------------------------------ Embient Skills
 @router.get("/skills/summary")
-def skills_summary(_user: dict = Depends(require_auth)):
+def skills_summary(_admin: dict = Depends(require_admin)):
     if not _skills_library:
         return {"total_skills": 0, "categories": {}}
     return _skills_library.summary()
 
 
 @router.get("/skills")
-def list_skills(category: str | None = None, _user: dict = Depends(require_auth)):
+def list_skills(category: str | None = None, _admin: dict = Depends(require_admin)):
     if not _skills_library:
         return []
     if category:
@@ -998,7 +998,7 @@ def list_skills(category: str | None = None, _user: dict = Depends(require_auth)
 
 
 @router.get("/skills/{name}")
-def get_skill(name: str, _user: dict = Depends(require_auth)):
+def get_skill(name: str, _admin: dict = Depends(require_admin)):
     if not _skills_library:
         raise HTTPException(404, "Skills library not loaded")
     skill = _skills_library.get(name)

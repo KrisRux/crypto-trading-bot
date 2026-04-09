@@ -169,8 +169,8 @@ function AppContent() {
                 <div className="hidden md:flex items-center gap-1">
                   <NavLink to="/" className={navLinkClass}>{t('nav_dashboard')}</NavLink>
                   <NavLink to="/wallet" className={navLinkClass}>{t('nav_assets')}</NavLink>
-                  <NavLink to="/strategies" className={navLinkClass}>{t('nav_strategies')}</NavLink>
-                  <NavLink to="/skills" className={navLinkClass}>{t('nav_skills')}</NavLink>
+                  {isAdmin && <NavLink to="/strategies" className={navLinkClass}>{t('nav_strategies')}</NavLink>}
+                  {isAdmin && <NavLink to="/skills" className={navLinkClass}>{t('nav_skills')}</NavLink>}
                   <NavLink to="/manual" className={navLinkClass}>{t('nav_manual')}</NavLink>
                   <NavLink to="/settings" className={navLinkClass}>{t('nav_settings')}</NavLink>
                   {isAdmin && <NavLink to="/users" className={navLinkClass}>Utenti</NavLink>}
@@ -225,12 +225,16 @@ function AppContent() {
                 <NavLink to="/wallet" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_assets')}
                 </NavLink>
-                <NavLink to="/strategies" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
-                  {t('nav_strategies')}
-                </NavLink>
-                <NavLink to="/skills" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
-                  {t('nav_skills')}
-                </NavLink>
+                {isAdmin && (
+                  <NavLink to="/strategies" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
+                    {t('nav_strategies')}
+                  </NavLink>
+                )}
+                {isAdmin && (
+                  <NavLink to="/skills" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
+                    {t('nav_skills')}
+                  </NavLink>
+                )}
                 <NavLink to="/manual" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_manual')}
                 </NavLink>
@@ -260,9 +264,9 @@ function AppContent() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/wallet" element={<Assets />} />
-            <Route path="/strategies" element={<Strategies />} />
+            {isAdmin && <Route path="/strategies" element={<Strategies />} />}
             <Route path="/logs" element={<Logs />} />
-            <Route path="/skills" element={<Skills />} />
+            {isAdmin && <Route path="/skills" element={<Skills />} />}
             <Route path="/manual" element={<Manual />} />
             <Route path="/settings" element={<Settings />} />
             {isAdmin && <Route path="/users" element={<Users />} />}
