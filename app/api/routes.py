@@ -114,8 +114,8 @@ def list_users(db: Session = Depends(get_db), _admin: dict = Depends(require_adm
 @router.post("/users", response_model=UserInfo)
 def create_user(body: UserCreate, db: Session = Depends(get_db),
                 _admin: dict = Depends(require_admin)):
-    if body.role not in ("admin", "user", "guest"):
-        raise HTTPException(400, "Role must be admin, user, or guest")
+    if body.role not in ("admin", "user"):
+        raise HTTPException(400, "Role must be admin or user")
     if db.query(User).filter(User.username == body.username).first():
         raise HTTPException(409, f"Username '{body.username}' already exists")
     user = User(
@@ -144,8 +144,8 @@ def update_user(user_id: int, body: UserUpdate, db: Session = Depends(get_db),
     if body.display_name is not None:
         user.display_name = body.display_name
     if body.role is not None:
-        if body.role not in ("admin", "user", "guest"):
-            raise HTTPException(400, "Role must be admin, user, or guest")
+        if body.role not in ("admin", "user"):
+            raise HTTPException(400, "Role must be admin or user")
         user.role = body.role
     if body.password is not None:
         user.password_hash = hash_password(body.password)

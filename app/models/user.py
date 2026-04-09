@@ -9,7 +9,6 @@ Each user has:
 Roles:
   - admin: full access (manage users, switch mode, configure everything)
   - user:  view + configure strategies/risk, trade with own keys
-  - guest: read-only (dashboard, positions, trades, logs)
 
 Security:
   - Passwords hashed with bcrypt (salted, slow by design)
@@ -116,7 +115,7 @@ class User(Base):
     username = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
     display_name = Column(String, nullable=True)
-    role = Column(String, default="guest")  # admin, user, guest
+    role = Column(String, default="user")  # admin, user
     is_active = Column(Boolean, default=True)
     trading_enabled = Column(Boolean, default=False)  # Must opt-in explicitly
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

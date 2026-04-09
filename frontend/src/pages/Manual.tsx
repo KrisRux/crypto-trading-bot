@@ -195,7 +195,7 @@ function manual(lang: Lang): { title: string; disclaimer: string; sections: Sect
         },
         {
           title: '8. Impostazioni e Sicurezza',
-          body: '<p>Nella pagina <strong>Impostazioni</strong> (visibile a utenti admin e user, non ai guest) puoi configurare il tuo account personale.</p>',
+          body: '<p>Nella pagina <strong>Impostazioni</strong> puoi configurare il tuo account personale.</p>',
           subsections: [
             {
               title: '8.1 Chiavi API Binance',
@@ -464,7 +464,7 @@ function manual(lang: Lang): { title: string; disclaimer: string; sections: Sect
       },
       {
         title: '8. Settings & Security',
-        body: '<p>On the <strong>Settings</strong> page (visible to admin and user roles, not guests) you can configure your personal account.</p>',
+        body: '<p>On the <strong>Settings</strong> page you can configure your personal account.</p>',
         subsections: [
           {
             title: '8.1 Binance API Keys',

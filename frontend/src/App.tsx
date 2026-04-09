@@ -172,7 +172,7 @@ function AppContent() {
                   <NavLink to="/strategies" className={navLinkClass}>{t('nav_strategies')}</NavLink>
                   <NavLink to="/skills" className={navLinkClass}>{t('nav_skills')}</NavLink>
                   <NavLink to="/manual" className={navLinkClass}>{t('nav_manual')}</NavLink>
-                  {role !== 'guest' && <NavLink to="/settings" className={navLinkClass}>{t('nav_settings')}</NavLink>}
+                  <NavLink to="/settings" className={navLinkClass}>{t('nav_settings')}</NavLink>
                   {isAdmin && <NavLink to="/users" className={navLinkClass}>Utenti</NavLink>}
                   {isAdmin && <NavLink to="/diagnostics" className={navLinkClass}>Diagnostics</NavLink>}
                   <NavLink to="/logs" className={navLinkClass}>{t('nav_logs')}</NavLink>
@@ -234,11 +234,9 @@ function AppContent() {
                 <NavLink to="/manual" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_manual')}
                 </NavLink>
-                {role !== 'guest' && (
-                  <NavLink to="/settings" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
-                    {t('nav_settings')}
-                  </NavLink>
-                )}
+                <NavLink to="/settings" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
+                  {t('nav_settings')}
+                </NavLink>
                 {isAdmin && (
                   <NavLink to="/users" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
                     Utenti
@@ -266,7 +264,7 @@ function AppContent() {
             <Route path="/logs" element={<Logs />} />
             <Route path="/skills" element={<Skills />} />
             <Route path="/manual" element={<Manual />} />
-            {role !== 'guest' && <Route path="/settings" element={<Settings />} />}
+            <Route path="/settings" element={<Settings />} />
             {isAdmin && <Route path="/users" element={<Users />} />}
             {isAdmin && <Route path="/diagnostics" element={<Diagnostics />} />}
             <Route path="/login" element={<Navigate to="/" replace />} />

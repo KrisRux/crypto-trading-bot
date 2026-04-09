@@ -19,7 +19,7 @@ interface KeysState {
 
 export default function Settings() {
   const { lang } = useLang()
-  const { role } = useAuth()
+  useAuth() // ensure authenticated
   const t = (it: string, en: string) => (lang === 'it' ? it : en)
 
   const [keys, setKeys] = useState<KeysState | null>(null)
@@ -128,14 +128,6 @@ export default function Settings() {
     } finally {
       setClearingType(null)
     }
-  }
-
-  if (role === 'guest') {
-    return (
-      <div className="text-gray-400 text-sm">
-        {t('Gli ospiti non possono configurare le impostazioni.', 'Guests cannot configure settings.')}
-      </div>
-    )
   }
 
   return (

@@ -6,8 +6,7 @@ The Bearer header is still accepted for API clients / CLI usage.
 
 Roles:
   - admin: full access
-  - user:  view + configure strategies/risk
-  - guest: read-only
+  - user:  view + configure strategies/risk, trade with own keys
 """
 
 import logging
@@ -48,7 +47,7 @@ class UserCreate(BaseModel):
     username: str
     password: str
     display_name: str = ""
-    role: str = "guest"  # admin, user, guest
+    role: str = "user"  # admin, user
 
 
 class UserUpdate(BaseModel):
@@ -87,7 +86,7 @@ def decode_token(token: str) -> dict | None:
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[ALGORITHM])
         if payload.get("sub"):
-            return {"sub": payload["sub"], "role": payload.get("role", "guest")}
+            return {"sub": payload["sub"], "role": payload.get("role", "user")}
     except JWTError:
         pass
     return None
@@ -139,7 +138,5 @@ async def require_admin(user: dict = Depends(require_auth)) -> dict:
 
 
 async def require_write(user: dict = Depends(require_auth)) -> dict:
-    """Admin or user can write. Guests cannot."""
-    if user["role"] == "guest":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Read-only access")
+    """Any authenticated user can write (admin or user)."""
     return user

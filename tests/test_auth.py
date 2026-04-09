@@ -65,9 +65,9 @@ def test_decode_empty_token():
 
 
 def test_token_contains_role():
-    token, _ = create_token("guestuser", "guest")
+    token, _ = create_token("testuser", "user")
     data = decode_token(token)
-    assert data["role"] == "guest"
+    assert data["role"] == "user"
 
 
 # ------------------------------------------------------------------ User model
@@ -103,7 +103,7 @@ def test_unique_username(db_session):
     db_session.add(u1)
     db_session.commit()
 
-    u2 = User(username="dupe", password_hash=hash_password("b"), role="guest")
+    u2 = User(username="dupe", password_hash=hash_password("b"), role="user")
     db_session.add(u2)
     with pytest.raises(Exception):  # IntegrityError
         db_session.commit()

@@ -32,8 +32,6 @@ def setup_module_db():
              display_name="Admin", role="admin"),
         User(username="user1", password_hash=hash_password("userpass"),
              display_name="User One", role="user"),
-        User(username="guest1", password_hash=hash_password("guestpass"),
-             display_name="Guest", role="guest"),
     ])
     s.commit()
     s.close()
@@ -119,8 +117,7 @@ def test_login_nonexistent_user(client):
 
 def test_login_all_roles(client):
     for user, pwd, role in [("admin", "adminpass", "admin"),
-                             ("user1", "userpass", "user"),
-                             ("guest1", "guestpass", "guest")]:
+                             ("user1", "userpass", "user")]:
         assert _login(client, user, pwd).json()["role"] == role
 
 
@@ -143,34 +140,24 @@ def test_valid_token(client):
 def test_admin_list_users(client):
     r = client.get("/api/users", headers=_auth(client, "admin", "adminpass"))
     assert r.status_code == 200
-    assert len(r.json()) >= 3
+    assert len(r.json()) >= 2
 
 
 def test_user_cannot_list_users(client):
     assert client.get("/api/users", headers=_auth(client, "user1", "userpass")).status_code == 403
 
 
-def test_guest_cannot_list_users(client):
-    assert client.get("/api/users", headers=_auth(client, "guest1", "guestpass")).status_code == 403
-
-
 def test_admin_create_user(client):
     r = client.post("/api/users", json={
-        "username": "new1", "password": "p", "display_name": "N", "role": "guest",
+        "username": "new1", "password": "p", "display_name": "N", "role": "user",
     }, headers=_auth(client, "admin", "adminpass"))
     assert r.status_code == 200
-
-
-def test_guest_cannot_write(client):
-    r = client.put("/api/strategies", json={"name": "x", "enabled": False},
-                   headers=_auth(client, "guest1", "guestpass"))
-    assert r.status_code == 403
 
 
 # ------------------------------------------------------------------ Read endpoints
 
 def test_all_roles_read(client):
-    for u, p in [("admin", "adminpass"), ("user1", "userpass"), ("guest1", "guestpass")]:
+    for u, p in [("admin", "adminpass"), ("user1", "userpass")]:
         h = _auth(client, u, p)
         for ep in ["/api/balance", "/api/trades", "/api/signals"]:
             assert client.get(ep, headers=h).status_code == 200, f"{u} {ep}"

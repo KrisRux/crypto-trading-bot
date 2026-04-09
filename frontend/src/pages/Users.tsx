@@ -6,13 +6,11 @@ import { useLang } from '../hooks/useLang'
 const ROLE_STYLES: Record<string, string> = {
   admin: 'bg-red-900 text-red-300',
   user: 'bg-blue-900 text-blue-300',
-  guest: 'bg-gray-700 text-gray-300',
 }
 
 const ROLE_LABELS: Record<string, { it: string; en: string }> = {
   admin: { it: 'Admin — Accesso completo', en: 'Admin — Full access' },
   user: { it: 'Utente — Visualizza e configura', en: 'User — View & configure' },
-  guest: { it: 'Ospite — Sola lettura', en: 'Guest — Read only' },
 }
 
 export default function Users() {
@@ -24,7 +22,7 @@ export default function Users() {
 
   // New user form
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ username: '', password: '', display_name: '', role: 'guest' })
+  const [form, setForm] = useState({ username: '', password: '', display_name: '', role: 'user' })
   const [formError, setFormError] = useState('')
 
   // Edit state
@@ -45,7 +43,7 @@ export default function Users() {
         display_name: form.display_name || form.username,
         role: form.role,
       })
-      setForm({ username: '', password: '', display_name: '', role: 'guest' })
+      setForm({ username: '', password: '', display_name: '', role: 'user' })
       setShowForm(false)
       refetch()
     } catch (e) {
@@ -150,7 +148,6 @@ export default function Users() {
               onChange={(e) => setForm({ ...form, role: e.target.value })}
               className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
             >
-              <option value="guest">Guest</option>
               <option value="user">User</option>
               <option value="admin">Admin</option>
             </select>
@@ -192,12 +189,11 @@ export default function Users() {
                       onChange={(e) => setEditRole(e.target.value)}
                       className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white"
                     >
-                      <option value="guest">guest</option>
                       <option value="user">user</option>
                       <option value="admin">admin</option>
                     </select>
                   ) : (
-                    <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${ROLE_STYLES[u.role] ?? ROLE_STYLES.guest}`}>
+                    <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${ROLE_STYLES[u.role] ?? ROLE_STYLES.user}`}>
                       {u.role}
                     </span>
                   )}
