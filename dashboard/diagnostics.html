@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trading Bot Diagnostics</title>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<style>
+/* ─── Reset & Base ─── */
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#c9d1d9;
+  --dim:#8b949e;--accent:#58a6ff;--green:#3fb950;--red:#f85149;
+  --yellow:#d29922;--purple:#bc8cff;--orange:#db6d28;
+  --card:#161b22;--card-hover:#1c2128;
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+  background:var(--bg);color:var(--text);line-height:1.5;font-size:14px}
+a{color:var(--accent);text-decoration:none}
+
+/* ─── Layout ─── */
+.header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 24px;
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;position:sticky;top:0;z-index:100}
+.header h1{font-size:18px;font-weight:600;color:#fff}
+.header .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.main{max-width:1600px;margin:0 auto;padding:16px}
+.grid{display:grid;gap:16px}
+.grid-2{grid-template-columns:repeat(auto-fit,minmax(700px,1fr))}
+.grid-3{grid-template-columns:repeat(auto-fit,minmax(460px,1fr))}
+@media(max-width:768px){.grid-2,.grid-3{grid-template-columns:1fr}}
+
+/* ─── Card ─── */
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.card-header{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;
+  align-items:center;justify-content:space-between;font-weight:600;font-size:13px;color:var(--dim)}
+.card-body{padding:16px}
+
+/* ─── KPI Row ─── */
+.kpi-grid{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:12px 16px;min-width:130px;flex:1}
+.kpi .label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.kpi .value{font-size:22px;font-weight:700;color:#fff}
+.kpi .sub{font-size:11px;color:var(--dim);margin-top:2px}
+.kpi.green .value{color:var(--green)}.kpi.red .value{color:var(--red)}
+.kpi.yellow .value{color:var(--yellow)}.kpi.accent .value{color:var(--accent)}
+.kpi.purple .value{color:var(--purple)}
+
+/* ─── Badge ─── */
+.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600}
+.badge-green{background:#1a3a2a;color:var(--green)}.badge-red{background:#3a1a1a;color:var(--red)}
+.badge-yellow{background:#3a2e1a;color:var(--yellow)}.badge-blue{background:#1a2a3a;color:var(--accent)}
+.badge-purple{background:#2a1a3a;color:var(--purple)}.badge-dim{background:#25292e;color:var(--dim)}
+
+/* ─── Button ─── */
+.btn{padding:6px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface);
+  color:var(--text);font-size:12px;cursor:pointer;transition:all .15s}
+.btn:hover{background:var(--card-hover);border-color:var(--accent)}
+.btn-primary{background:#1f6feb;border-color:#1f6feb;color:#fff}
+.btn-primary:hover{background:#388bfd}
+.btn-sm{padding:4px 10px;font-size:11px}
+
+/* ─── Drop Zone ─── */
+.drop-zone{border:2px dashed var(--border);border-radius:8px;padding:40px 20px;text-align:center;
+  color:var(--dim);cursor:pointer;transition:all .2s;margin-bottom:16px}
+.drop-zone.over{border-color:var(--accent);background:rgba(88,166,255,.05)}
+.drop-zone input{display:none}
+
+/* ─── Table ─── */
+.tbl{width:100%;border-collapse:collapse;font-size:12px}
+.tbl th{text-align:left;padding:8px 10px;color:var(--dim);font-weight:600;font-size:11px;
+  text-transform:uppercase;letter-spacing:.3px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card)}
+.tbl td{padding:6px 10px;border-bottom:1px solid rgba(48,54,61,.4)}
+.tbl tr:hover td{background:var(--card-hover)}
+.tbl .r{text-align:right}.tbl .c{text-align:center}
+.tbl-wrap{max-height:400px;overflow:auto}
+
+/* ─── Filter bar ─── */
+.filter-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.filter-bar input,.filter-bar select{background:var(--bg);border:1px solid var(--border);
+  border-radius:6px;padding:5px 10px;color:var(--text);font-size:12px}
+.filter-bar input{min-width:200px}
+
+/* ─── Diagnosis ─── */
+.diagnosis-item{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;
+  border-radius:6px;margin-bottom:8px}
+.diagnosis-item.warn{background:rgba(210,153,34,.08);border-left:3px solid var(--yellow)}
+.diagnosis-item.ok{background:rgba(63,185,80,.06);border-left:3px solid var(--green)}
+.diagnosis-item.crit{background:rgba(248,81,73,.08);border-left:3px solid var(--red)}
+.diagnosis-item .dtitle{font-weight:600;font-size:13px}
+.diagnosis-item .ddesc{font-size:12px;color:var(--dim)}
+
+/* ─── Funnel ─── */
+.funnel{display:flex;flex-direction:column;gap:4px;padding:8px 0}
+.funnel-step{display:flex;align-items:center;gap:12px}
+.funnel-bar-wrap{flex:1;height:28px;background:var(--bg);border-radius:4px;overflow:hidden;position:relative}
+.funnel-bar{height:100%;border-radius:4px;transition:width .4s;display:flex;align-items:center;padding:0 8px}
+.funnel-bar span{font-size:11px;font-weight:600;color:#fff;white-space:nowrap}
+.funnel-label{width:140px;font-size:12px;color:var(--dim);text-align:right;flex-shrink:0}
+.funnel-val{width:50px;font-size:12px;font-weight:600;text-align:right;flex-shrink:0}
+
+/* ─── Status bar ─── */
+.status-bar{background:var(--surface);border-top:1px solid var(--border);padding:8px 24px;
+  font-size:11px;color:var(--dim);display:flex;gap:16px;position:fixed;bottom:0;left:0;right:0;z-index:100}
+
+/* ─── Plotly overrides ─── */
+.js-plotly-plot .plotly .modebar{top:4px!important;right:4px!important}
+.js-plotly-plot{width:100%!important}
+
+/* ─── Misc ─── */
+.section-title{font-size:15px;font-weight:600;color:#fff;margin:20px 0 12px}
+.empty{color:var(--dim);font-size:13px;text-align:center;padding:30px}
+.tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600;
+  background:var(--bg);color:var(--dim);margin:1px}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+
+<!-- ═══════ HEADER ═══════ -->
+<div class="header">
+  <h1>Trading Bot Diagnostics</h1>
+  <div class="controls">
+    <button class="btn" onclick="loadDemo()">Load Demo Data</button>
+    <button class="btn" onclick="document.getElementById('fileInput').click()">Open Log File</button>
+    <input type="file" id="fileInput" accept=".log,.txt,.json" onchange="handleFile(event)">
+    <button class="btn" onclick="toggleJsonInput()">Paste JSON</button>
+    <button class="btn btn-primary" onclick="analyze()" id="btnAnalyze" disabled>Analyze</button>
+    <button class="btn" onclick="resetAll()">Reset</button>
+  </div>
+</div>
+
+<!-- ═══════ JSON INPUT (hidden) ═══════ -->
+<div id="jsonInputWrap" class="hidden" style="padding:16px 24px">
+  <textarea id="jsonInput" style="width:100%;height:120px;background:var(--bg);color:var(--text);
+    border:1px solid var(--border);border-radius:6px;padding:10px;font-family:monospace;font-size:12px"
+    placeholder="Paste /api/adaptive/status JSON here..."></textarea>
+  <button class="btn btn-sm" style="margin-top:6px" onclick="loadJson()">Load JSON</button>
+</div>
+
+<!-- ═══════ DROP ZONE ═══════ -->
+<div class="main">
+<div class="drop-zone" id="dropZone" ondragover="event.preventDefault();this.classList.add('over')"
+  ondragleave="this.classList.remove('over')" ondrop="handleDrop(event)"
+  onclick="document.getElementById('fileInput').click()">
+  Drop a log file here, or click to browse<br>
+  <span style="font-size:12px">Supports .log, .txt (log lines) and .json (adaptive/status)</span>
+</div>
+
+<!-- ═══════ DASHBOARD (hidden until data loaded) ═══════ -->
+<div id="dashboard" class="hidden">
+
+<!-- KPI -->
+<div class="kpi-grid" id="kpiGrid"></div>
+
+<!-- Row 1: Performance + Regime -->
+<div class="section-title">Performance & Regime Timeline</div>
+<div class="grid grid-2">
+  <div class="card"><div class="card-header">Performance Timeline</div>
+    <div class="card-body"><div id="chartPerf" style="height:300px"></div></div></div>
+  <div class="card"><div class="card-header">Regime Timeline</div>
+    <div class="card-body"><div id="chartRegime" style="height:300px"></div></div></div>
+</div>
+
+<!-- Row 2: Guardrails -->
+<div class="section-title">Guardrails Analysis</div>
+<div class="grid grid-3">
+  <div class="card"><div class="card-header">Blocked by Reason</div>
+    <div class="card-body"><div id="chartBlockReason" style="height:280px"></div></div></div>
+  <div class="card"><div class="card-header">Blocked by Symbol</div>
+    <div class="card-body"><div id="chartBlockSymbol" style="height:280px"></div></div></div>
+  <div class="card"><div class="card-header">Passed vs Blocked Over Time</div>
+    <div class="card-body"><div id="chartPassBlock" style="height:280px"></div></div></div>
+</div>
+
+<!-- Row 3: Funnel + Symbol -->
+<div class="section-title">Signal Funnel & Symbol Diagnostics</div>
+<div class="grid grid-2">
+  <div class="card"><div class="card-header">Signal Funnel</div>
+    <div class="card-body"><div id="funnelWrap"></div></div></div>
+  <div class="card"><div class="card-header">Symbol Diagnostics
+    <button class="btn btn-sm" onclick="exportTable('symbolTable')">CSV</button></div>
+    <div class="card-body"><div class="tbl-wrap"><table class="tbl" id="symbolTable"></table></div></div></div>
+</div>
+
+<!-- Row 4: Profile + Diagnosis -->
+<div class="section-title">Profile & Automated Diagnosis</div>
+<div class="grid grid-2">
+  <div class="card"><div class="card-header">Profile & Advisor</div>
+    <div class="card-body" id="profileSection"></div></div>
+  <div class="card"><div class="card-header">Automated Diagnosis</div>
+    <div class="card-body" id="diagnosisSection"></div></div>
+</div>
+
+<!-- Row 5: Event Log -->
+<div class="section-title">Event Log</div>
+<div class="card">
+  <div class="card-header">Events
+    <button class="btn btn-sm" onclick="exportTable('eventTable')">CSV</button></div>
+  <div class="card-body">
+    <div class="filter-bar">
+      <input type="text" id="evSearch" placeholder="Search..." oninput="filterEvents()">
+      <select id="evType" onchange="filterEvents()"><option value="">All types</option></select>
+      <select id="evSymbol" onchange="filterEvents()"><option value="">All symbols</option></select>
+      <select id="evLevel" onchange="filterEvents()">
+        <option value="">All levels</option><option value="blocked">Blocked</option>
+        <option value="passed">Passed</option><option value="profile">Profile</option>
+        <option value="signal">Signal</option><option value="fill">Fill</option>
+        <option value="error">Error</option>
+      </select>
+    </div>
+    <div class="tbl-wrap" style="max-height:500px"><table class="tbl" id="eventTable"></table></div>
+  </div>
+</div>
+
+</div><!-- /dashboard -->
+</div><!-- /main -->
+
+<!-- Status bar -->
+<div class="status-bar" id="statusBar">
+  <span id="statLines">Lines: 0</span>
+  <span id="statParsed">Parsed: 0</span>
+  <span id="statIgnored">Ignored: 0</span>
+  <span id="statTimeRange">Time range: -</span>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════
+let STATE = {
+  raw: [], events: [], perf: [], regimes: [], regimeChanges: [],
+  blocks: [], passes: [], signals: [], fills: [], profileChanges: [],
+  symbols: {}, advisorEntries: [], killSwitchEvents: [],
+  jsonStatus: null, funnel: {generated:0,gatePass:0,scorePass:0,sent:0,filled:0,blocked:0},
+};
+
+function resetAll(){
+  STATE={raw:[],events:[],perf:[],regimes:[],regimeChanges:[],blocks:[],passes:[],
+    signals:[],fills:[],profileChanges:[],symbols:{},advisorEntries:[],killSwitchEvents:[],
+    jsonStatus:null,funnel:{generated:0,gatePass:0,scorePass:0,sent:0,filled:0,blocked:0}};
+  document.getElementById('dashboard').classList.add('hidden');
+  document.getElementById('dropZone').classList.remove('hidden');
+  document.getElementById('btnAnalyze').disabled=true;
+  updateStatus(0,0,0,'');
+}
+
+// ═══════════════════════════════════════════════════════════
+//  LOG PARSER
+// ═══════════════════════════════════════════════════════════
+const RE_TS = /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/;
+const RE_REGIME = /REGIME_SERVICE:\s*(\w+)\s*.*?(\w+)\s*\(ADX=([\d.]+)\s+ATR%=([\d.]+)\s+BB%=([\d.]+)\s+Vol=([\d.]+)/;
+const RE_PERF = /PERF_MONITOR:.*?PnL\s+1h=([-\d.]+)\s+6h=([-\d.]+)\s+24h=([-\d.]+)\s*\|\s*WR=([\d.]+)%?\s*\|\s*DD=([\d.]+)%?\s*\|\s*ConsecLoss=(\d+)\s*\|\s*Trades\/h=([\d.]+)/;
+const RE_GATE_BLOCK = /TRADE_GATE:\s*blocked\s*\|\s*symbol=(\w+)\s*\|\s*reason=(\S+)/;
+const RE_GATE_PASS = /TRADE_GATE:\s*passed\s*\|\s*symbol=(\w+)/;
+const RE_SCORE_BLOCK = /DYNAMIC_SCORE:\s*blocked\s*\|\s*symbol=(\w+).*?score=([\d.]+)\s*<\s*min=([\d.]+)/;
+const RE_SCORE_PASS = /DYNAMIC_SCORE:\s*passed\s*\|\s*symbol=(\w+).*?score=([\d.]+)\s*>=\s*min=([\d.]+)/;
+const RE_SIGNAL = /Signal:\s*(BUY|SELL|HOLD)\s+(\w+)\s+@\s*([\d.]+)\s*\[(\w+)\]/;
+const RE_FILL = /MARKET\s+(BUY|SELL)\s+filled.*?(\w+USDT)\s+qty=([\d.]+)\s*@\s*([\d.]+)/;
+const RE_FILL2 = /\[paper.*?\]:\s*BUY\s+(\w+)\s+qty=([\d.]+)\s*@\s*([\d.]+)/;
+const RE_PROFILE = /PROFILE:\s*(\w+)\s*->\s*(\w+)/;
+const RE_META = /META_CTRL:.*?regime=(\w+)\s*\|\s*profile=(\w+)/;
+const RE_REGIME_CHG = /REGIME_CHANGE:\s*(\w+)\s*->\s*(\w+)/;
+const RE_KILL = /KILL_SWITCH:\s*(activated|expired|active)/;
+const RE_COOLDOWN_BLOCK = /SYMBOL_COOLDOWN:\s*blocked\s*\|\s*symbol=(\w+)/;
+const RE_THROTTLE_BLOCK = /ENTRY_THROTTLE:\s*blocked\s*\|\s*symbol=(\w+).*?reason=(\S+)/;
+const RE_BREAKER_BLOCK = /STRATEGY_BREAKER:\s*blocked\s*\|\s*strategy=(\w+)/;
+const RE_RISK = /RISK_SCALING:.*?multiplier=([\d.]+)/;
+const RE_ADVISOR = /LLM_ADVISOR:.*?profile=(\w+)\s+suggested=(\w+)\s*\(confidence=(\d+)%\)/;
+const RE_VALIDATION = /ORDER_VALIDATION:\s*skipped.*?(\w+USDT)\s*\|\s*(.+?)(?:\s*\[|$)/;
+const RE_WS = /(WebSocket|websocket|WS).*(disconnect|reconnect|error|closed)/i;
+
+function parseLine(line) {
+  const tsMatch = line.match(RE_TS);
+  const ts = tsMatch ? tsMatch[1] : null;
+  let m, evt = null;
+
+  if ((m = line.match(RE_REGIME))) {
+    const sym = m[1], regime = m[2].toLowerCase(), adx = +m[3], atr = +m[4], bb = +m[5], vol = +m[6];
+    STATE.regimes.push({ts,sym,regime,adx,atr,bb,vol});
+    if (!STATE.symbols[sym]) STATE.symbols[sym] = {regime:'',adx:0,atr:0,bb:0,vol:0,signals:0,passed:0,blocked:0,filled:0,topBlock:{}};
+    Object.assign(STATE.symbols[sym], {regime,adx,atr,bb,vol});
+    evt = {ts,type:'regime',symbol:sym,level:'info',text:`${sym} → ${regime} ADX=${adx}`};
+  }
+  else if ((m = line.match(RE_PERF))) {
+    STATE.perf.push({ts,pnl1h:+m[1],pnl6h:+m[2],pnl24h:+m[3],wr:+m[4],dd:+m[5],consec:+m[6],tph:+m[7]});
+    evt = {ts,type:'perf',symbol:'',level:'info',text:`PnL24h=${m[3]} WR=${m[4]}% DD=${m[5]}% CL=${m[6]}`};
+  }
+  else if ((m = line.match(RE_GATE_BLOCK))) {
+    STATE.blocks.push({ts,sym:m[1],reason:m[2],source:'trade_gate'});
+    STATE.funnel.blocked++;
+    const s = STATE.symbols[m[1]]; if(s){s.blocked++;s.topBlock[m[2]]=(s.topBlock[m[2]]||0)+1;}
+    evt = {ts,type:'guardrail',symbol:m[1],level:'blocked',text:`TRADE_GATE blocked: ${m[2]}`};
+  }
+  else if ((m = line.match(RE_GATE_PASS))) {
+    STATE.passes.push({ts,sym:m[1],source:'trade_gate'});
+    STATE.funnel.gatePass++;
+    const s = STATE.symbols[m[1]]; if(s) s.passed++;
+    evt = {ts,type:'guardrail',symbol:m[1],level:'passed',text:`TRADE_GATE passed`};
+  }
+  else if ((m = line.match(RE_SCORE_BLOCK))) {
+    STATE.blocks.push({ts,sym:m[1],reason:`score_${m[2]}<${m[3]}`,source:'dynamic_score'});
+    STATE.funnel.blocked++;
+    const s = STATE.symbols[m[1]]; if(s){s.blocked++;s.topBlock['dynamic_score']=(s.topBlock['dynamic_score']||0)+1;}
+    evt = {ts,type:'guardrail',symbol:m[1],level:'blocked',text:`DYNAMIC_SCORE blocked: ${m[2]}<${m[3]}`};
+  }
+  else if ((m = line.match(RE_SCORE_PASS))) {
+    STATE.funnel.scorePass++;
+    evt = {ts,type:'guardrail',symbol:m[1],level:'passed',text:`DYNAMIC_SCORE passed: ${m[2]}>=${m[3]}`};
+  }
+  else if ((m = line.match(RE_SIGNAL))) {
+    STATE.signals.push({ts,type:m[1],sym:m[2],price:+m[3],strategy:m[4]});
+    STATE.funnel.generated++;
+    const s = STATE.symbols[m[2]]; if(s) s.signals++;
+    evt = {ts,type:'signal',symbol:m[2],level:'signal',text:`Signal ${m[1]} ${m[2]} @ ${m[3]} [${m[4]}]`};
+  }
+  else if ((m = line.match(RE_FILL)) || (m = line.match(RE_FILL2))) {
+    const sym = m[2] || m[1];
+    STATE.fills.push({ts,sym});
+    STATE.funnel.filled++;
+    STATE.funnel.sent++;
+    const s = STATE.symbols[sym]; if(s) s.filled++;
+    evt = {ts,type:'fill',symbol:sym,level:'fill',text:`FILL ${sym}`};
+  }
+  else if ((m = line.match(RE_PROFILE))) {
+    STATE.profileChanges.push({ts,from:m[1],to:m[2]});
+    evt = {ts,type:'profile',symbol:'',level:'profile',text:`Profile: ${m[1]} → ${m[2]}`};
+  }
+  else if ((m = line.match(RE_META))) {
+    // regime/profile from meta — used for timeline
+    evt = {ts,type:'meta',symbol:'',level:'info',text:`Cycle: regime=${m[1]} profile=${m[2]}`};
+  }
+  else if ((m = line.match(RE_REGIME_CHG))) {
+    STATE.regimeChanges.push({ts,from:m[1],to:m[2]});
+    evt = {ts,type:'regime_change',symbol:'',level:'signal',text:`Regime: ${m[1]} → ${m[2]}`};
+  }
+  else if ((m = line.match(RE_KILL))) {
+    STATE.killSwitchEvents.push({ts,action:m[1]});
+    evt = {ts,type:'kill_switch',symbol:'',level:m[1]==='activated'?'blocked':'passed',text:`KILL_SWITCH ${m[1]}`};
+  }
+  else if ((m = line.match(RE_COOLDOWN_BLOCK))) {
+    STATE.blocks.push({ts,sym:m[1],reason:'symbol_cooldown',source:'cooldown'});
+    STATE.funnel.blocked++;
+    const s = STATE.symbols[m[1]]; if(s){s.blocked++;s.topBlock['symbol_cooldown']=(s.topBlock['symbol_cooldown']||0)+1;}
+    evt = {ts,type:'guardrail',symbol:m[1],level:'blocked',text:`SYMBOL_COOLDOWN blocked`};
+  }
+  else if ((m = line.match(RE_THROTTLE_BLOCK))) {
+    STATE.blocks.push({ts,sym:m[1],reason:m[2],source:'throttle'});
+    STATE.funnel.blocked++;
+    const s = STATE.symbols[m[1]]; if(s){s.blocked++;s.topBlock[m[2]]=(s.topBlock[m[2]]||0)+1;}
+    evt = {ts,type:'guardrail',symbol:m[1],level:'blocked',text:`ENTRY_THROTTLE blocked: ${m[2]}`};
+  }
+  else if ((m = line.match(RE_BREAKER_BLOCK))) {
+    STATE.blocks.push({ts,sym:'',reason:`breaker_${m[1]}`,source:'strategy_breaker'});
+    STATE.funnel.blocked++;
+    evt = {ts,type:'guardrail',symbol:'',level:'blocked',text:`STRATEGY_BREAKER blocked: ${m[1]}`};
+  }
+  else if ((m = line.match(RE_ADVISOR))) {
+    STATE.advisorEntries.push({ts,current:m[1],suggested:m[2],confidence:+m[3]});
+    evt = {ts,type:'advisor',symbol:'',level:'info',text:`Advisor: ${m[1]}→${m[2]} (${m[3]}%)`};
+  }
+  else if ((m = line.match(RE_VALIDATION))) {
+    STATE.blocks.push({ts,sym:m[1],reason:`validation_${m[2].trim()}`,source:'order_validation'});
+    evt = {ts,type:'guardrail',symbol:m[1],level:'blocked',text:`ORDER_VALIDATION skipped: ${m[2].trim()}`};
+  }
+  else if ((m = line.match(RE_WS))) {
+    evt = {ts,type:'ws',symbol:'',level:'error',text:line.substring(0,120)};
+  }
+  else if (line.match(RE_RISK)) {
+    // informational, don't block
+    evt = {ts,type:'risk',symbol:'',level:'info',text:line.substring(0,120)};
+  }
+  else {
+    return false; // not recognized
+  }
+  if (evt) STATE.events.push(evt);
+  return true;
+}
+
+function parseLog(text) {
+  const lines = text.split('\n').filter(l => l.trim());
+  let parsed = 0, ignored = 0;
+  for (const line of lines) {
+    STATE.raw.push(line);
+    if (parseLine(line)) parsed++; else ignored++;
+  }
+  const first = STATE.events[0]?.ts || '';
+  const last = STATE.events[STATE.events.length-1]?.ts || '';
+  updateStatus(lines.length, parsed, ignored, first && last ? `${first} — ${last}` : '-');
+}
+
+function loadJsonStatus(obj) {
+  STATE.jsonStatus = obj;
+  // Extract latest snapshot into state if dashboard has no log data
+  if (obj.performance) {
+    const p = obj.performance;
+    if (STATE.perf.length === 0) {
+      STATE.perf.push({ts:'now',pnl1h:p.pnl_1h||0,pnl6h:p.pnl_6h||0,pnl24h:p.pnl_24h||0,
+        wr:p.win_rate_last_10||0,dd:p.drawdown_intraday||0,consec:p.consecutive_losses||0,tph:p.trades_per_hour||0});
+    }
+  }
+  if (obj.regime?.symbols) {
+    for (const [sym, snap] of Object.entries(obj.regime.symbols)) {
+      if (!STATE.symbols[sym]) STATE.symbols[sym] = {regime:'',adx:0,atr:0,bb:0,vol:0,signals:0,passed:0,blocked:0,filled:0,topBlock:{}};
+      STATE.symbols[sym].regime = snap.regime;
+      STATE.symbols[sym].adx = snap.adx;
+      STATE.symbols[sym].atr = snap.atr_pct;
+      STATE.symbols[sym].bb = snap.bb_width_pct;
+      STATE.symbols[sym].vol = snap.volume_ratio;
+    }
+  }
+  if (obj.guardrails?.stats) {
+    const g = obj.guardrails.stats;
+    if (STATE.blocks.length === 0 && g.total_blocked > 0) {
+      // Inject synthetic counts
+      for (const [k,v] of Object.entries(g)) {
+        if (k.startsWith('blocked_') && v > 0) {
+          for (let i=0;i<v;i++) STATE.blocks.push({ts:'',sym:'',reason:k.replace('blocked_',''),source:k});
+        }
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  FILE HANDLING
+// ═══════════════════════════════════════════════════════════
+function handleFile(e){const f=e.target.files[0];if(!f)return;readFile(f)}
+function handleDrop(e){e.preventDefault();e.currentTarget.classList.remove('over');
+  const f=e.dataTransfer.files[0];if(f)readFile(f)}
+function readFile(f){const r=new FileReader();r.onload=e=>{
+  const text=e.target.result;
+  if(f.name.endsWith('.json')){try{loadJsonStatus(JSON.parse(text))}catch(x){alert('Invalid JSON')}}
+  else{parseLog(text)}
+  document.getElementById('btnAnalyze').disabled=false;
+};r.readAsText(f)}
+function toggleJsonInput(){document.getElementById('jsonInputWrap').classList.toggle('hidden')}
+function loadJson(){const t=document.getElementById('jsonInput').value.trim();
+  if(!t)return;try{loadJsonStatus(JSON.parse(t));document.getElementById('btnAnalyze').disabled=false}catch(x){alert('Invalid JSON: '+x.message)}}
+function updateStatus(l,p,i,r){
+  document.getElementById('statLines').textContent=`Lines: ${l}`;
+  document.getElementById('statParsed').textContent=`Parsed: ${p}`;
+  document.getElementById('statIgnored').textContent=`Ignored: ${i}`;
+  document.getElementById('statTimeRange').textContent=`Time: ${r||'-'}`;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  ANALYZE (render everything)
+// ═══════════════════════════════════════════════════════════
+function analyze() {
+  document.getElementById('dropZone').classList.add('hidden');
+  document.getElementById('jsonInputWrap').classList.add('hidden');
+  document.getElementById('dashboard').classList.remove('hidden');
+  renderKPIs();
+  renderPerfChart();
+  renderRegimeChart();
+  renderBlockReasonChart();
+  renderBlockSymbolChart();
+  renderPassBlockChart();
+  renderFunnel();
+  renderSymbolTable();
+  renderProfile();
+  renderDiagnosis();
+  renderEventLog();
+}
+
+// ─── KPIs ───
+function renderKPIs() {
+  const last = STATE.perf[STATE.perf.length-1] || {};
+  const js = STATE.jsonStatus || {};
+  const profile = js.active_profile || (STATE.profileChanges.length ? STATE.profileChanges[STATE.profileChanges.length-1].to : '-');
+  const regime = js.regime?.global_regime || (STATE.regimeChanges.length ? STATE.regimeChanges[STATE.regimeChanges.length-1].to : '-');
+  const totalBlocked = STATE.blocks.length;
+  const totalPassed = STATE.passes.length || STATE.funnel.gatePass;
+  const total = totalBlocked + totalPassed || 1;
+  const blockRatio = (totalBlocked / total * 100).toFixed(0);
+
+  const kpis = [
+    {label:'Profile',value:profile,cls:'purple'},
+    {label:'Regime',value:regime,cls:regime==='trend'?'green':regime==='range'?'yellow':'red'},
+    {label:'PnL 1h',value:(last.pnl1h||0).toFixed(2),cls:(last.pnl1h||0)>=0?'green':'red',sub:'USDT'},
+    {label:'PnL 6h',value:(last.pnl6h||0).toFixed(2),cls:(last.pnl6h||0)>=0?'green':'red',sub:'USDT'},
+    {label:'PnL 24h',value:(last.pnl24h||0).toFixed(2),cls:(last.pnl24h||0)>=0?'green':'red',sub:'USDT'},
+    {label:'Win Rate',value:(last.wr||0).toFixed(0)+'%',cls:(last.wr||0)>=50?'green':'red',sub:'last 10'},
+    {label:'Drawdown',value:(last.dd||0).toFixed(2)+'%',cls:(last.dd||0)<1?'green':(last.dd||0)<2?'yellow':'red'},
+    {label:'Consec Loss',value:last.consec||0,cls:(last.consec||0)<3?'green':(last.consec||0)<6?'yellow':'red'},
+    {label:'Trades/h',value:(last.tph||0).toFixed(1),cls:'accent'},
+    {label:'Blocked',value:totalBlocked,cls:'red'},
+    {label:'Passed',value:totalPassed,cls:'green'},
+    {label:'Block %',value:blockRatio+'%',cls:+blockRatio>80?'red':+blockRatio>50?'yellow':'green'},
+  ];
+  document.getElementById('kpiGrid').innerHTML = kpis.map(k =>
+    `<div class="kpi ${k.cls}"><div class="label">${k.label}</div><div class="value">${k.value}</div>${k.sub?`<div class="sub">${k.sub}</div>`:''}</div>`
+  ).join('');
+}
+
+// ─── Plotly helpers ───
+const PLOT_LAYOUT = {paper_bgcolor:'transparent',plot_bgcolor:'transparent',
+  font:{color:'#8b949e',size:11},margin:{t:10,r:10,b:40,l:50},
+  xaxis:{gridcolor:'#21262d',linecolor:'#30363d'},yaxis:{gridcolor:'#21262d',linecolor:'#30363d'},
+  legend:{orientation:'h',y:1.12,font:{size:10}},hovermode:'x unified'};
+function pLayout(extra){return {...PLOT_LAYOUT,...extra,xaxis:{...PLOT_LAYOUT.xaxis,...(extra?.xaxis||{})},yaxis:{...PLOT_LAYOUT.yaxis,...(extra?.yaxis||{})}}}
+
+// ─── Performance chart ───
+function renderPerfChart(){
+  if(!STATE.perf.length){document.getElementById('chartPerf').innerHTML='<div class="empty">No performance data</div>';return}
+  const ts=STATE.perf.map(p=>p.ts), pnl=STATE.perf.map(p=>p.pnl24h), wr=STATE.perf.map(p=>p.wr),
+    cl=STATE.perf.map(p=>p.consec), tph=STATE.perf.map(p=>p.tph);
+  Plotly.newPlot('chartPerf',[
+    {x:ts,y:pnl,name:'PnL 24h',type:'scatter',line:{color:'#58a6ff'}},
+    {x:ts,y:wr,name:'Win Rate %',type:'scatter',line:{color:'#3fb950'},yaxis:'y2'},
+    {x:ts,y:cl,name:'Consec Loss',type:'scatter',line:{color:'#f85149',dash:'dot'},yaxis:'y3'},
+    {x:ts,y:tph,name:'Trades/h',type:'scatter',line:{color:'#d29922',dash:'dashdot'},visible:'legendonly'},
+  ],pLayout({yaxis:{title:'PnL'},yaxis2:{overlaying:'y',side:'right',showgrid:false,title:'WR%'},
+    yaxis3:{overlaying:'y',side:'right',showgrid:false,position:0.95}}),{responsive:true});
+}
+
+// ─── Regime chart ───
+function renderRegimeChart(){
+  if(!STATE.regimes.length && !STATE.regimeChanges.length){
+    document.getElementById('chartRegime').innerHTML='<div class="empty">No regime data</div>';return}
+  const regimeMap = {trend:3,volatile:2,range:1,defensive:0};
+  const regimeColor = {trend:'#3fb950',volatile:'#d29922',range:'#58a6ff',defensive:'#f85149'};
+  // Per-symbol regime heatmap
+  const syms = [...new Set(STATE.regimes.map(r=>r.sym))];
+  const ts = [...new Set(STATE.regimes.map(r=>r.ts))];
+  if (syms.length && ts.length) {
+    const z = syms.map(s => ts.map(t => {
+      const entry = STATE.regimes.find(r => r.sym===s && r.ts===t);
+      return entry ? regimeMap[entry.regime]??1 : null;
+    }));
+    Plotly.newPlot('chartRegime',[{z,x:ts,y:syms,type:'heatmap',
+      colorscale:[[0,'#f85149'],[0.33,'#58a6ff'],[0.66,'#d29922'],[1,'#3fb950']],
+      showscale:false,hovertemplate:'%{y} @ %{x}<br>Regime: %{z}<extra></extra>',
+      zmin:0,zmax:3}],pLayout({yaxis:{title:''}}),{responsive:true});
+  } else {
+    // Fallback: just show regime changes as annotations
+    const changes = STATE.regimeChanges;
+    if (changes.length) {
+      const ts = changes.map(c=>c.ts), vals = changes.map(c=>regimeMap[c.to]??1);
+      const colors = changes.map(c=>regimeColor[c.to]||'#8b949e');
+      Plotly.newPlot('chartRegime',[{x:ts,y:vals,type:'scatter',mode:'lines+markers',
+        marker:{color:colors,size:8},line:{color:'#8b949e'},text:changes.map(c=>c.to)}],
+        pLayout(),{responsive:true});
+    } else {
+      document.getElementById('chartRegime').innerHTML='<div class="empty">No regime timeline</div>';
+    }
+  }
+}
+
+// ─── Block reason chart ───
+function renderBlockReasonChart(){
+  if(!STATE.blocks.length){document.getElementById('chartBlockReason').innerHTML='<div class="empty">No blocks recorded</div>';return}
+  const counts={};STATE.blocks.forEach(b=>{counts[b.reason]=(counts[b.reason]||0)+1});
+  const sorted=Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,12);
+  Plotly.newPlot('chartBlockReason',[{y:sorted.map(s=>s[0]),x:sorted.map(s=>s[1]),type:'bar',
+    orientation:'h',marker:{color:'#f85149'}}],
+    pLayout({margin:{l:180},yaxis:{autorange:'reversed'}}),{responsive:true});
+}
+
+// ─── Block by symbol chart ───
+function renderBlockSymbolChart(){
+  const counts={};STATE.blocks.forEach(b=>{if(b.sym)counts[b.sym]=(counts[b.sym]||0)+1});
+  if(!Object.keys(counts).length){document.getElementById('chartBlockSymbol').innerHTML='<div class="empty">No symbol blocks</div>';return}
+  const sorted=Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+  Plotly.newPlot('chartBlockSymbol',[{labels:sorted.map(s=>s[0]),values:sorted.map(s=>s[1]),
+    type:'pie',hole:.4,marker:{colors:['#f85149','#d29922','#58a6ff','#3fb950','#bc8cff','#db6d28']},
+    textinfo:'label+value'}],pLayout({margin:{t:10,b:10,l:10,r:10}}),{responsive:true});
+}
+
+// ─── Pass vs Block over time ───
+function renderPassBlockChart(){
+  if(!STATE.blocks.length && !STATE.passes.length){
+    document.getElementById('chartPassBlock').innerHTML='<div class="empty">No guardrail data</div>';return}
+  // Bucket by hour
+  const buckets={};
+  STATE.blocks.forEach(b=>{if(!b.ts)return;const h=b.ts.substring(0,13);if(!buckets[h])buckets[h]={b:0,p:0};buckets[h].b++});
+  STATE.passes.forEach(p=>{if(!p.ts)return;const h=p.ts.substring(0,13);if(!buckets[h])buckets[h]={b:0,p:0};buckets[h].p++});
+  const keys=Object.keys(buckets).sort();
+  Plotly.newPlot('chartPassBlock',[
+    {x:keys,y:keys.map(k=>buckets[k].p),name:'Passed',type:'bar',marker:{color:'#3fb950'}},
+    {x:keys,y:keys.map(k=>buckets[k].b),name:'Blocked',type:'bar',marker:{color:'#f85149'}},
+  ],pLayout({barmode:'stack'}),{responsive:true});
+}
+
+// ─── Funnel ───
+function renderFunnel(){
+  const f=STATE.funnel;
+  // If we only have JSON data, estimate
+  if(f.generated===0 && STATE.jsonStatus?.guardrails?.stats){
+    const g=STATE.jsonStatus.guardrails.stats;
+    f.generated=g.total_passed+g.total_blocked;
+    f.gatePass=g.total_passed+(g.total_blocked-g.blocked_trade_gate);
+    f.blocked=g.total_blocked;
+  }
+  const steps=[
+    {label:'Signals Generated',val:f.generated,color:'#58a6ff'},
+    {label:'Trade Gate Passed',val:f.gatePass,color:'#bc8cff'},
+    {label:'Score Filter Passed',val:f.scorePass||f.gatePass,color:'#d29922'},
+    {label:'Orders Sent',val:f.sent||f.filled,color:'#db6d28'},
+    {label:'Orders Filled',val:f.filled,color:'#3fb950'},
+  ];
+  const max=Math.max(...steps.map(s=>s.val),1);
+  document.getElementById('funnelWrap').innerHTML=`<div class="funnel">`+steps.map(s=>
+    `<div class="funnel-step"><div class="funnel-label">${s.label}</div>
+     <div class="funnel-bar-wrap"><div class="funnel-bar" style="width:${Math.max(s.val/max*100,2)}%;background:${s.color}">
+       <span>${s.val}</span></div></div>
+     <div class="funnel-val">${max>0?(s.val/max*100).toFixed(0)+'%':'-'}</div></div>`
+  ).join('')+`<div class="funnel-step"><div class="funnel-label">Blocked (total)</div>
+    <div class="funnel-bar-wrap"><div class="funnel-bar" style="width:${Math.max(f.blocked/max*100,2)}%;background:#f85149">
+    <span>${f.blocked}</span></div></div><div class="funnel-val" style="color:#f85149">${(f.blocked/max*100).toFixed(0)}%</div></div></div>`;
+}
+
+// ─── Symbol table ───
+function renderSymbolTable(){
+  const syms=Object.entries(STATE.symbols);
+  if(!syms.length){document.getElementById('symbolTable').innerHTML='<tr><td class="empty" colspan="11">No symbol data</td></tr>';return}
+  const regBadge=r=>({trend:'badge-green',range:'badge-blue',volatile:'badge-yellow',defensive:'badge-red'}[r]||'badge-dim');
+  document.getElementById('symbolTable').innerHTML=`<thead><tr>
+    <th>Symbol</th><th>Regime</th><th class="r">ADX</th><th class="r">ATR%</th><th class="r">BB%</th>
+    <th class="r">Vol</th><th class="r">Signals</th><th class="r">Passed</th><th class="r">Blocked</th>
+    <th class="r">Filled</th><th>Top Block Reason</th></tr></thead><tbody>`+
+    syms.sort((a,b)=>b[1].blocked-a[1].blocked).map(([sym,d])=>{
+      const topBlock=Object.entries(d.topBlock).sort((a,b)=>b[1]-a[1])[0];
+      return `<tr><td class="font-medium" style="color:#fff">${sym}</td>
+        <td><span class="badge ${regBadge(d.regime)}">${d.regime||'-'}</span></td>
+        <td class="r" style="color:${d.adx>=25?'var(--green)':d.adx>=20?'var(--yellow)':'var(--red)'}">${d.adx.toFixed(1)}</td>
+        <td class="r">${d.atr.toFixed(2)}</td><td class="r">${d.bb.toFixed(2)}</td>
+        <td class="r" style="color:${d.vol>=1.5?'var(--green)':'var(--dim)'}">${d.vol.toFixed(1)}</td>
+        <td class="r">${d.signals}</td><td class="r" style="color:var(--green)">${d.passed}</td>
+        <td class="r" style="color:var(--red)">${d.blocked}</td>
+        <td class="r" style="color:var(--accent)">${d.filled}</td>
+        <td>${topBlock?`<span class="tag">${topBlock[0]} (${topBlock[1]})</span>`:'-'}</td></tr>`}).join('')+'</tbody>';
+}
+
+// ─── Profile & Advisor ───
+function renderProfile(){
+  const el=document.getElementById('profileSection');
+  const js=STATE.jsonStatus||{};
+  const profile=js.active_profile||(STATE.profileChanges.length?STATE.profileChanges[STATE.profileChanges.length-1].to:'-');
+  const adv=STATE.advisorEntries[STATE.advisorEntries.length-1]||js.advisor||{};
+  const history=STATE.profileChanges.length?STATE.profileChanges:
+    (js.switch_history||[]).map(h=>({ts:h.timestamp||'',from:h.from||'',to:h.to||''}));
+  el.innerHTML=`
+    <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap">
+      <div class="kpi purple" style="flex:1"><div class="label">Active Profile</div><div class="value">${profile}</div></div>
+      <div class="kpi accent" style="flex:1"><div class="label">Suggested</div><div class="value">${adv.suggested||adv.suggested_profile||'-'}</div></div>
+      <div class="kpi" style="flex:1"><div class="label">Confidence</div><div class="value">${adv.confidence||'-'}%</div></div>
+    </div>
+    ${adv.reasoning||adv.explanation?`<div style="background:var(--bg);padding:10px 12px;border-radius:6px;margin-bottom:12px;font-size:12px;color:var(--dim)">${adv.reasoning||adv.explanation}</div>`:''}
+    <div style="font-size:12px;font-weight:600;color:var(--dim);margin-bottom:8px">Profile History</div>
+    ${history.length?`<table class="tbl"><thead><tr><th>Time</th><th>From</th><th>To</th></tr></thead><tbody>`+
+      history.map(h=>`<tr><td>${h.ts}</td><td><span class="badge badge-dim">${h.from}</span></td><td><span class="badge badge-purple">${h.to}</span></td></tr>`).join('')+
+      '</tbody></table>':'<div class="empty">No profile changes</div>'}`;
+}
+
+// ─── Automated Diagnosis ───
+function renderDiagnosis(){
+  const el=document.getElementById('diagnosisSection');
+  const items=[];
+  const last=STATE.perf[STATE.perf.length-1]||{};
+  const totalB=STATE.blocks.length, totalP=STATE.passes.length||STATE.funnel.gatePass||0;
+  const total=totalB+totalP||1;
+  const blockPct=totalB/total*100;
+  const filled=STATE.funnel.filled;
+  const generated=STATE.funnel.generated||1;
+
+  // Check patterns
+  if(blockPct>85)items.push({level:'crit',title:'Bot troppo prudente',
+    desc:`${blockPct.toFixed(0)}% dei segnali viene bloccato. I guardrails sono molto restrittivi.`});
+  else if(blockPct>60)items.push({level:'warn',title:'Filtri mediamente severi',
+    desc:`${blockPct.toFixed(0)}% dei segnali bloccato. Valuta se le soglie sono appropriate per il regime attuale.`});
+
+  if(filled===0 && generated>5)items.push({level:'crit',title:'Zero trade eseguiti',
+    desc:`${generated} segnali generati ma nessun fill. Il funnel e' completamente bloccato.`});
+  else if(filled>0 && filled/generated<0.05)items.push({level:'warn',title:'Frequenza trade molto bassa',
+    desc:`Solo ${filled} fill su ${generated} segnali (${(filled/generated*100).toFixed(1)}%). Quasi tutto filtrato.`});
+
+  if((last.consec||0)>=6)items.push({level:'crit',title:`${last.consec} loss consecutive`,
+    desc:'Kill switch probabilmente attivo. Il bot e\' in pausa forzata.'});
+  else if((last.consec||0)>=3)items.push({level:'warn',title:`${last.consec} loss consecutive`,
+    desc:'Risk scaling attivo (multiplier ridotto). Soglie score alzate.'});
+
+  if((last.dd||0)>=2)items.push({level:'crit',title:`Drawdown ${last.dd?.toFixed(2)}%`,
+    desc:'Sopra la soglia kill switch (2%). Trading probabilmente sospeso.'});
+  else if((last.dd||0)>=1.5)items.push({level:'warn',title:`Drawdown ${last.dd?.toFixed(2)}%`,
+    desc:'Risk multiplier ridotto a 0.50. Position size dimezzata.'});
+
+  if((last.wr||0)<=15 && STATE.perf.length>0)items.push({level:'crit',title:`Win rate ${last.wr?.toFixed(0)}%`,
+    desc:'Win rate critico. Kill switch dovrebbe essere attivo.'});
+
+  // Regime vs blocks
+  const gateBlocks=STATE.blocks.filter(b=>b.source==='trade_gate');
+  const rangeBlocks=gateBlocks.filter(b=>b.reason.includes('range')||b.reason.includes('defensive'));
+  if(rangeBlocks.length>gateBlocks.length*0.5 && gateBlocks.length>5)
+    items.push({level:'warn',title:'Molti blocchi per regime sfavorevole',
+      desc:`${rangeBlocks.length}/${gateBlocks.length} blocchi sono per regime range/defensive. Normale in mercato laterale.`});
+
+  // Favorable market but heavy filtering
+  const lastRegime=STATE.regimes[STATE.regimes.length-1]?.regime||'';
+  if(lastRegime==='trend' && blockPct>60)
+    items.push({level:'warn',title:'Mercato favorevole ma filtri severi',
+      desc:'Regime trend rilevato ma oltre 60% dei segnali bloccato. Potrebbe essere troppo conservativo.'});
+
+  // Kill switch events
+  if(STATE.killSwitchEvents.some(k=>k.action==='activated'))
+    items.push({level:'warn',title:'Kill switch attivato nel periodo',
+      desc:'Il bot ha sospeso il trading almeno una volta. Controllare i motivi.'});
+
+  // WS issues
+  const wsEvents=STATE.events.filter(e=>e.type==='ws');
+  if(wsEvents.length>3)items.push({level:'warn',title:`WebSocket instabile (${wsEvents.length} eventi)`,
+    desc:'Multipli disconnect/reconnect rilevati. Verificare la connessione.'});
+
+  // Low trade frequency
+  if((last.tph||0)<0.1 && STATE.perf.length>2)
+    items.push({level:'warn',title:'Frequenza trade molto bassa',
+      desc:`${last.tph?.toFixed(2)} trades/h. Il bot sta tradando pochissimo.`});
+
+  // Profile daily limit
+  if(STATE.profileChanges.length>=4)
+    items.push({level:'warn',title:`${STATE.profileChanges.length} cambi profilo`,
+      desc:'Vicino al limite giornaliero di 4 cambi. I prossimi switch potrebbero essere bloccati.'});
+
+  if(items.length===0)
+    items.push({level:'ok',title:'Nessun problema rilevato',desc:'I parametri operativi sono nella norma.'});
+
+  el.innerHTML=items.map(i=>
+    `<div class="diagnosis-item ${i.level}"><div><div class="dtitle">${i.title}</div><div class="ddesc">${i.desc}</div></div></div>`
+  ).join('');
+}
+
+// ─── Event Log ───
+function renderEventLog(){
+  const el=document.getElementById('eventTable');
+  // Populate filter dropdowns
+  const types=[...new Set(STATE.events.map(e=>e.type))].sort();
+  const syms=[...new Set(STATE.events.map(e=>e.symbol).filter(Boolean))].sort();
+  document.getElementById('evType').innerHTML='<option value="">All types</option>'+types.map(t=>`<option value="${t}">${t}</option>`).join('');
+  document.getElementById('evSymbol').innerHTML='<option value="">All symbols</option>'+syms.map(s=>`<option value="${s}">${s}</option>`).join('');
+  renderEventRows();
+}
+
+function filterEvents(){renderEventRows()}
+function renderEventRows(){
+  const search=document.getElementById('evSearch').value.toLowerCase();
+  const type=document.getElementById('evType').value;
+  const sym=document.getElementById('evSymbol').value;
+  const level=document.getElementById('evLevel').value;
+  let rows=STATE.events;
+  if(search)rows=rows.filter(e=>(e.text||'').toLowerCase().includes(search)||(e.symbol||'').toLowerCase().includes(search));
+  if(type)rows=rows.filter(e=>e.type===type);
+  if(sym)rows=rows.filter(e=>e.symbol===sym);
+  if(level)rows=rows.filter(e=>e.level===level);
+  rows=rows.slice(-500); // last 500
+  const levelBadge=l=>({blocked:'badge-red',passed:'badge-green',signal:'badge-blue',
+    fill:'badge-green',profile:'badge-purple',error:'badge-red',info:'badge-dim'}[l]||'badge-dim');
+  document.getElementById('eventTable').innerHTML=`<thead><tr>
+    <th>Time</th><th>Type</th><th>Symbol</th><th>Level</th><th>Detail</th></tr></thead><tbody>`+
+    rows.reverse().map(e=>`<tr>
+      <td style="white-space:nowrap;color:var(--dim)">${e.ts||'-'}</td>
+      <td><span class="tag">${e.type}</span></td>
+      <td style="color:#fff">${e.symbol||'-'}</td>
+      <td><span class="badge ${levelBadge(e.level)}">${e.level}</span></td>
+      <td style="font-size:11px">${e.text||''}</td></tr>`).join('')+'</tbody>';
+}
+
+// ─── Export CSV ───
+function exportTable(id){
+  const tbl=document.getElementById(id);if(!tbl)return;
+  let csv='';
+  tbl.querySelectorAll('tr').forEach(r=>{
+    const cells=[...r.querySelectorAll('th,td')].map(c=>'"'+c.textContent.replace(/"/g,'""').trim()+'"');
+    csv+=cells.join(',')+'\n';
+  });
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=id+'.csv';a.click();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  DEMO DATA
+// ═══════════════════════════════════════════════════════════
+function loadDemo(){
+  resetAll();
+  const symbols=['BTCUSDT','ETHUSDT','SOLUSDT','XRPUSDT','BNBUSDT','LTCUSDT'];
+  const regimes=['trend','range','volatile','defensive'];
+  const strategies=['embient_enhanced','sma_crossover','macd_crossover','rsi_reversal'];
+  const blockReasons=['global_defensive_adx_too_low','symbol_regime_range','global_range_volume_too_low',
+    'global_defensive_requires_symbol_trend','global_range_adx_too_low','symbol_cooldown',
+    'one_trade_per_candle','dynamic_score_too_low','global_range_bb_width_too_low'];
+  const base=new Date('2026-04-09T00:00:00Z');
+  const lines=[];
+  let currentRegime='range', currentProfile='defensive';
+  for(let cycle=0;cycle<96;cycle++){
+    const t=new Date(base.getTime()+cycle*15*60000);
+    const ts=t.toISOString().replace('T',' ').substring(0,19);
+    // Regime shifts
+    if(cycle===20){currentRegime='trend';lines.push(`${ts} | INFO | REGIME_CHANGE: range -> trend`)}
+    if(cycle===50){currentRegime='range';lines.push(`${ts} | INFO | REGIME_CHANGE: trend -> range`)}
+    if(cycle===70){currentRegime='trend';lines.push(`${ts} | INFO | REGIME_CHANGE: range -> trend`)}
+    // Profile changes
+    if(cycle===22){currentProfile='normal';lines.push(`${ts} | INFO | PROFILE: defensive -> normal`)}
+    if(cycle===52){currentProfile='defensive';lines.push(`${ts} | INFO | PROFILE: normal -> defensive`)}
+    if(cycle===72){currentProfile='normal';lines.push(`${ts} | INFO | PROFILE: defensive -> normal`)}
+    // Per-symbol regimes
+    for(const sym of symbols){
+      const symRegime=sym==='BTCUSDT'||sym==='ETHUSDT'?currentRegime:
+        Math.random()<0.3?'range':Math.random()<0.6?currentRegime:'volatile';
+      const adx=symRegime==='trend'?25+Math.random()*15:12+Math.random()*15;
+      const atr=1+Math.random()*3;
+      const bb=1+Math.random()*5;
+      const vol=0.5+Math.random()*2.5;
+      lines.push(`${ts} | INFO | app.adaptive.market_regime_service | REGIME_SERVICE: ${sym} \u2192 ${symRegime.toUpperCase()} (ADX=${adx.toFixed(1)} ATR%=${atr.toFixed(2)} BB%=${bb.toFixed(2)} Vol=${vol.toFixed(1)}x)`);
+      // Signals
+      if(Math.random()<0.4){
+        const side=Math.random()<0.7?'BUY':'SELL';
+        const strat=strategies[Math.floor(Math.random()*strategies.length)];
+        const price=sym==='BTCUSDT'?82000+Math.random()*3000:sym==='ETHUSDT'?3200+Math.random()*200:100+Math.random()*50;
+        lines.push(`${ts} | INFO | Signal: ${side} ${sym} @ ${price.toFixed(2)} [${strat}]`);
+        // Gate pass/block
+        if(side==='BUY'){
+          if(Math.random()<0.35){
+            const reason=blockReasons[Math.floor(Math.random()*blockReasons.length)];
+            lines.push(`${ts} | INFO | TRADE_GATE: blocked | symbol=${sym} | reason=${reason}`);
+          } else {
+            lines.push(`${ts} | INFO | TRADE_GATE: passed | symbol=${sym} | regime=${currentRegime} | adx=${adx.toFixed(1)} | volume=${vol.toFixed(2)} | bbw=${bb.toFixed(2)}`);
+            // Score filter
+            if(Math.random()<0.25){
+              const score=60+Math.random()*25;
+              lines.push(`${ts} | INFO | DYNAMIC_SCORE: blocked | symbol=${sym} | strategy=${strat} | score=${score.toFixed(0)} < min=85 (consec_losses=3, regime=${currentRegime})`);
+            } else {
+              const score=80+Math.random()*15;
+              lines.push(`${ts} | INFO | DYNAMIC_SCORE: passed | symbol=${sym} | score=${score.toFixed(0)} >= min=80`);
+              // Fill
+              if(Math.random()<0.7){
+                lines.push(`${ts} | INFO | [PAPER] MARKET BUY filled: ${sym} qty=${(0.001+Math.random()*0.1).toFixed(6)} @ ${price.toFixed(2)}`);
+              }
+            }
+          }
+        }
+      }
+    }
+    // Perf monitor
+    const pnl24=-5+Math.random()*12;
+    const wr=20+Math.random()*60;
+    const dd=Math.random()*2.5;
+    const cl=Math.floor(Math.random()*8);
+    const tph=0.1+Math.random()*0.8;
+    lines.push(`${ts} | INFO | PERF_MONITOR: PnL 1h=${(-1+Math.random()*3).toFixed(2)} 6h=${(-3+Math.random()*8).toFixed(2)} 24h=${pnl24.toFixed(2)} | WR=${wr.toFixed(1)}% | DD=${dd.toFixed(2)}% | ConsecLoss=${cl} | Trades/h=${tph.toFixed(2)} | Cooldowns=0 | Errors=0`);
+    // Meta
+    lines.push(`${ts} | INFO | META_CTRL: cycle complete | regime=${currentRegime} | profile=${currentProfile} | PnL6h=${(-2+Math.random()*6).toFixed(2)} | WR=${wr.toFixed(0)}% | DD=${dd.toFixed(2)}%`);
+    // Kill switch occasionally
+    if(cl>=6 && Math.random()<0.3){
+      lines.push(`${ts} | WARNING | KILL_SWITCH: activated | reason=consecutive_losses | value=${cl} | pause_until=...`);
+    }
+    // Advisor
+    if(cycle%4===0){
+      const suggested=currentProfile==='defensive'?'normal':'defensive';
+      lines.push(`${ts} | INFO | LLM_ADVISOR: profile=${currentProfile} suggested=${suggested} (confidence=${40+Math.floor(Math.random()*40)}%)`);
+    }
+  }
+  parseLog(lines.join('\n'));
+  document.getElementById('btnAnalyze').disabled=false;
+  analyze();
+}
+
+</script>
+</body>
+</html>
