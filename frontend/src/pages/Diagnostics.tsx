@@ -90,14 +90,24 @@ export default function Diagnostics() {
   const fills = useMemo(() => events.filter(e => e.type === 'fill'), [events])
   const perfEntries = useMemo(() => {
     const seen = new Set<string>()
-    return events.filter(e => {
-      if (e.type !== 'perf' || !e.ts) return false
-      // Truncate to minute to dedup (compute called twice per cycle, ~1s apart)
-      const key = e.ts.substring(0, 16)
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
+    let lastSig = ''
+    const deduped: DiagEvent[] = []
+    for (const e of events) {
+      if (e.type !== 'perf' || !e.ts) continue
+      // 1. Dedup same minute (compute called twice per cycle ~1s apart)
+      const minKey = e.ts.substring(0, 16)
+      if (seen.has(minKey)) continue
+      seen.add(minKey)
+      // 2. Collapse consecutive rows with identical values
+      const sig = `${e.pnl1h}_${e.pnl6h}_${e.pnl24h}_${e.wr}_${e.dd}_${e.consec}`
+      if (sig === lastSig && deduped.length > 0) {
+        deduped[deduped.length - 1] = e // keep latest timestamp
+        continue
+      }
+      lastSig = sig
+      deduped.push(e)
+    }
+    return deduped
   }, [events])
   const profileChanges = useMemo(() => events.filter(e => e.type === 'profile'), [events])
 
