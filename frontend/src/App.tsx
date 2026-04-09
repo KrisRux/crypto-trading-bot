@@ -119,6 +119,13 @@ function AppContent() {
         : 'text-gray-300 hover:bg-gray-700 hover:text-white'
     }`
 
+  const mobileNavLinkClass = ({ isActive }: { isActive: boolean }) =>
+    `block w-full px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${
+      isActive
+        ? 'bg-gray-700 text-white'
+        : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+    }`
+
   // Still checking auth (first render)
   if (isAuthenticated === null) {
     return (
@@ -211,38 +218,38 @@ function AppContent() {
 
             {/* Mobile nav links */}
             {menuOpen && (
-              <div className="md:hidden pb-3 space-y-1">
-                <NavLink to="/" className={navLinkClass} onClick={() => setMenuOpen(false)}>
+              <div className="md:hidden pb-3 pt-1 space-y-0.5 border-t border-gray-800">
+                <NavLink to="/" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_dashboard')}
                 </NavLink>
-                <NavLink to="/wallet" className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                <NavLink to="/wallet" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_assets')}
                 </NavLink>
-                <NavLink to="/strategies" className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                <NavLink to="/strategies" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_strategies')}
                 </NavLink>
-                <NavLink to="/skills" className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                <NavLink to="/skills" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_skills')}
                 </NavLink>
-                <NavLink to="/manual" className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                <NavLink to="/manual" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_manual')}
                 </NavLink>
                 {role !== 'guest' && (
-                  <NavLink to="/settings" className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                  <NavLink to="/settings" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
                     {t('nav_settings')}
                   </NavLink>
                 )}
                 {isAdmin && (
-                  <NavLink to="/users" className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                  <NavLink to="/users" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
                     Utenti
                   </NavLink>
                 )}
                 {isAdmin && (
-                  <NavLink to="/diagnostics" className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                  <NavLink to="/diagnostics" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
                     Diagnostics
                   </NavLink>
                 )}
-                <NavLink to="/logs" className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                <NavLink to="/logs" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_logs')}
                 </NavLink>
               </div>
