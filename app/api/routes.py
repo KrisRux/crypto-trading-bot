@@ -676,9 +676,11 @@ def adaptive_status(_user: dict = Depends(require_auth)):
 
 
 @router.get("/diagnostics")
-def get_diagnostics(lines: int = 2000, _admin: dict = Depends(require_admin)):
-    """Combined diagnostics payload: adaptive status + recent log lines (admin only)."""
-    import os
+def get_diagnostics(lines: int = 3000, _admin: dict = Depends(require_admin)):
+    """Serve the diagnostics dashboard HTML with live data pre-injected (admin only)."""
+    import json as _json, os
+    from fastapi.responses import HTMLResponse
+
     mc = get_meta_controller()
     engine = get_engine()
 
@@ -687,6 +689,12 @@ def get_diagnostics(lines: int = 2000, _admin: dict = Depends(require_admin)):
     perf = mc.perf_monitor.snapshot.to_dict() if mc.perf_monitor.snapshot else {}
     advisor = mc.advisor.last_advice or {}
     guardrails = engine.guardrails.status() if engine else {}
+    status_obj = {
+        "active_profile": mc.profile_manager.active_profile,
+        "regime": regime, "performance": perf, "advisor": advisor,
+        "switch_history": mc.profile_manager.switch_history[-10:],
+        "guardrails": guardrails,
+    }
 
     # Log tail
     log_content = ""
@@ -699,17 +707,30 @@ def get_diagnostics(lines: int = 2000, _admin: dict = Depends(require_admin)):
         except Exception:
             log_content = ""
 
-    return {
-        "status": {
-            "active_profile": mc.profile_manager.active_profile,
-            "regime": regime,
-            "performance": perf,
-            "advisor": advisor,
-            "switch_history": mc.profile_manager.switch_history[-10:],
-            "guardrails": guardrails,
-        },
-        "log": log_content,
-    }
+    # Read dashboard HTML template
+    html_path = os.path.join(os.path.dirname(__file__), "..", "..", "dashboard", "diagnostics.html")
+    try:
+        with open(html_path, "r", encoding="utf-8") as f:
+            html = f.read()
+    except FileNotFoundError:
+        raise HTTPException(404, "Dashboard template not found")
+
+    # Inject auto-load script before </body>
+    init_script = (
+        "<script>\n"
+        "window.addEventListener('DOMContentLoaded', function() {\n"
+        f"  loadJsonStatus({_json.dumps(status_obj)});\n"
+        f"  var logText = {_json.dumps(log_content)};\n"
+        "  if (logText) parseLog(logText);\n"
+        "  document.getElementById('dropZone').classList.add('hidden');\n"
+        "  document.getElementById('btnAnalyze').disabled = false;\n"
+        "  analyze();\n"
+        "});\n"
+        "</script>\n"
+    )
+    html = html.replace("</body>", init_script + "</body>")
+
+    return HTMLResponse(content=html)
 
 
 @router.get("/adaptive/guardrails")
