@@ -92,8 +92,10 @@ export default function Diagnostics() {
     const seen = new Set<string>()
     return events.filter(e => {
       if (e.type !== 'perf' || !e.ts) return false
-      if (seen.has(e.ts)) return false
-      seen.add(e.ts)
+      // Truncate to minute to dedup (compute called twice per cycle, ~1s apart)
+      const key = e.ts.substring(0, 16)
+      if (seen.has(key)) return false
+      seen.add(key)
       return true
     })
   }, [events])
