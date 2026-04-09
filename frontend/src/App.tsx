@@ -8,6 +8,7 @@ import Manual from './pages/Manual'
 import Skills from './pages/Skills'
 import Users from './pages/Users'
 import Settings from './pages/Settings'
+import Diagnostics from './pages/Diagnostics'
 import Login from './pages/Login'
 import { api } from './api'
 import { Lang } from './i18n'
@@ -166,6 +167,7 @@ function AppContent() {
                   <NavLink to="/manual" className={navLinkClass}>{t('nav_manual')}</NavLink>
                   {role !== 'guest' && <NavLink to="/settings" className={navLinkClass}>{t('nav_settings')}</NavLink>}
                   {isAdmin && <NavLink to="/users" className={navLinkClass}>Utenti</NavLink>}
+                  {isAdmin && <NavLink to="/diagnostics" className={navLinkClass}>Diagnostics</NavLink>}
                   <NavLink to="/logs" className={navLinkClass}>{t('nav_logs')}</NavLink>
                 </div>
               </div>
@@ -235,6 +237,11 @@ function AppContent() {
                     Utenti
                   </NavLink>
                 )}
+                {isAdmin && (
+                  <NavLink to="/diagnostics" className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                    Diagnostics
+                  </NavLink>
+                )}
                 <NavLink to="/logs" className={navLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_logs')}
                 </NavLink>
@@ -254,6 +261,7 @@ function AppContent() {
             <Route path="/manual" element={<Manual />} />
             {role !== 'guest' && <Route path="/settings" element={<Settings />} />}
             {isAdmin && <Route path="/users" element={<Users />} />}
+            {isAdmin && <Route path="/diagnostics" element={<Diagnostics />} />}
             <Route path="/login" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

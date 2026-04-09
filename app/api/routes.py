@@ -675,6 +675,43 @@ def adaptive_status(_user: dict = Depends(require_auth)):
     }
 
 
+@router.get("/diagnostics")
+def get_diagnostics(lines: int = 2000, _admin: dict = Depends(require_admin)):
+    """Combined diagnostics payload: adaptive status + recent log lines (admin only)."""
+    import os
+    mc = get_meta_controller()
+    engine = get_engine()
+
+    # Adaptive status
+    regime = mc.regime_service.global_snapshot()
+    perf = mc.perf_monitor.snapshot.to_dict() if mc.perf_monitor.snapshot else {}
+    advisor = mc.advisor.last_advice or {}
+    guardrails = engine.guardrails.status() if engine else {}
+
+    # Log tail
+    log_content = ""
+    log_file = "logs/trading_bot.log"
+    if os.path.exists(log_file):
+        try:
+            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+                all_lines = f.readlines()
+            log_content = "".join(all_lines[-lines:])
+        except Exception:
+            log_content = ""
+
+    return {
+        "status": {
+            "active_profile": mc.profile_manager.active_profile,
+            "regime": regime,
+            "performance": perf,
+            "advisor": advisor,
+            "switch_history": mc.profile_manager.switch_history[-10:],
+            "guardrails": guardrails,
+        },
+        "log": log_content,
+    }
+
+
 @router.get("/adaptive/guardrails")
 def guardrails_status_endpoint(_user: dict = Depends(require_auth)):
     """Detailed guardrails status: kill switch, cooldowns, stats, risk multiplier."""

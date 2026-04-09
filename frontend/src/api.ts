@@ -239,4 +239,5 @@ export const api = {
     request<SkillItem[]>(category ? `/skills?category=${category}` : '/skills'),
   getSkill: (name: string) => request<SkillItem>(`/skills/${name}`),
   getAdaptiveStatus: () => request<AdaptiveStatus>('/adaptive/status'),
+  getDiagnostics: (lines = 2000) => request<{ status: AdaptiveStatus; log: string }>(`/diagnostics?lines=${lines}`),
 }
