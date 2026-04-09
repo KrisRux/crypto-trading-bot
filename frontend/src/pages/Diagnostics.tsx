@@ -88,7 +88,15 @@ export default function Diagnostics() {
   const passes = useMemo(() => events.filter(e => e.type === 'pass'), [events])
   const signals = useMemo(() => events.filter(e => e.type === 'signal'), [events])
   const fills = useMemo(() => events.filter(e => e.type === 'fill'), [events])
-  const perfEntries = useMemo(() => events.filter(e => e.type === 'perf'), [events])
+  const perfEntries = useMemo(() => {
+    const seen = new Set<string>()
+    return events.filter(e => {
+      if (e.type !== 'perf' || !e.ts) return false
+      if (seen.has(e.ts)) return false
+      seen.add(e.ts)
+      return true
+    })
+  }, [events])
   const profileChanges = useMemo(() => events.filter(e => e.type === 'profile'), [events])
 
   const totalBlocked = blocks.length
