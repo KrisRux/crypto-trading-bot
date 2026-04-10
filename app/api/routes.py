@@ -23,6 +23,7 @@ from app.api.auth import (
 from app.models.user import User, verify_password, hash_password
 from app.config import settings
 from app.strategy_store import save_strategy_params, save_risk_params
+from app.adaptive.guardrails_validation import validate_guardrails_values, diff_configs
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -791,7 +792,7 @@ def get_guardrails_config(_admin: dict = Depends(require_admin)):
 
 
 @router.put("/adaptive/guardrails/config")
-def update_guardrails_config(body: dict, _admin: dict = Depends(require_admin)):
+def update_guardrails_config(body: dict, admin: dict = Depends(require_admin)):
     """Save new guardrails config and hot-reload (admin only)."""
     import json as _json, os, tempfile
     config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
@@ -802,6 +803,20 @@ def update_guardrails_config(body: dict, _admin: dict = Depends(require_admin)):
     missing = required_keys - set(body.keys())
     if missing:
         raise HTTPException(400, f"Missing required sections: {', '.join(missing)}")
+
+    # Value range validation
+    val_errors = validate_guardrails_values(body)
+    if val_errors:
+        raise HTTPException(400, f"Validation errors: {'; '.join(val_errors)}")
+
+    # Read current config for audit diff
+    old_cfg = {}
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                old_cfg = _json.load(f)
+        except Exception:
+            pass
 
     # Atomic write: write to temp file, then rename
     try:
@@ -816,12 +831,20 @@ def update_guardrails_config(body: dict, _admin: dict = Depends(require_admin)):
     # Hot-reload into running engine
     engine = get_engine()
     engine.guardrails.reload_config()
-    logger.info("Guardrails config updated and reloaded by admin")
+
+    # Audit log
+    changes = diff_configs(old_cfg, body)
+    username = admin.get("username", "unknown")
+    logger.info(
+        "GUARDRAILS_AUDIT: user=%s | changes=%d | %s",
+        username, len(changes),
+        " | ".join(f"{c['path']}: {c['from']}→{c['to']}" for c in changes[:20]),
+    )
     return {"ok": True}
 
 
 @router.post("/adaptive/guardrails/config/reset")
-def reset_guardrails_config(_admin: dict = Depends(require_admin)):
+def reset_guardrails_config(admin: dict = Depends(require_admin)):
     """Reset guardrails config to conservative defaults (admin only)."""
     import json as _json, os, tempfile
     config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
@@ -874,7 +897,8 @@ def reset_guardrails_config(_admin: dict = Depends(require_admin)):
 
     engine = get_engine()
     engine.guardrails.reload_config()
-    logger.info("Guardrails config reset to defaults by admin")
+    username = admin.get("username", "unknown")
+    logger.info("GUARDRAILS_AUDIT: user=%s | action=reset_to_defaults", username)
     return {"ok": True, "config": defaults}
 
 
