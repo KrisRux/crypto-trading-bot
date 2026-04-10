@@ -1,7 +1,15 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useState, useEffect } from 'react'
 import { api, SkillItem, SkillsSummary } from '../api'
 import { usePolling } from '../hooks/usePolling'
 import { useLang } from '../hooks/useLang'
+
+interface SyncStatus {
+  timestamp: string | null
+  status: string
+  added: number
+  updated: number
+  error: string | null
+}
 
 const CATEGORY_LABELS: Record<string, { it: string; en: string }> = {
   'crypto-trading': { it: 'Crypto Trading', en: 'Crypto Trading' },
@@ -17,6 +25,9 @@ export default function Skills() {
   const { lang } = useLang()
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [expandedSkill, setExpandedSkill] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<string | null>(null)
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
 
   const fetchSummary = useCallback(() => api.getSkillsSummary(), [])
   const fetchSkills = useCallback(
@@ -24,23 +35,77 @@ export default function Skills() {
     [selectedCategory]
   )
 
-  const [summary] = usePolling<SkillsSummary>(fetchSummary, 60000)
-  const [skills] = usePolling<SkillItem[]>(fetchSkills, 60000)
+  const [summary, , , refetchSummary] = usePolling<SkillsSummary>(fetchSummary, 60000)
+  const [skills, , , refetchSkills] = usePolling<SkillItem[]>(fetchSkills, 60000)
 
   const t = (it: string, en: string) => (lang === 'it' ? it : en)
 
+  // Load sync status on mount
+  useEffect(() => {
+    fetch('/api/skills/sync/status', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setSyncStatus(data) })
+      .catch(() => {})
+  }, [])
+
+  const handleSync = async () => {
+    setSyncing(true)
+    setSyncResult(null)
+    try {
+      const res = await fetch('/api/skills/sync', { method: 'POST', credentials: 'include' })
+      const data = await res.json()
+      if (data.status === 'ok') {
+        setSyncResult(`${data.added} added, ${data.updated} updated`)
+        setSyncStatus({ timestamp: new Date().toISOString(), status: 'ok', added: data.added, updated: data.updated, error: null })
+        refetchSummary()
+        refetchSkills()
+      } else {
+        setSyncResult(`Error: ${data.details || 'unknown'}`)
+      }
+      setTimeout(() => setSyncResult(null), 5000)
+    } catch (e) {
+      setSyncResult(`Error: ${e}`)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-white mb-1">
-          {t('Knowledge Base Embient', 'Embient Knowledge Base')}
-        </h2>
-        <p className="text-sm text-gray-400">
-          {t(
-            `${summary?.total_skills ?? 0} skill di trading caricate da agent-trading-skills (Embient AI). Queste regole e conoscenze alimentano la strategia "Embient Enhanced".`,
-            `${summary?.total_skills ?? 0} trading skills loaded from agent-trading-skills (Embient AI). These rules and knowledge power the "Embient Enhanced" strategy.`
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold text-white mb-1">
+            {t('Knowledge Base Embient', 'Embient Knowledge Base')}
+          </h2>
+          <p className="text-sm text-gray-400">
+            {t(
+              `${summary?.total_skills ?? 0} skill di trading caricate da agent-trading-skills (Embient AI). Queste regole e conoscenze alimentano la strategia "Embient Enhanced".`,
+              `${summary?.total_skills ?? 0} trading skills loaded from agent-trading-skills (Embient AI). These rules and knowledge power the "Embient Enhanced" strategy.`
+            )}
+          </p>
+          {syncStatus?.timestamp && (
+            <p className="text-[11px] text-gray-600 mt-1">
+              {t('Ultimo sync', 'Last sync')}: {new Date(syncStatus.timestamp).toLocaleString()}
+              {syncStatus.status === 'ok'
+                ? ` — ${syncStatus.added} added, ${syncStatus.updated} updated`
+                : syncStatus.error ? ` — ${syncStatus.error}` : ''}
+            </p>
           )}
-        </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {syncResult && (
+            <span className={`text-xs ${syncResult.startsWith('Error') ? 'text-red-400' : 'text-emerald-400'}`}>
+              {syncResult}
+            </span>
+          )}
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="px-3 py-1.5 bg-blue-900/60 hover:bg-blue-800/70 border border-blue-800/50 text-blue-300 text-xs rounded transition-colors disabled:opacity-40 whitespace-nowrap"
+          >
+            {syncing ? t('Sincronizzazione...', 'Syncing...') : t('Sync da repo', 'Sync from repo')}
+          </button>
+        </div>
       </div>
 
       {/* Category filter */}
