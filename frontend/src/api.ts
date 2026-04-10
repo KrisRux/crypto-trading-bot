@@ -273,4 +273,9 @@ export const api = {
   getSkill: (name: string) => request<SkillItem>(`/skills/${name}`),
   getAdaptiveStatus: () => request<AdaptiveStatus>('/adaptive/status'),
   getDiagnostics: () => request<DiagnosticsData>('/diagnostics'),
+  getGuardrailsConfig: () => request<Record<string, unknown>>('/adaptive/guardrails/config'),
+  updateGuardrailsConfig: (config: Record<string, unknown>) =>
+    request<{ ok: boolean }>('/adaptive/guardrails/config', { method: 'PUT', body: JSON.stringify(config) }),
+  resetGuardrailsConfig: () =>
+    request<{ ok: boolean; config: Record<string, unknown> }>('/adaptive/guardrails/config/reset', { method: 'POST' }),
 }

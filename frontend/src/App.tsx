@@ -9,6 +9,7 @@ import Skills from './pages/Skills'
 import Users from './pages/Users'
 import Settings from './pages/Settings'
 import Diagnostics from './pages/Diagnostics'
+import GuardrailsConfig from './pages/GuardrailsConfig'
 import Login from './pages/Login'
 import { api } from './api'
 import { Lang } from './i18n'
@@ -175,6 +176,7 @@ function AppContent() {
                   <NavLink to="/settings" className={navLinkClass}>{t('nav_settings')}</NavLink>
                   {isAdmin && <NavLink to="/users" className={navLinkClass}>Utenti</NavLink>}
                   {isAdmin && <NavLink to="/diagnostics" className={navLinkClass}>Diagnostics</NavLink>}
+                  {isAdmin && <NavLink to="/guardrails" className={navLinkClass}>Guardrails</NavLink>}
                   <NavLink to="/logs" className={navLinkClass}>{t('nav_logs')}</NavLink>
                 </div>
               </div>
@@ -251,6 +253,11 @@ function AppContent() {
                     Diagnostics
                   </NavLink>
                 )}
+                {isAdmin && (
+                  <NavLink to="/guardrails" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
+                    Guardrails
+                  </NavLink>
+                )}
                 <NavLink to="/logs" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
                   {t('nav_logs')}
                 </NavLink>
@@ -271,6 +278,7 @@ function AppContent() {
             <Route path="/settings" element={<Settings />} />
             {isAdmin && <Route path="/users" element={<Users />} />}
             {isAdmin && <Route path="/diagnostics" element={<Diagnostics />} />}
+            {isAdmin && <Route path="/guardrails" element={<GuardrailsConfig />} />}
             <Route path="/login" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

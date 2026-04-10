@@ -190,10 +190,10 @@ class TestTradeGate:
 
     def test_range_global_strict_thresholds(self):
         tg = TradeGate(_default_cfg())
-        # adx=30 < min_adx=32 for range
+        # adx=26 < min_adx=28 for range
         v = tg.check(
             global_regime="range", symbol_regime="trend", symbol="SOLUSDT",
-            adx=30, volume_ratio=2.0, bb_width_pct=2.0,
+            adx=26, volume_ratio=2.0, bb_width_pct=2.0,
         )
         assert not v.allowed
 

@@ -778,6 +778,106 @@ def reload_guardrails(_admin: dict = Depends(require_admin)):
     return {"ok": True, "message": "Guardrails config reloaded"}
 
 
+@router.get("/adaptive/guardrails/config")
+def get_guardrails_config(_admin: dict = Depends(require_admin)):
+    """Return the current guardrails.json content (admin only)."""
+    import json as _json, os
+    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
+    try:
+        with open(config_path, "r") as f:
+            return _json.load(f)
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to read config: {exc}")
+
+
+@router.put("/adaptive/guardrails/config")
+def update_guardrails_config(body: dict, _admin: dict = Depends(require_admin)):
+    """Save new guardrails config and hot-reload (admin only)."""
+    import json as _json, os, tempfile
+    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
+
+    # Basic structure validation
+    required_keys = {"kill_switch", "symbol_cooldown", "trade_gate", "dynamic_score",
+                     "entry_throttle", "risk_scaling", "strategy_circuit_breaker"}
+    missing = required_keys - set(body.keys())
+    if missing:
+        raise HTTPException(400, f"Missing required sections: {', '.join(missing)}")
+
+    # Atomic write: write to temp file, then rename
+    try:
+        config_dir = os.path.dirname(config_path)
+        fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".json")
+        with os.fdopen(fd, "w") as f:
+            _json.dump(body, f, indent=2)
+        os.replace(tmp_path, config_path)
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to write config: {exc}")
+
+    # Hot-reload into running engine
+    engine = get_engine()
+    engine.guardrails.reload_config()
+    logger.info("Guardrails config updated and reloaded by admin")
+    return {"ok": True}
+
+
+@router.post("/adaptive/guardrails/config/reset")
+def reset_guardrails_config(_admin: dict = Depends(require_admin)):
+    """Reset guardrails config to conservative defaults (admin only)."""
+    import json as _json, os, tempfile
+    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
+
+    defaults = {
+        "kill_switch": {
+            "consecutive_losses_threshold": 6, "low_win_rate_threshold": 15,
+            "intraday_drawdown_threshold": 2.0, "pnl_24h_threshold": -6.0,
+            "pause_minutes_losses": 90, "pause_minutes_drawdown": 120,
+        },
+        "symbol_cooldown": {
+            "consecutive_losses_threshold": 3, "cooldown_minutes_losses": 60,
+            "stoploss_cluster_count": 2, "stoploss_cluster_window_minutes": 90,
+            "cooldown_minutes_cluster": 90,
+        },
+        "trade_gate": {
+            "defensive": {"require_symbol_trend": True, "min_adx": 30, "min_volume_ratio": 1.6, "min_bb_width_pct": 1.2},
+            "range": {"require_symbol_trend": True, "min_adx": 32, "min_volume_ratio": 1.8, "min_bb_width_pct": 1.4},
+            "trend": {"require_symbol_trend": True, "min_adx": 25, "min_volume_ratio": 1.0, "min_bb_width_pct": 0.0},
+            "volatile": {"require_symbol_trend": True, "min_adx": 28, "min_volume_ratio": 1.4, "min_bb_width_pct": 1.0},
+            "block_entry_on_symbol_regime": ["range", "defensive"],
+        },
+        "dynamic_score": {
+            "base_min_score": 80, "min_score_after_3_losses": 88,
+            "min_score_after_5_losses": 92, "extra_score_in_bad_regime": 5,
+            "bad_regimes": ["range", "defensive"], "max_score_cap": 95,
+        },
+        "entry_throttle": {
+            "max_entries_per_symbol_per_candle": 1,
+            "max_entries_per_hour": {"defensive": 2, "range": 3, "trend": 5, "volatile": 3},
+            "default_max_entries_per_hour": 3,
+        },
+        "risk_scaling": {
+            "consecutive_losses_3_multiplier": 0.75, "consecutive_losses_5_multiplier": 0.50,
+            "drawdown_threshold": 1.5, "drawdown_min_multiplier": 0.50,
+        },
+        "strategy_circuit_breaker": {
+            "consecutive_losses_threshold": 4, "pause_minutes": 120,
+        },
+    }
+
+    try:
+        config_dir = os.path.dirname(config_path)
+        fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".json")
+        with os.fdopen(fd, "w") as f:
+            _json.dump(defaults, f, indent=2)
+        os.replace(tmp_path, config_path)
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to write defaults: {exc}")
+
+    engine = get_engine()
+    engine.guardrails.reload_config()
+    logger.info("Guardrails config reset to defaults by admin")
+    return {"ok": True, "config": defaults}
+
+
 @router.get("/adaptive/profiles")
 def list_profiles(_user: dict = Depends(require_auth)):
     """Return all available profiles and the active one."""
