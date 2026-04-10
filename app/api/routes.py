@@ -1129,3 +1129,21 @@ def get_skill(name: str, _admin: dict = Depends(require_admin)):
     if not skill:
         raise HTTPException(404, f"Skill '{name}' not found")
     return skill.to_dict()
+
+
+@router.post("/skills/sync")
+def sync_skills_endpoint(_admin: dict = Depends(require_admin)):
+    """Pull latest skills from upstream repo and reload library (admin only)."""
+    from app.embient_skills.sync import sync_skills
+    result = sync_skills()
+    if result["status"] == "ok" and _skills_library:
+        if result["added"] > 0 or result["updated"] > 0:
+            _skills_library.reload()
+    return result
+
+
+@router.get("/skills/sync/status")
+def skills_sync_status(_admin: dict = Depends(require_admin)):
+    """Return the last skills sync status."""
+    from app.embient_skills.sync import get_sync_status
+    return get_sync_status()

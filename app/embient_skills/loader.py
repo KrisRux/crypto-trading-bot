@@ -184,6 +184,14 @@ class SkillsLibrary:
         logger.info("Loaded %d Embient skills across %d categories",
                      len(self.skills), len(self.categories))
 
+    def reload(self):
+        """Reload all skills from disk (called after sync)."""
+        old_count = len(self.skills)
+        self.skills.clear()
+        self.categories.clear()
+        self._load_all()
+        logger.info("Skills library reloaded: %d → %d skills", old_count, len(self.skills))
+
     def get(self, name: str) -> Skill | None:
         return self.skills.get(name)
 

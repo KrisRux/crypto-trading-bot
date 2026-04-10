@@ -24,6 +24,7 @@ from app.strategies.embient_enhanced import EmbientEnhancedStrategy
 from app.embient_skills.loader import SkillsLibrary
 from app.strategy_store import load_strategy_params, load_risk_params
 from app.adaptive.meta_controller import MetaController
+from app.embient_skills.sync import start_periodic_sync
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -96,10 +97,15 @@ async def lifespan(app: FastAPI):
     callback_task = asyncio.create_task(meta_controller.start_callback_polling())
     logger.info("Telegram callback polling started")
 
+    # Start periodic skills sync (every 6 hours)
+    skills_sync_task = asyncio.create_task(start_periodic_sync(skills_library, interval_hours=6))
+    logger.info("Skills periodic sync started (every 6h)")
+
     yield  # App is running
 
     # Shutdown
     logger.info("Shutting down trading engine...")
+    skills_sync_task.cancel()
     callback_task.cancel()
     await engine.stop()
     engine_task.cancel()
@@ -109,6 +115,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await callback_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await skills_sync_task
     except asyncio.CancelledError:
         pass
     logger.info("Shutdown complete")
