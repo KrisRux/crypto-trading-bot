@@ -1115,20 +1115,36 @@ def get_tuning_history(limit: int = 20, db: Session = Depends(get_db),
     ]
 
 
-@router.get("/adaptive/profiles")
 @router.get("/adaptive/tuning/ollama-status")
-async def ollama_status(_admin: dict = Depends(require_admin)):
-    """Check if Ollama is running and what models are available."""
+async def llm_status(_admin: dict = Depends(require_admin)):
+    """Check LLM provider status: DeepSeek API + Ollama local."""
     from app.adaptive.ollama_client import check_ollama, get_available_models
+    from app.adaptive.deepseek_client import check_deepseek
     from app.config import settings
-    available = await check_ollama(settings.ollama_url)
-    models = await get_available_models(settings.ollama_url) if available else []
+
+    deepseek_ok = await check_deepseek(settings.deepseek_api_key) if settings.deepseek_api_key else False
+    ollama_ok = await check_ollama(settings.ollama_url)
+    ollama_models = await get_available_models(settings.ollama_url) if ollama_ok else []
+
     return {
-        "available": available,
-        "url": settings.ollama_url,
-        "configured_model": settings.ollama_model,
-        "installed_models": models,
+        "deepseek": {
+            "available": deepseek_ok,
+            "configured": bool(settings.deepseek_api_key),
+            "model": settings.deepseek_model,
+        },
+        "ollama": {
+            "available": ollama_ok,
+            "url": settings.ollama_url,
+            "configured_model": settings.ollama_model,
+            "installed_models": ollama_models,
+        },
+        # For backward compat
+        "available": deepseek_ok or ollama_ok,
+        "configured_model": settings.deepseek_model if deepseek_ok else (settings.ollama_model if ollama_ok else "rules"),
     }
+
+
+@router.get("/adaptive/profiles")
 
 
 @router.get("/adaptive/news-sentiment")

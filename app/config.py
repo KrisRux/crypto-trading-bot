@@ -44,7 +44,9 @@ class Settings(BaseSettings):
     # Telegram notifications (bot token is server-wide; chat_id is per-user in DB)
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
 
-    # Ollama local LLM for AI Tuning Advisor (optional)
+    # AI Tuning Advisor — LLM providers (optional, fallback chain: DeepSeek → Ollama → rules)
+    deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
+    deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
     ollama_url: str = Field(default="http://localhost:11434", alias="OLLAMA_URL")
     ollama_model: str = Field(default="mistral", alias="OLLAMA_MODEL")
 

@@ -581,7 +581,11 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
   const [showHistory, setShowHistory] = useState(false)
   const [applying, setApplying] = useState(false)
   const [msg, setMsg] = useState('')
-  const [ollamaStatus, setOllamaStatus] = useState<{ available: boolean; configured_model: string } | null>(null)
+  const [llmStatus, setLlmStatus] = useState<{
+    available: boolean; configured_model: string
+    deepseek?: { available: boolean; configured: boolean; model: string }
+    ollama?: { available: boolean; configured_model: string }
+  } | null>(null)
   const [sentiment, setSentiment] = useState<{ score: number; label: string; headline_count: number; top_headlines: { title: string; sentiment: number }[]; available: boolean } | null>(null)
 
   const loadHistory = useCallback(async () => {
@@ -597,7 +601,7 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
   useEffect(() => {
     fetch('/api/adaptive/tuning/ollama-status', { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data) setOllamaStatus(data) })
+      .then(data => { if (data) setLlmStatus(data) })
       .catch(() => {})
     fetch('/api/adaptive/news-sentiment', { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
@@ -676,10 +680,12 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
         <div className="flex items-center gap-2">
           <span className="w-7 h-7 rounded bg-purple-900/50 flex items-center justify-center text-xs font-bold text-purple-300">AI</span>
           <span className="text-sm font-semibold text-white">AI Tuning Advisor</span>
-          {ollamaStatus && (
-            ollamaStatus.available
-              ? <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-900/60 text-emerald-300">Ollama: {ollamaStatus.configured_model}</span>
-              : <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-gray-800 text-gray-500">Ollama offline — rules mode</span>
+          {llmStatus && (
+            llmStatus.deepseek?.available
+              ? <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-blue-900/60 text-blue-300">DeepSeek: {llmStatus.deepseek.model}</span>
+              : llmStatus.ollama?.available
+                ? <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-900/60 text-emerald-300">Ollama: {llmStatus.ollama.configured_model}</span>
+                : <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-gray-800 text-gray-500">LLM offline — rules mode</span>
           )}
           {sentiment?.available && (
             <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${

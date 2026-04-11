@@ -167,7 +167,8 @@ class LLMAdvisor:
                 "news_sentiment": dict | None,
             }
         """
-        from app.adaptive.ollama_client import generate_suggestions, check_ollama
+        from app.adaptive.deepseek_client import generate_suggestions as deepseek_generate
+        from app.adaptive.ollama_client import generate_suggestions as ollama_generate, check_ollama
         from app.config import settings
 
         # Safety gate (applied regardless of source)
@@ -197,18 +198,35 @@ class LLMAdvisor:
                 "news_sentiment": news_sentiment,
             }
 
-        # Try Ollama first
+        llm_args = dict(perf=perf, guardrails_status=guardrails_status,
+                        guardrails_config=guardrails_config, regime_snapshot=regime_snapshot,
+                        news_sentiment=news_sentiment)
+
+        # 1. Try DeepSeek API first (fast, cheap, best quality)
+        if settings.deepseek_api_key:
+            try:
+                result = await deepseek_generate(
+                    **llm_args, api_key=settings.deepseek_api_key, model=settings.deepseek_model,
+                )
+                if result is not None:
+                    result["source"] = "deepseek"
+                    result["news_sentiment"] = news_sentiment
+                    logger.info(
+                        "TUNING_ADVISOR [deepseek]: %d suggestions | confidence=%.0f%% | risk=%s | sentiment=%.2f",
+                        len(result["changes"]), result["confidence"] * 100, result["risk_level"],
+                        sentiment_score,
+                    )
+                    return result
+                logger.warning("TUNING_ADVISOR: DeepSeek returned None, trying Ollama")
+            except Exception:
+                logger.exception("TUNING_ADVISOR: DeepSeek failed, trying Ollama")
+
+        # 2. Try Ollama local (slower, free, offline)
         ollama_available = await check_ollama(settings.ollama_url)
         if ollama_available:
             try:
-                result = await generate_suggestions(
-                    perf=perf,
-                    guardrails_status=guardrails_status,
-                    guardrails_config=guardrails_config,
-                    regime_snapshot=regime_snapshot,
-                    ollama_url=settings.ollama_url,
-                    model=settings.ollama_model,
-                    news_sentiment=news_sentiment,
+                result = await ollama_generate(
+                    **llm_args, ollama_url=settings.ollama_url, model=settings.ollama_model,
                 )
                 if result is not None:
                     result["source"] = "ollama"
@@ -221,15 +239,12 @@ class LLMAdvisor:
                     return result
                 logger.warning("TUNING_ADVISOR: Ollama returned None, falling back to rules")
             except Exception:
-                logger.exception("TUNING_ADVISOR: Ollama call failed, falling back to rules")
-        else:
-            logger.debug("TUNING_ADVISOR: Ollama not available at %s, using rules", settings.ollama_url)
+                logger.exception("TUNING_ADVISOR: Ollama failed, falling back to rules")
 
-        # Fallback: rule-based engine
+        # 3. Fallback: rule-based engine
         result = self._rule_based_suggestions(perf, guardrails_status, guardrails_config, regime_snapshot)
         result["news_sentiment"] = news_sentiment
 
-        # Rules: reduce confidence if sentiment is mildly bearish
         if news_sentiment and news_sentiment.get("available") and sentiment_score < -0.1 and result["changes"]:
             result["confidence"] = max(result["confidence"] - 0.2, 0.1)
             result["reasoning"] += f" (confidence reduced: news sentiment {sentiment_score:.2f})"
