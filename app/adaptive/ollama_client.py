@@ -57,7 +57,7 @@ USER_PROMPT_TEMPLATE = """Crypto bot guardrails tuning. Suggest small safe param
 
 Metrics: regime={global_regime} profile={active_profile} WR={win_rate:.0f}% CL={consecutive_losses} DD={drawdown:.2f}% PnL24h={pnl_24h:.2f} TPH={trades_per_hour:.2f} blocked={total_blocked} passed={total_passed} block_rate={block_rate:.0f}% top_block={top_block_source}
 
-Config ({gate_regime}): min_adx={current_adx} min_vol={current_volume} min_bb={current_bb} base_score={current_base_score} max_cap={current_max_cap}
+Config ({gate_regime}): min_adx={current_adx} min_vol={current_volume} min_bb={current_bb} base_score={current_base_score} max_cap={current_max_cap} effective_min={effective_min_score} blocked_score={blocked_score_count} blocked_gate={blocked_gate_count}
 
 Symbols: {symbol_regimes}
 
@@ -155,6 +155,9 @@ async def generate_suggestions(
         current_bb=gate_cfg.get("min_bb_width_pct", 0),
         current_base_score=ds_cfg.get("base_min_score", 80),
         current_max_cap=ds_cfg.get("max_score_cap", 95),
+        effective_min_score=guardrails_status.get("dynamic_score_min", 80),
+        blocked_score_count=stats.get("blocked_dynamic_score", 0),
+        blocked_gate_count=stats.get("blocked_trade_gate", 0),
         symbol_regimes=symbol_regimes,
         news_section=news_section,
     )

@@ -545,8 +545,8 @@ class TradingEngine:
                                 symbol, reason, user.id)
                     return
 
-                sl = self.risk_manager.calculate_stop_loss(current_price)
-                tp = self.risk_manager.calculate_take_profit(current_price)
+                sl = self._round_price(symbol, self.risk_manager.calculate_stop_loss(current_price))
+                tp = self._round_price(symbol, self.risk_manager.calculate_take_profit(current_price))
                 order = await order_mgr.place_market_order(db, symbol, "BUY", qty)
                 if order.status != OrderStatus.FILLED:
                     logger.warning("User %d [paper/testnet]: BUY not filled, skip", user.id)
@@ -664,8 +664,8 @@ class TradingEngine:
                 logger.info("ORDER_VALIDATION: skipped BUY %s | %s [user=%d paper/sim]",
                             symbol, reason, user.id)
                 return
-            sl = self.risk_manager.calculate_stop_loss(current_price)
-            tp = self.risk_manager.calculate_take_profit(current_price)
+            sl = self._round_price(symbol, self.risk_manager.calculate_stop_loss(current_price))
+            tp = self._round_price(symbol, self.risk_manager.calculate_take_profit(current_price))
             self.paper_portfolio.open_position(db, user.id, symbol, qty, current_price, sl, tp)
             self._last_trade_time[cooldown_key] = datetime.now(timezone.utc)
             self.guardrails.entry_throttle.record_entry(symbol)
@@ -758,14 +758,17 @@ class TradingEngine:
             logger.exception("Failed to load filters for %s, using defaults", symbol)
 
     def _parse_symbol_filters(self, sym_info: dict):
-        """Extract LOT_SIZE and MIN_NOTIONAL from a single symbol's exchangeInfo entry."""
+        """Extract LOT_SIZE, PRICE_FILTER, and MIN_NOTIONAL from exchangeInfo."""
         sym = sym_info["symbol"]
-        filt = {"step_size": 0.0001, "min_qty": 0.0001, "max_qty": 99999999.0, "min_notional": 10.0}
+        filt = {"step_size": 0.0001, "min_qty": 0.0001, "max_qty": 99999999.0,
+                "min_notional": 10.0, "tick_size": 0.01}
         for f in sym_info.get("filters", []):
             if f["filterType"] == "LOT_SIZE":
                 filt["step_size"] = float(f["stepSize"])
                 filt["min_qty"] = float(f["minQty"])
                 filt["max_qty"] = float(f["maxQty"])
+            elif f["filterType"] == "PRICE_FILTER":
+                filt["tick_size"] = float(f.get("tickSize", 0.01))
             elif f["filterType"] == "NOTIONAL":
                 filt["min_notional"] = float(f.get("minNotional", 10.0))
             elif f["filterType"] == "MIN_NOTIONAL":
@@ -782,6 +785,16 @@ class TradingEngine:
             return round(qty, 4)
         # Floor to step_size multiple (never round UP — Binance rejects overshoot)
         return math.floor(qty / step) * step
+
+    def _round_price(self, symbol: str, price: float) -> float:
+        """Round price to Binance-allowed tick size."""
+        filt = self._symbol_filters.get(symbol)
+        if not filt:
+            return round(price, 2)
+        tick = filt.get("tick_size", 0.01)
+        if tick <= 0:
+            return round(price, 2)
+        return round(math.floor(price / tick) * tick, 8)
 
     def _validate_qty(self, symbol: str, qty: float, price: float) -> tuple[bool, str]:
         """
@@ -855,8 +868,8 @@ class TradingEngine:
                                 signal.symbol, reason, user.id)
                     return
 
-                sl = self.risk_manager.calculate_stop_loss(signal.price)
-                tp = self.risk_manager.calculate_take_profit(signal.price)
+                sl = self._round_price(signal.symbol, self.risk_manager.calculate_stop_loss(signal.price))
+                tp = self._round_price(signal.symbol, self.risk_manager.calculate_take_profit(signal.price))
                 order = await order_mgr.place_market_order(db, signal.symbol, "BUY", qty)
                 if order.status != OrderStatus.FILLED:
                     logger.warning("User %d: BUY order not filled, skipping trade", user.id)
@@ -973,11 +986,8 @@ class TradingEngine:
             if regime_svc:
                 global_regime = regime_svc.global_regime()
 
-            # Update guardrails with performance (compute fresh if no snapshot yet)
+            # Update guardrails with latest performance snapshot (computed by meta_controller)
             if self.meta_controller:
-                if not self.meta_controller.perf_monitor.snapshot:
-                    # First cycle: compute perf now so guardrails have data
-                    self.meta_controller.perf_monitor.compute(db)
                 if self.meta_controller.perf_monitor.snapshot:
                     perf_dict = self.meta_controller.perf_monitor.snapshot.to_dict()
                     perf_dict["global_regime"] = global_regime

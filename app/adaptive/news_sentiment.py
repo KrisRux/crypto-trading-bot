@@ -126,6 +126,7 @@ class NewsSentimentService:
             return self._snapshot
 
         new_headlines: list[Headline] = []
+        failed_feeds = 0
         cutoff = datetime.now(timezone.utc) - timedelta(hours=self._max_age_hours)
 
         for feed_url in self._feeds:
@@ -161,7 +162,15 @@ class NewsSentimentService:
                         relevance=relevance,
                     ))
             except Exception:
+                failed_feeds += 1
                 logger.debug("NEWS_SENTIMENT: failed to fetch %s", feed_url)
+
+        # If most feeds failed, mark as unavailable
+        if failed_feeds >= len(self._feeds) * 0.8:
+            logger.warning("NEWS_SENTIMENT: %d/%d feeds failed, marking unavailable", failed_feeds, len(self._feeds))
+            self._snapshot = SentimentSnapshot(available=False, last_updated=datetime.now(timezone.utc).isoformat())
+            self._last_fetch = datetime.now(timezone.utc)
+            return self._snapshot
 
         # Merge and deduplicate by title similarity
         seen_titles = set()

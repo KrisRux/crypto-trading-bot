@@ -245,6 +245,16 @@ class TestDynamicScore:
         ds = DynamicScoreFilter(_default_cfg())
         assert ds.get_min_score(0, "range") == 85  # 80 + 5
 
+    def test_bad_regime_skipped_for_trend_symbol(self):
+        """Symbol in trend should NOT get the +5 penalty even if global is range."""
+        ds = DynamicScoreFilter(_default_cfg())
+        # global=range, symbol=trend → no penalty
+        assert ds.get_min_score(0, "range", symbol_regime="trend") == 80
+        # global=range, symbol=range → penalty
+        assert ds.get_min_score(0, "range", symbol_regime="range") == 85
+        # global=range, symbol not provided → penalty (backward compat)
+        assert ds.get_min_score(0, "range") == 85
+
     def test_combined_capped_at_95(self):
         ds = DynamicScoreFilter(_default_cfg())
         # 92 + 5 = 97 -> cap at 95

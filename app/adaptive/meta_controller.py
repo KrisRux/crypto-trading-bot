@@ -15,7 +15,7 @@ directly. All parameter changes go through ProfileManager.apply_profile().
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from sqlalchemy.orm import Session
@@ -54,10 +54,11 @@ class MetaController:
 
         self._last_global_regime: str | None = None
         self._daily_summary_sent: str | None = None
-        # Avoid spamming: track whether alert was already sent this "episode"
+        # Avoid spamming: track alert state + silence period
         self._drawdown_alerted: bool = False
         self._consec_losses_alerted: bool = False
         self._api_errors_alerted: bool = False
+        self._alert_silenced_until: dict[str, datetime] = {}  # alert_key → silence_until
 
         logger.info(
             "MetaController initialized (profile=%s, telegram=%s)",
@@ -109,31 +110,36 @@ class MetaController:
             perf_snap = self.perf_monitor.compute(db)
             perf_dict = perf_snap.to_dict()
 
-            # HIGH notifications — send once per episode, reset when condition clears
+            # HIGH notifications — once per episode + 30min silence to avoid oscillation spam
+            now = datetime.now(timezone.utc)
+
             if perf_snap.drawdown_intraday >= 1.5:
-                if not self._drawdown_alerted:
+                if not self._drawdown_alerted and now >= self._alert_silenced_until.get("dd", now):
                     await self.notifier.notify_drawdown_breach(
                         perf_snap.drawdown_intraday, 1.5, chat_ids=chat_ids,
                     )
                     self._drawdown_alerted = True
+                    self._alert_silenced_until["dd"] = now + timedelta(minutes=30)
             else:
                 self._drawdown_alerted = False
 
             if perf_snap.consecutive_losses >= 3:
-                if not self._consec_losses_alerted:
+                if not self._consec_losses_alerted and now >= self._alert_silenced_until.get("cl", now):
                     await self.notifier.notify_consecutive_losses(
                         perf_snap.consecutive_losses, chat_ids=chat_ids,
                     )
                     self._consec_losses_alerted = True
+                    self._alert_silenced_until["cl"] = now + timedelta(minutes=30)
             else:
                 self._consec_losses_alerted = False
 
             if perf_snap.api_error_count >= 5:
-                if not self._api_errors_alerted:
+                if not self._api_errors_alerted and now >= self._alert_silenced_until.get("api", now):
                     await self.notifier.notify_api_errors(
                         perf_snap.api_error_count, chat_ids=chat_ids,
                     )
                     self._api_errors_alerted = True
+                    self._alert_silenced_until["api"] = now + timedelta(minutes=30)
             else:
                 self._api_errors_alerted = False
 

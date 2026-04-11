@@ -71,6 +71,7 @@ def login(body: LoginRequest, response: Response, db: Session = Depends(get_db))
         value=token,
         httponly=True,
         samesite="lax",
+        secure=settings.frontend_url.startswith("https"),
         max_age=expires_in,
         path="/api",
     )
@@ -546,6 +547,7 @@ def get_signals(_user: dict = Depends(require_auth)):
 def tail_logs(lines: int = 200, _admin: dict = Depends(require_admin)):
     """Return the last N lines of the application log file (admin only)."""
     import os
+    lines = min(lines, 10000)  # cap to prevent OOM
     log_file = "logs/trading_bot.log"
     if not os.path.exists(log_file):
         raise HTTPException(404, "Log file not found")

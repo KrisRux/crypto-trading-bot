@@ -73,6 +73,9 @@ USER_PROMPT_TEMPLATE = """Analyze this crypto trading bot state and suggest guar
 - min_bb_width_pct: {current_bb}
 - base_min_score: {current_base_score}
 - max_score_cap: {current_max_cap}
+- EFFECTIVE dynamic_score_min (after losses+regime penalty): {effective_min_score}
+- Blocked by dynamic_score: {blocked_score_count}
+- Blocked by trade_gate: {blocked_gate_count}
 
 ## Per-Symbol Market Data
 {symbol_regimes}
@@ -172,6 +175,9 @@ async def generate_suggestions(
         current_bb=gate_cfg.get("min_bb_width_pct", 0),
         current_base_score=ds_cfg.get("base_min_score", 80),
         current_max_cap=ds_cfg.get("max_score_cap", 95),
+        effective_min_score=guardrails_status.get("dynamic_score_min", 80),
+        blocked_score_count=stats.get("blocked_dynamic_score", 0),
+        blocked_gate_count=stats.get("blocked_trade_gate", 0),
         symbol_regimes=symbol_regimes,
         news_section=news_section,
     )

@@ -7,6 +7,7 @@ awareness. Supports both the live API and the testnet.
 Reference: https://binance-docs.github.io/apidocs/spot/en/
 """
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -63,23 +64,45 @@ class BinanceRestClient:
     # ------------------------------------------------------------------
 
     async def _request(self, method: str, path: str, params: dict | None = None,
-                       signed: bool = False) -> dict:
+                       signed: bool = False, retries: int = 0) -> dict:
         params = params or {}
         if signed:
             params = self._sign(params)
-        try:
-            resp = await self._client.request(method, path, params=params)
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError as exc:
-            logger.error("Binance API error %s %s: %s", method, path, exc.response.text)
-            raise
-        except httpx.RequestError as exc:
-            logger.error("Network error calling Binance: %s", exc)
-            raise
+        last_exc = None
+        attempts = 1 + retries
+        for attempt in range(attempts):
+            try:
+                resp = await self._client.request(method, path, params=params)
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                # Retry on 429 (rate limit) or 5xx (server error), not on 4xx client errors
+                if status in (429, 502, 503) and attempt < attempts - 1:
+                    delay = (2 ** attempt)  # 1s, 2s, 4s
+                    logger.warning("Binance %s %s: HTTP %d, retrying in %ds (%d/%d)",
+                                   method, path, status, delay, attempt + 1, attempts)
+                    last_exc = exc
+                    await asyncio.sleep(delay)
+                    if signed:
+                        params = self._sign({k: v for k, v in params.items() if k not in ("timestamp", "signature")})
+                    continue
+                logger.error("Binance API error %s %s: %s", method, path, exc.response.text)
+                raise
+            except (httpx.RequestError, httpx.TimeoutException) as exc:
+                if attempt < attempts - 1:
+                    delay = (2 ** attempt)
+                    logger.warning("Binance %s %s: %s, retrying in %ds (%d/%d)",
+                                   method, path, type(exc).__name__, delay, attempt + 1, attempts)
+                    last_exc = exc
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error("Network error calling Binance: %s", exc)
+                raise
+        raise last_exc  # should not reach here
 
     async def get(self, path: str, params: dict | None = None, signed: bool = False):
-        return await self._request("GET", path, params, signed)
+        return await self._request("GET", path, params, signed, retries=2)
 
     async def post(self, path: str, params: dict | None = None, signed: bool = False):
         return await self._request("POST", path, params, signed)

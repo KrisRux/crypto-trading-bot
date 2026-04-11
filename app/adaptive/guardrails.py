@@ -356,7 +356,8 @@ class DynamicScoreFilter:
         self.bad_regimes = set(c.get("bad_regimes", ["range", "defensive"]))
         self.max_cap = c.get("max_score_cap", 95)
 
-    def get_min_score(self, consecutive_losses: int, global_regime: str) -> float:
+    def get_min_score(self, consecutive_losses: int, global_regime: str,
+                      symbol_regime: str = "") -> float:
         """Compute the minimum score threshold given current conditions."""
         if consecutive_losses >= 5:
             score = self.after_5
@@ -365,26 +366,32 @@ class DynamicScoreFilter:
         else:
             score = self.base_min
 
+        # Apply bad-regime penalty ONLY if the symbol itself is also in a bad regime.
+        # A trending symbol (symbol_regime="trend") should not be penalized just because
+        # the global market is range/defensive.
         if global_regime in self.bad_regimes:
-            score += self.extra_bad_regime
+            if not symbol_regime or symbol_regime in self.bad_regimes:
+                score += self.extra_bad_regime
+            # else: symbol is trending locally → skip penalty
 
         return min(score, self.max_cap)
 
     def check(self, signal_score: float | None, consecutive_losses: int,
-              global_regime: str, symbol: str, strategy_name: str) -> TradeVerdict:
+              global_regime: str, symbol: str, strategy_name: str,
+              symbol_regime: str = "") -> TradeVerdict:
         """Check if the signal score meets the dynamic threshold."""
         if signal_score is None:
             # Strategy doesn't produce scores — pass through
             return TradeVerdict(allowed=True)
 
-        min_score = self.get_min_score(consecutive_losses, global_regime)
+        min_score = self.get_min_score(consecutive_losses, global_regime, symbol_regime)
 
         if signal_score < min_score:
             reason = "dynamic_score_too_low"
             logger.info(
                 "DYNAMIC_SCORE: blocked | symbol=%s | strategy=%s | score=%.0f < min=%.0f "
-                "(consec_losses=%d, regime=%s)",
-                symbol, strategy_name, signal_score, min_score, consecutive_losses, global_regime,
+                "(consec_losses=%d, global=%s, symbol=%s)",
+                symbol, strategy_name, signal_score, min_score, consecutive_losses, global_regime, symbol_regime,
             )
             return TradeVerdict(allowed=False, reason=reason,
                                 details={"score": signal_score, "min_score": min_score,
@@ -727,6 +734,7 @@ class Guardrails:
             global_regime=global_regime,
             symbol=symbol,
             strategy_name=strategy_name,
+            symbol_regime=symbol_regime,
         )
         if not v.allowed:
             self.stats.blocked_dynamic_score += 1
