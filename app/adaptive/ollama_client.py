@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_URL = "http://localhost:11434"
 DEFAULT_MODEL = "mistral"
-TIMEOUT_SECONDS = 90
+TIMEOUT_SECONDS = 180
 
 # Safety caps enforced after LLM response (never trust raw LLM output)
 SAFETY_LIMITS = {
@@ -53,45 +53,18 @@ RULES YOU MUST FOLLOW:
 - Each suggestion MUST have a clear reason
 - You MUST respond with valid JSON only, no markdown, no explanation outside JSON"""
 
-USER_PROMPT_TEMPLATE = """Analyze this trading bot state and suggest guardrails parameter adjustments.
+USER_PROMPT_TEMPLATE = """Crypto bot guardrails tuning. Suggest small safe parameter changes.
 
-## Current Metrics
-- Global regime: {global_regime}
-- Active profile: {active_profile}
-- Win rate (last 10): {win_rate:.1f}%
-- Consecutive losses: {consecutive_losses}
-- Drawdown intraday: {drawdown:.2f}%
-- PnL 24h: {pnl_24h:.2f} USDT
-- Trades per hour: {trades_per_hour:.2f}
-- Total blocked: {total_blocked}
-- Total passed: {total_passed}
-- Block rate: {block_rate:.0f}%
-- Top block source: {top_block_source}
+Metrics: regime={global_regime} profile={active_profile} WR={win_rate:.0f}% CL={consecutive_losses} DD={drawdown:.2f}% PnL24h={pnl_24h:.2f} TPH={trades_per_hour:.2f} blocked={total_blocked} passed={total_passed} block_rate={block_rate:.0f}% top_block={top_block_source}
 
-## Current Guardrails Config (trade_gate for {gate_regime} regime)
-- min_adx: {current_adx}
-- min_volume_ratio: {current_volume}
-- min_bb_width_pct: {current_bb}
+Config ({gate_regime}): min_adx={current_adx} min_vol={current_volume} min_bb={current_bb} base_score={current_base_score} max_cap={current_max_cap}
 
-## Dynamic Score Config
-- base_min_score: {current_base_score}
-- max_score_cap: {current_max_cap}
+Symbols: {symbol_regimes}
 
-## Per-Symbol Regimes
-{symbol_regimes}
+News: {news_section}
 
-## News Sentiment
-{news_section}
-
-Respond with this exact JSON structure:
-{{
-  "changes": [
-    {{"path": "trade_gate.{gate_regime}.min_adx", "from": {current_adx}, "to": <new_value>, "reason": "<why>"}},
-  ],
-  "reasoning": "<1-2 sentence overall explanation>",
-  "confidence": <0.0 to 1.0>,
-  "risk_level": "<low|medium|high>"
-}}
+Respond JSON only:
+{{"changes":[{{"path":"<dotpath>","from":<old>,"to":<new>,"reason":"<short>"}}],"reasoning":"<1 sentence>","confidence":<0-1>,"risk_level":"<low|medium|high>"}}
 
 If no changes needed, respond: {{"changes": [], "reasoning": "<why no changes>", "confidence": 0.0, "risk_level": "low"}}"""
 
@@ -197,7 +170,7 @@ async def generate_suggestions(
                     "system": SYSTEM_PROMPT,
                     "stream": False,
                     "format": "json",
-                    "options": {"temperature": 0.3, "num_predict": 512},
+                    "options": {"temperature": 0.3, "num_predict": 256},
                 },
             )
             if resp.status_code != 200:
