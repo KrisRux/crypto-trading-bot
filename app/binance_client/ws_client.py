@@ -48,11 +48,13 @@ class BinanceWebSocket:
 
     async def start(self, streams: list[str]):
         """
-        Connect to combined streams.
+        Connect to combined streams via Binance combined stream endpoint.
         streams example: ["btcusdt@trade", "btcusdt@kline_1m"]
         """
         self._running = True
-        url = f"{self.base_url}/{'/'.join(streams)}"
+        # Use Binance combined stream endpoint (more stable than path-based)
+        base = self.base_url.replace("/ws", "/stream")
+        url = f"{base}?streams={'/'.join(streams)}"
         self._task = asyncio.create_task(self._listen(url))
         logger.info("WebSocket started for streams: %s", streams)
 
@@ -61,21 +63,36 @@ class BinanceWebSocket:
             try:
                 async with websockets.connect(
                     url,
-                    ping_interval=10,
-                    ping_timeout=5,
+                    ping_interval=None,  # disable library ping — we send pings manually
                     close_timeout=10,
                 ) as ws:
                     self._ws = ws
-                    self._reconnect_delay = _INITIAL_DELAY  # reset on successful connect
+                    self._reconnect_delay = _INITIAL_DELAY
                     self._connected_since = datetime.now(timezone.utc)
                     logger.info("WebSocket connected: %s", url)
-                    async for raw in ws:
-                        msg = json.loads(raw)
-                        for cb in self._callbacks:
+
+                    # Manual keepalive: send ping every 15s to keep NAT alive
+                    async def _keepalive():
+                        while True:
+                            await asyncio.sleep(15)
                             try:
-                                await cb(msg) if asyncio.iscoroutinefunction(cb) else cb(msg)
+                                pong = await ws.ping()
+                                await asyncio.wait_for(pong, timeout=5)
                             except Exception:
-                                logger.exception("Error in WebSocket callback")
+                                break  # connection lost — outer loop will reconnect
+
+                    keepalive_task = asyncio.create_task(_keepalive())
+                    try:
+                        async for raw in ws:
+                            payload = json.loads(raw)
+                            msg = payload.get("data", payload)
+                            for cb in self._callbacks:
+                                try:
+                                    await cb(msg) if asyncio.iscoroutinefunction(cb) else cb(msg)
+                                except Exception:
+                                    logger.exception("Error in WebSocket callback")
+                    finally:
+                        keepalive_task.cancel()
             except websockets.ConnectionClosed as e:
                 self._reconnect_count += 1
                 uptime = ""
