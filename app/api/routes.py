@@ -902,6 +902,215 @@ def reset_guardrails_config(admin: dict = Depends(require_admin)):
     return {"ok": True, "config": defaults}
 
 
+# ------------------------------------------------------------------ AI Tuning Advisor
+
+@router.get("/adaptive/tuning/suggestions")
+def get_tuning_suggestions(db: Session = Depends(get_db), _admin: dict = Depends(require_admin)):
+    """Generate fresh tuning suggestions based on current state (admin only)."""
+    import json as _json
+    mc = get_meta_controller()
+    engine = get_engine()
+
+    perf = mc.perf_monitor.snapshot.to_dict() if mc.perf_monitor.snapshot else {}
+    regime = mc.regime_service.global_snapshot()
+    guardrails_status = engine.guardrails.status()
+
+    # Read current guardrails config
+    import os
+    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
+    try:
+        with open(config_path, "r") as f:
+            guardrails_config = _json.load(f)
+    except Exception:
+        guardrails_config = {}
+
+    result = mc.advisor.generate_tuning_suggestions(
+        perf=perf,
+        guardrails_status=guardrails_status,
+        guardrails_config=guardrails_config,
+        regime_snapshot=regime,
+    )
+
+    return {
+        "suggestions": result,
+        "snapshot": {
+            "global_regime": regime.get("global_regime", "unknown"),
+            "active_profile": mc.profile_manager.active_profile,
+            **perf,
+            "total_blocked": guardrails_status.get("stats", {}).get("total_blocked", 0),
+            "total_passed": guardrails_status.get("stats", {}).get("total_passed", 0),
+        },
+    }
+
+
+@router.post("/adaptive/tuning/suggestions/{suggestion_id}/apply")
+def apply_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
+                            admin: dict = Depends(require_admin)):
+    """Apply a saved tuning suggestion to guardrails config (admin only)."""
+    import json as _json, os, tempfile
+    from app.models.tuning_suggestion import TuningSuggestion
+
+    suggestion = db.query(TuningSuggestion).filter(TuningSuggestion.id == suggestion_id).first()
+    if not suggestion:
+        raise HTTPException(404, "Suggestion not found")
+    if suggestion.status != "new":
+        raise HTTPException(400, f"Suggestion already {suggestion.status}")
+
+    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
+    try:
+        with open(config_path, "r") as f:
+            config = _json.load(f)
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to read config: {exc}")
+
+    # Apply changes
+    changes = _json.loads(suggestion.changes_json or "[]")
+    for change in changes:
+        parts = change["path"].split(".")
+        obj = config
+        for p in parts[:-1]:
+            obj = obj.setdefault(p, {})
+        obj[parts[-1]] = change["to"]
+
+    # Validate
+    val_errors = validate_guardrails_values(config)
+    if val_errors:
+        raise HTTPException(400, f"Validation errors: {'; '.join(val_errors)}")
+
+    # Atomic write
+    config_dir = os.path.dirname(config_path)
+    fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".json")
+    with os.fdopen(fd, "w") as f:
+        _json.dump(config, f, indent=2)
+    os.replace(tmp_path, config_path)
+
+    # Hot-reload
+    engine = get_engine()
+    engine.guardrails.reload_config()
+
+    # Mark as applied
+    from datetime import datetime
+    suggestion.status = "applied"
+    suggestion.resolved_at = datetime.utcnow()
+    suggestion.resolved_by = admin.get("username", "unknown")
+    db.commit()
+
+    username = admin.get("username", "unknown")
+    logger.info(
+        "GUARDRAILS_AUDIT: user=%s | action=apply_tuning_suggestion #%d | changes=%s",
+        username, suggestion_id,
+        " | ".join(f"{c['path']}: {c['from']}→{c['to']}" for c in changes),
+    )
+    return {"ok": True, "applied_changes": changes}
+
+
+@router.post("/adaptive/tuning/suggestions/{suggestion_id}/reject")
+def reject_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
+                             admin: dict = Depends(require_admin)):
+    """Reject a tuning suggestion (admin only)."""
+    from app.models.tuning_suggestion import TuningSuggestion
+    from datetime import datetime
+
+    suggestion = db.query(TuningSuggestion).filter(TuningSuggestion.id == suggestion_id).first()
+    if not suggestion:
+        raise HTTPException(404, "Suggestion not found")
+    if suggestion.status != "new":
+        raise HTTPException(400, f"Suggestion already {suggestion.status}")
+
+    suggestion.status = "rejected"
+    suggestion.resolved_at = datetime.utcnow()
+    suggestion.resolved_by = admin.get("username", "unknown")
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/adaptive/tuning/generate")
+def generate_and_save_suggestion(db: Session = Depends(get_db),
+                                 admin: dict = Depends(require_admin)):
+    """Generate a tuning suggestion and save it to DB (admin only)."""
+    import json as _json, os
+    from app.models.tuning_suggestion import TuningSuggestion
+
+    mc = get_meta_controller()
+    engine = get_engine()
+
+    perf = mc.perf_monitor.snapshot.to_dict() if mc.perf_monitor.snapshot else {}
+    regime = mc.regime_service.global_snapshot()
+    guardrails_status = engine.guardrails.status()
+
+    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
+    try:
+        with open(config_path, "r") as f:
+            guardrails_config = _json.load(f)
+    except Exception:
+        guardrails_config = {}
+
+    result = mc.advisor.generate_tuning_suggestions(
+        perf=perf,
+        guardrails_status=guardrails_status,
+        guardrails_config=guardrails_config,
+        regime_snapshot=regime,
+    )
+
+    if not result["changes"]:
+        return {"ok": True, "suggestion": None, "reasoning": result["reasoning"]}
+
+    suggestion = TuningSuggestion(
+        global_regime=regime.get("global_regime", "unknown"),
+        active_profile=mc.profile_manager.active_profile,
+        consecutive_losses=perf.get("consecutive_losses", 0),
+        win_rate=perf.get("win_rate_last_10", 0),
+        drawdown=perf.get("drawdown_intraday", 0),
+        trades_per_hour=perf.get("trades_per_hour", 0),
+        total_blocked=guardrails_status.get("stats", {}).get("total_blocked", 0),
+        total_passed=guardrails_status.get("stats", {}).get("total_passed", 0),
+        changes_json=_json.dumps(result["changes"]),
+        reasoning=result["reasoning"],
+        confidence=result["confidence"],
+        risk_level=result["risk_level"],
+    )
+    db.add(suggestion)
+    db.commit()
+    db.refresh(suggestion)
+
+    return {
+        "ok": True,
+        "suggestion": {
+            "id": suggestion.id,
+            "changes": result["changes"],
+            "reasoning": result["reasoning"],
+            "confidence": result["confidence"],
+            "risk_level": result["risk_level"],
+            "created_at": str(suggestion.created_at),
+        },
+    }
+
+
+@router.get("/adaptive/tuning/history")
+def get_tuning_history(limit: int = 20, db: Session = Depends(get_db),
+                       _admin: dict = Depends(require_admin)):
+    """Return recent tuning suggestions from DB (admin only)."""
+    import json as _json
+    from app.models.tuning_suggestion import TuningSuggestion
+
+    rows = db.query(TuningSuggestion).order_by(TuningSuggestion.created_at.desc()).limit(limit).all()
+    return [
+        {
+            "id": r.id, "status": r.status, "created_at": str(r.created_at),
+            "global_regime": r.global_regime, "active_profile": r.active_profile,
+            "consecutive_losses": r.consecutive_losses, "win_rate": r.win_rate,
+            "drawdown": r.drawdown, "trades_per_hour": r.trades_per_hour,
+            "total_blocked": r.total_blocked, "total_passed": r.total_passed,
+            "changes": _json.loads(r.changes_json or "[]"),
+            "reasoning": r.reasoning, "confidence": r.confidence,
+            "risk_level": r.risk_level,
+            "resolved_at": str(r.resolved_at) if r.resolved_at else None,
+            "resolved_by": r.resolved_by,
+        }
+        for r in rows
+    ]
+
+
 @router.get("/adaptive/profiles")
 def list_profiles(_user: dict = Depends(require_auth)):
     """Return all available profiles and the active one."""

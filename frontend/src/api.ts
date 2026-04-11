@@ -172,6 +172,26 @@ export interface AssetItem {
   value_usdt: number
 }
 
+export interface TuningSuggestionItem {
+  id: number
+  status: string
+  created_at: string
+  global_regime: string
+  active_profile: string
+  consecutive_losses: number
+  win_rate: number
+  drawdown: number
+  trades_per_hour: number
+  total_blocked: number
+  total_passed: number
+  changes: { path: string; from: unknown; to: unknown; reason: string }[]
+  reasoning: string
+  confidence: number
+  risk_level: string
+  resolved_at: string | null
+  resolved_by: string | null
+}
+
 export interface DiagEvent {
   ts: string | null
   type: string
@@ -272,6 +292,13 @@ export const api = {
     request<SkillItem[]>(category ? `/skills?category=${category}` : '/skills'),
   getSkill: (name: string) => request<SkillItem>(`/skills/${name}`),
   getAdaptiveStatus: () => request<AdaptiveStatus>('/adaptive/status'),
+  generateTuningSuggestion: () =>
+    request<{ ok: boolean; suggestion: TuningSuggestionItem | null; reasoning?: string }>('/adaptive/tuning/generate', { method: 'POST' }),
+  getTuningHistory: () => request<TuningSuggestionItem[]>('/adaptive/tuning/history'),
+  applyTuningSuggestion: (id: number) =>
+    request<{ ok: boolean; applied_changes: unknown[] }>(`/adaptive/tuning/suggestions/${id}/apply`, { method: 'POST' }),
+  rejectTuningSuggestion: (id: number) =>
+    request<{ ok: boolean }>(`/adaptive/tuning/suggestions/${id}/reject`, { method: 'POST' }),
   getDiagnostics: () => request<DiagnosticsData>('/diagnostics'),
   getGuardrailsConfig: () => request<Record<string, unknown>>('/adaptive/guardrails/config'),
   updateGuardrailsConfig: (config: Record<string, unknown>) =>

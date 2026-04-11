@@ -46,7 +46,7 @@ def _migrate_add_columns(eng, table: str, columns: list[tuple[str, str]]):
 
 def init_db():
     """Create all tables, seed admin user, and seed default symbols if needed."""
-    from app.models import trade, portfolio, user, symbol, approval  # noqa: F401
+    from app.models import trade, portfolio, user, symbol, approval, tuning_suggestion  # noqa: F401
     from app.models.user import User, hash_password
     from app.models.symbol import TradingSymbol
     from app.config import settings

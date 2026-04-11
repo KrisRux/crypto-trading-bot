@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, AdaptiveStatus } from '../api'
+import { api, AdaptiveStatus, TuningSuggestionItem } from '../api'
 import { useLang } from '../hooks/useLang'
 import { usePolling } from '../hooks/usePolling'
 import StatCard from '../components/StatCard'
@@ -491,6 +491,22 @@ export default function GuardrailsConfig() {
         )
       })}
 
+      {/* ── AI Tuning Advisor ── */}
+      <TuningAdvisorSection onApplyChanges={(changes) => {
+        if (!draft) return
+        let next = JSON.parse(JSON.stringify(draft)) as Cfg
+        for (const c of changes) {
+          const parts = (c.path as string).split('.')
+          let obj: Cfg = next
+          for (let i = 0; i < parts.length - 1; i++) {
+            if (!(parts[i] in obj)) obj[parts[i]] = {}
+            obj = obj[parts[i]] as Cfg
+          }
+          obj[parts[parts.length - 1]] = c.to
+        }
+        setDraft(next)
+      }} l={l} />
+
       {/* Action bar */}
       <div className="flex items-center gap-3 flex-wrap sticky bottom-0 bg-gray-950/95 backdrop-blur py-3 border-t border-gray-800 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
         <button
@@ -546,6 +562,193 @@ export default function GuardrailsConfig() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/* ═══════════════════════════════════════════════════════
+   AI Tuning Advisor sub-component
+   ═══════════════════════════════════════════════════════ */
+
+function TuningAdvisorSection({ onApplyChanges, l }: {
+  onApplyChanges: (changes: { path: string; from: unknown; to: unknown }[]) => void
+  l: (it: string, en: string) => string
+}) {
+  const [generating, setGenerating] = useState(false)
+  const [suggestion, setSuggestion] = useState<TuningSuggestionItem | null>(null)
+  const [noSuggestion, setNoSuggestion] = useState('')
+  const [history, setHistory] = useState<TuningSuggestionItem[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+  const [applying, setApplying] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const h = await api.getTuningHistory()
+      setHistory(h)
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => { loadHistory() }, [loadHistory])
+
+  const handleGenerate = async () => {
+    setGenerating(true)
+    setSuggestion(null)
+    setNoSuggestion('')
+    setMsg('')
+    try {
+      const res = await api.generateTuningSuggestion()
+      if (res.suggestion) {
+        setSuggestion(res.suggestion)
+      } else {
+        setNoSuggestion(res.reasoning || l('Nessun suggerimento', 'No suggestions'))
+      }
+      loadHistory()
+    } catch (e) {
+      setMsg(`Error: ${e}`)
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const handleApply = async (s: TuningSuggestionItem) => {
+    if (!confirm(l('Applicare questo suggerimento ai guardrails?', 'Apply this suggestion to guardrails?'))) return
+    setApplying(true)
+    setMsg('')
+    try {
+      await api.applyTuningSuggestion(s.id)
+      setMsg(l('Suggerimento applicato', 'Suggestion applied'))
+      setSuggestion(null)
+      loadHistory()
+      setTimeout(() => setMsg(''), 4000)
+    } catch (e) {
+      setMsg(`Error: ${e}`)
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  const handleReject = async (s: TuningSuggestionItem) => {
+    try {
+      await api.rejectTuningSuggestion(s.id)
+      setSuggestion(null)
+      loadHistory()
+    } catch { /* ignore */ }
+  }
+
+  const handlePreview = (s: TuningSuggestionItem) => {
+    onApplyChanges(s.changes)
+    setMsg(l('Valori copiati nel form — salva per applicare', 'Values copied to form — save to apply'))
+    setTimeout(() => setMsg(''), 5000)
+  }
+
+  const riskBadge = (risk: string) => {
+    const cls = risk === 'high' ? 'bg-red-900/60 text-red-300' :
+                risk === 'medium' ? 'bg-yellow-900/60 text-yellow-300' :
+                'bg-emerald-900/60 text-emerald-300'
+    return <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${cls}`}>{risk}</span>
+  }
+
+  const statusBadge = (status: string) => {
+    const cls = status === 'applied' ? 'bg-emerald-900/60 text-emerald-300' :
+                status === 'rejected' ? 'bg-red-900/60 text-red-300' :
+                'bg-blue-900/60 text-blue-300'
+    return <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${cls}`}>{status}</span>
+  }
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+      <div className="px-4 py-3 flex items-center justify-between border-b border-gray-800">
+        <div className="flex items-center gap-2">
+          <span className="w-7 h-7 rounded bg-purple-900/50 flex items-center justify-center text-xs font-bold text-purple-300">AI</span>
+          <span className="text-sm font-semibold text-white">AI Tuning Advisor</span>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => setShowHistory(!showHistory)}
+            className="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded transition-colors">
+            {l('Cronologia', 'History')} ({history.length})
+          </button>
+          <button onClick={handleGenerate} disabled={generating}
+            className="px-3 py-1 bg-purple-900/60 hover:bg-purple-800/70 border border-purple-800/50 text-purple-300 text-xs rounded transition-colors disabled:opacity-40">
+            {generating ? l('Analisi...', 'Analyzing...') : l('Genera suggerimento', 'Generate suggestion')}
+          </button>
+        </div>
+      </div>
+
+      <div className="px-4 py-3 space-y-3">
+        {msg && <div className={`text-xs px-3 py-1.5 rounded ${msg.startsWith('Error') ? 'bg-red-900/30 text-red-300' : 'bg-emerald-900/30 text-emerald-300'}`}>{msg}</div>}
+        {noSuggestion && <div className="text-xs text-gray-500 bg-gray-800 rounded px-3 py-2">{noSuggestion}</div>}
+
+        {/* Current suggestion */}
+        {suggestion && (
+          <div className="bg-gray-800/50 rounded-lg p-3 space-y-2 border border-purple-900/30">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-white">{l('Suggerimento', 'Suggestion')} #{suggestion.id}</span>
+              {riskBadge(suggestion.risk_level)}
+              <span className="text-[10px] text-gray-500">{l('Confidenza', 'Confidence')}: {(suggestion.confidence * 100).toFixed(0)}%</span>
+            </div>
+            <p className="text-xs text-gray-400">{suggestion.reasoning}</p>
+
+            {/* Changes diff */}
+            <div className="space-y-1">
+              {suggestion.changes.map((c, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs font-mono bg-gray-900 rounded px-2 py-1">
+                  <span className="text-gray-400 flex-1 truncate">{c.path}</span>
+                  <span className="text-red-400">{String(c.from)}</span>
+                  <span className="text-gray-600">&rarr;</span>
+                  <span className="text-emerald-400">{String(c.to)}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Context snapshot */}
+            <div className="flex flex-wrap gap-3 text-[10px] text-gray-600">
+              <span>Regime: {suggestion.global_regime}</span>
+              <span>WR: {suggestion.win_rate?.toFixed(0)}%</span>
+              <span>DD: {suggestion.drawdown?.toFixed(2)}%</span>
+              <span>CL: {suggestion.consecutive_losses}</span>
+              <span>Blocked: {suggestion.total_blocked}</span>
+              <span>Passed: {suggestion.total_passed}</span>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => handleApply(suggestion)} disabled={applying}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded transition-colors disabled:opacity-40">
+                {applying ? '...' : l('Applica direttamente', 'Apply directly')}
+              </button>
+              <button onClick={() => handlePreview(suggestion)}
+                className="px-3 py-1.5 bg-blue-900/60 hover:bg-blue-800/70 text-blue-300 text-xs rounded transition-colors">
+                {l('Copia nel form', 'Copy to form')}
+              </button>
+              <button onClick={() => handleReject(suggestion)}
+                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded transition-colors">
+                {l('Scarta', 'Reject')}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* History */}
+        {showHistory && history.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-[10px] text-gray-600 uppercase font-semibold">{l('Cronologia suggerimenti', 'Suggestion history')}</p>
+            {history.slice(0, 10).map(h => (
+              <div key={h.id} className="flex items-center gap-2 text-xs bg-gray-800/30 rounded px-2 py-1">
+                <span className="text-gray-600 text-[10px] w-28 shrink-0">{h.created_at?.replace('T', ' ').substring(0, 16)}</span>
+                {statusBadge(h.status)}
+                {riskBadge(h.risk_level)}
+                <span className="text-gray-500 flex-1 truncate">{h.changes.map(c => c.path).join(', ')}</span>
+                {h.resolved_by && <span className="text-gray-600 text-[10px]">{h.resolved_by}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!suggestion && !noSuggestion && !generating && history.length === 0 && (
+          <p className="text-xs text-gray-600">{l('Premi "Genera suggerimento" per analizzare lo stato attuale', 'Press "Generate suggestion" to analyze current state')}</p>
+        )}
+      </div>
     </div>
   )
 }

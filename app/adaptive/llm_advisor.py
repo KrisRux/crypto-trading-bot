@@ -8,6 +8,7 @@ Output:
   - explanation of current bot behavior
   - suggested profile (with reasoning)
   - summary of regime + performance context
+  - guardrails tuning suggestions (V1)
 
 Can be wired to an external LLM API or used as a local rule-based advisor.
 """
@@ -16,6 +17,11 @@ import logging
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+# Maximum parameter adjustment per suggestion (safety cap)
+_MAX_ADX_DELTA = 4
+_MAX_VOLUME_DELTA = 0.4
+_MAX_SCORE_DELTA = 5
 
 
 class LLMAdvisor:
@@ -135,6 +141,133 @@ class LLMAdvisor:
             return {"profile": "defensive", "confidence": 0.85}
 
         return {"profile": None, "confidence": 0.0}
+
+    def generate_tuning_suggestions(
+        self,
+        perf: dict,
+        guardrails_status: dict,
+        guardrails_config: dict,
+        regime_snapshot: dict,
+    ) -> dict:
+        """
+        Generate guardrails tuning suggestions based on current state.
+
+        Returns:
+            {
+                "changes": [{"path": str, "from": X, "to": Y, "reason": str}, ...],
+                "reasoning": str,
+                "confidence": float,  # 0.0-1.0
+                "risk_level": "low"|"medium"|"high",
+            }
+
+        Rules are conservative: never suggest changes when risk is elevated.
+        """
+        changes: list[dict] = []
+        reasons: list[str] = []
+
+        consec = perf.get("consecutive_losses", 0)
+        wr = perf.get("win_rate_last_10", 0)
+        dd = perf.get("drawdown_intraday", 0)
+        tph = perf.get("trades_per_hour", 0)
+        global_regime = regime_snapshot.get("global_regime", "unknown")
+
+        stats = guardrails_status.get("stats", {})
+        total_blocked = stats.get("total_blocked", 0)
+        total_passed = stats.get("total_passed", 0)
+        blocked_gate = stats.get("blocked_trade_gate", 0)
+        blocked_score = stats.get("blocked_dynamic_score", 0)
+
+        tg = guardrails_config.get("trade_gate", {})
+        ds = guardrails_config.get("dynamic_score", {})
+
+        # Safety: never suggest loosening when risk is elevated
+        if consec >= 4 or dd >= 1.5 or wr <= 20:
+            return {
+                "changes": [],
+                "reasoning": f"No tuning suggested: risk elevated (CL={consec}, DD={dd:.2f}%, WR={wr:.0f}%).",
+                "confidence": 0.0,
+                "risk_level": "high",
+            }
+
+        total = total_blocked + total_passed or 1
+        block_pct = total_blocked / total * 100
+
+        # Rule 1: Too many trade_gate blocks + low trade frequency → loosen ADX
+        if block_pct > 70 and tph < 0.2 and blocked_gate > blocked_score and dd < 1.0:
+            regime_key = global_regime if global_regime in tg else "range"
+            current_adx = tg.get(regime_key, {}).get("min_adx", 25)
+            new_adx = max(current_adx - min(3, _MAX_ADX_DELTA), 15)
+            if new_adx < current_adx:
+                changes.append({
+                    "path": f"trade_gate.{regime_key}.min_adx",
+                    "from": current_adx, "to": new_adx,
+                    "reason": f"Block rate {block_pct:.0f}% dominated by trade_gate, trades/h={tph:.2f}",
+                })
+                reasons.append(f"ADX threshold too strict for {regime_key} regime ({block_pct:.0f}% blocked)")
+
+            # Also check volume if regime thresholds are high
+            current_vol = tg.get(regime_key, {}).get("min_volume_ratio", 1.0)
+            if current_vol > 1.2:
+                new_vol = round(max(current_vol - min(0.3, _MAX_VOLUME_DELTA), 0.5), 1)
+                if new_vol < current_vol:
+                    changes.append({
+                        "path": f"trade_gate.{regime_key}.min_volume_ratio",
+                        "from": current_vol, "to": new_vol,
+                        "reason": f"Volume threshold {current_vol} may be filtering valid signals",
+                    })
+
+        # Rule 2: Too many dynamic_score blocks → lower base_min_score slightly
+        if blocked_score > blocked_gate and blocked_score > 5 and dd < 1.0:
+            current_score = ds.get("base_min_score", 80)
+            new_score = max(current_score - min(3, _MAX_SCORE_DELTA), 70)
+            if new_score < current_score:
+                changes.append({
+                    "path": "dynamic_score.base_min_score",
+                    "from": current_score, "to": new_score,
+                    "reason": f"Dynamic score blocked {blocked_score} signals, current min={current_score}",
+                })
+                reasons.append(f"Score filter too aggressive (blocked {blocked_score} signals)")
+
+        # Rule 3: Zero trades but signals generated → check overall gating
+        if tph == 0 and total_blocked > 10 and dd == 0 and consec <= 1:
+            # Suggest loosening the dominant blocker
+            if blocked_gate > 0 and not any(c["path"].startswith("trade_gate") for c in changes):
+                regime_key = global_regime if global_regime in tg else "range"
+                current_adx = tg.get(regime_key, {}).get("min_adx", 25)
+                new_adx = max(current_adx - 2, 15)
+                if new_adx < current_adx:
+                    changes.append({
+                        "path": f"trade_gate.{regime_key}.min_adx",
+                        "from": current_adx, "to": new_adx,
+                        "reason": "Zero trades despite available signals — bot is too restrictive",
+                    })
+                    reasons.append("Bot completely blocked: zero trades executed")
+
+        # Compute confidence and risk
+        if not changes:
+            return {
+                "changes": [],
+                "reasoning": "Current guardrails configuration appears appropriate for market conditions.",
+                "confidence": 0.0,
+                "risk_level": "low",
+            }
+
+        confidence = 0.7 if dd < 0.5 and consec <= 1 else 0.5
+        risk_level = "low" if dd < 0.5 and consec <= 1 else "medium"
+        reasoning = " ".join(reasons) if reasons else "Suggested adjustments based on guardrail block analysis."
+
+        logger.info(
+            "TUNING_ADVISOR: %d suggestions | confidence=%.0f%% | risk=%s | %s",
+            len(changes), confidence * 100, risk_level,
+            "; ".join(f"{c['path']}: {c['from']}→{c['to']}" for c in changes),
+        )
+
+        return {
+            "changes": changes,
+            "reasoning": reasoning,
+            "confidence": confidence,
+            "risk_level": risk_level,
+        }
 
     def _build_reasoning(self, regime: dict, perf: dict,
                          current: str, suggestion: dict) -> str:
