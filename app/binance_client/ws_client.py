@@ -61,8 +61,8 @@ class BinanceWebSocket:
             try:
                 async with websockets.connect(
                     url,
-                    ping_interval=30,
-                    ping_timeout=10,
+                    ping_interval=10,
+                    ping_timeout=5,
                     close_timeout=10,
                 ) as ws:
                     self._ws = ws
