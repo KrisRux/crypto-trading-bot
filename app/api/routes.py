@@ -905,7 +905,7 @@ def reset_guardrails_config(admin: dict = Depends(require_admin)):
 # ------------------------------------------------------------------ AI Tuning Advisor
 
 @router.get("/adaptive/tuning/suggestions")
-def get_tuning_suggestions(db: Session = Depends(get_db), _admin: dict = Depends(require_admin)):
+async def get_tuning_suggestions(db: Session = Depends(get_db), _admin: dict = Depends(require_admin)):
     """Generate fresh tuning suggestions based on current state (admin only)."""
     import json as _json
     mc = get_meta_controller()
@@ -924,7 +924,7 @@ def get_tuning_suggestions(db: Session = Depends(get_db), _admin: dict = Depends
     except Exception:
         guardrails_config = {}
 
-    result = mc.advisor.generate_tuning_suggestions(
+    result = await mc.advisor.generate_tuning_suggestions(
         perf=perf,
         guardrails_status=guardrails_status,
         guardrails_config=guardrails_config,
@@ -1025,8 +1025,8 @@ def reject_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
 
 
 @router.post("/adaptive/tuning/generate")
-def generate_and_save_suggestion(db: Session = Depends(get_db),
-                                 admin: dict = Depends(require_admin)):
+async def generate_and_save_suggestion(db: Session = Depends(get_db),
+                                       admin: dict = Depends(require_admin)):
     """Generate a tuning suggestion and save it to DB (admin only)."""
     import json as _json, os
     from app.models.tuning_suggestion import TuningSuggestion
@@ -1045,7 +1045,7 @@ def generate_and_save_suggestion(db: Session = Depends(get_db),
     except Exception:
         guardrails_config = {}
 
-    result = mc.advisor.generate_tuning_suggestions(
+    result = await mc.advisor.generate_tuning_suggestions(
         perf=perf,
         guardrails_status=guardrails_status,
         guardrails_config=guardrails_config,
@@ -1109,6 +1109,22 @@ def get_tuning_history(limit: int = 20, db: Session = Depends(get_db),
         }
         for r in rows
     ]
+
+
+@router.get("/adaptive/profiles")
+@router.get("/adaptive/tuning/ollama-status")
+async def ollama_status(_admin: dict = Depends(require_admin)):
+    """Check if Ollama is running and what models are available."""
+    from app.adaptive.ollama_client import check_ollama, get_available_models
+    from app.config import settings
+    available = await check_ollama(settings.ollama_url)
+    models = await get_available_models(settings.ollama_url) if available else []
+    return {
+        "available": available,
+        "url": settings.ollama_url,
+        "configured_model": settings.ollama_model,
+        "installed_models": models,
+    }
 
 
 @router.get("/adaptive/profiles")

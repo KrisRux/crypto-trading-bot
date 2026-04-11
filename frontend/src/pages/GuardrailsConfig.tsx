@@ -581,6 +581,7 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
   const [showHistory, setShowHistory] = useState(false)
   const [applying, setApplying] = useState(false)
   const [msg, setMsg] = useState('')
+  const [ollamaStatus, setOllamaStatus] = useState<{ available: boolean; configured_model: string } | null>(null)
 
   const loadHistory = useCallback(async () => {
     try {
@@ -590,6 +591,14 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
   }, [])
 
   useEffect(() => { loadHistory() }, [loadHistory])
+
+  // Check Ollama status on mount
+  useEffect(() => {
+    fetch('/api/adaptive/tuning/ollama-status', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setOllamaStatus(data) })
+      .catch(() => {})
+  }, [])
 
   const handleGenerate = async () => {
     setGenerating(true)
@@ -662,6 +671,11 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
         <div className="flex items-center gap-2">
           <span className="w-7 h-7 rounded bg-purple-900/50 flex items-center justify-center text-xs font-bold text-purple-300">AI</span>
           <span className="text-sm font-semibold text-white">AI Tuning Advisor</span>
+          {ollamaStatus && (
+            ollamaStatus.available
+              ? <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-900/60 text-emerald-300">Ollama: {ollamaStatus.configured_model}</span>
+              : <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-gray-800 text-gray-500">Ollama offline — rules mode</span>
+          )}
         </div>
         <div className="flex gap-2">
           <button onClick={() => setShowHistory(!showHistory)}

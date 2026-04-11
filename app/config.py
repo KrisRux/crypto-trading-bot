@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # Telegram notifications (bot token is server-wide; chat_id is per-user in DB)
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
 
+    # Ollama local LLM for AI Tuning Advisor (optional)
+    ollama_url: str = Field(default="http://localhost:11434", alias="OLLAMA_URL")
+    ollama_model: str = Field(default="mistral", alias="OLLAMA_MODEL")
+
     # Server
     backend_host: str = Field(default="0.0.0.0", alias="BACKEND_HOST")
     backend_port: int = Field(default=8000, alias="BACKEND_PORT")
