@@ -296,6 +296,38 @@ class LLMAdvisor:
                                     "reason": "Zero trades despite signals — bot too restrictive"})
                     reasons.append("Bot completely blocked")
 
+        # Rule 4: Dynamic score min very high (counter-independent)
+        # When consecutive losses push dynamic_score_min above base + extra,
+        # but drawdown is manageable, the effective min may be too restrictive
+        effective_min = guardrails_status.get("dynamic_score_min", 80)
+        base_score = ds.get("base_min_score", 80)
+        if effective_min >= 90 and dd < 1.0 and consec <= 3:
+            # Losses are recovering but score threshold is still elevated from before
+            # Suggest lowering base so the effective min drops proportionally
+            new_base = max(base_score - 3, 70)
+            if new_base < base_score and not any("base_min_score" in c["path"] for c in changes):
+                changes.append({"path": "dynamic_score.base_min_score", "from": base_score, "to": new_base,
+                                "reason": f"Effective min score {effective_min} very high, base={base_score}, lowering base to ease recovery"})
+                reasons.append(f"Score threshold {effective_min} blocking most signals (base={base_score})")
+
+        # Rule 5: Low trade frequency (counter-independent)
+        # If trades_per_hour is very low and no specific blocker stands out,
+        # check if trade_gate thresholds are high relative to current regime
+        if tph < 0.1 and dd < 0.5 and not changes:
+            regime_key = global_regime if global_regime in tg else "range"
+            current_adx = tg.get(regime_key, {}).get("min_adx", 25)
+            # Get average ADX from regime symbols
+            symbols = regime_snapshot.get("symbols", {})
+            adx_values = [s.get("adx", 0) for s in symbols.values() if s.get("regime") == "trend"]
+            avg_adx = sum(adx_values) / len(adx_values) if adx_values else 0
+            # If avg ADX of trending symbols is close to threshold, suggest loosening
+            if avg_adx > 0 and avg_adx < current_adx + 3:
+                new_adx = max(current_adx - 2, 15)
+                if new_adx < current_adx:
+                    changes.append({"path": f"trade_gate.{regime_key}.min_adx", "from": current_adx, "to": new_adx,
+                                    "reason": f"Low trade freq ({tph:.2f}/h), avg ADX of trending symbols ({avg_adx:.1f}) near threshold ({current_adx})"})
+                    reasons.append(f"ADX threshold ({current_adx}) too close to market avg ({avg_adx:.1f})")
+
         if not changes:
             return {"changes": [], "reasoning": "Current config appropriate for conditions.",
                     "confidence": 0.0, "risk_level": "low", "source": "rules"}
