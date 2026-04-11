@@ -469,6 +469,7 @@ class RiskScaler:
         self.mult_5_losses = c.get("consecutive_losses_5_multiplier", 0.50)
         self.dd_thresh = c.get("drawdown_threshold", 1.5)
         self.dd_min_mult = c.get("drawdown_min_multiplier", 0.50)
+        self._last_logged_mult: float | None = None
 
     def get_multiplier(self, perf: dict) -> float:
         """Return a 0-1 multiplier for position sizing."""
@@ -484,11 +485,16 @@ class RiskScaler:
         if dd >= self.dd_thresh:
             mult = min(mult, self.dd_min_mult)
 
-        if mult < 1.0:
-            logger.info(
-                "RISK_SCALING: consecutive_losses=%d | drawdown=%.2f%% | multiplier=%.2f",
-                consec, dd, mult,
-            )
+        # Log only when multiplier changes (avoid spam every tick)
+        if mult != self._last_logged_mult:
+            if mult < 1.0:
+                logger.info(
+                    "RISK_SCALING: consecutive_losses=%d | drawdown=%.2f%% | multiplier=%.2f",
+                    consec, dd, mult,
+                )
+            elif self._last_logged_mult is not None and self._last_logged_mult < 1.0:
+                logger.info("RISK_SCALING: restored to 1.0 (normal)")
+            self._last_logged_mult = mult
         return mult
 
 
