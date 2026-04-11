@@ -582,6 +582,7 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
   const [applying, setApplying] = useState(false)
   const [msg, setMsg] = useState('')
   const [ollamaStatus, setOllamaStatus] = useState<{ available: boolean; configured_model: string } | null>(null)
+  const [sentiment, setSentiment] = useState<{ score: number; label: string; headline_count: number; top_headlines: { title: string; sentiment: number }[]; available: boolean } | null>(null)
 
   const loadHistory = useCallback(async () => {
     try {
@@ -592,11 +593,15 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
 
   useEffect(() => { loadHistory() }, [loadHistory])
 
-  // Check Ollama status on mount
+  // Check Ollama + sentiment status on mount
   useEffect(() => {
     fetch('/api/adaptive/tuning/ollama-status', { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) setOllamaStatus(data) })
+      .catch(() => {})
+    fetch('/api/adaptive/news-sentiment', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setSentiment(data) })
       .catch(() => {})
   }, [])
 
@@ -676,6 +681,15 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
               ? <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-900/60 text-emerald-300">Ollama: {ollamaStatus.configured_model}</span>
               : <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-gray-800 text-gray-500">Ollama offline — rules mode</span>
           )}
+          {sentiment?.available && (
+            <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+              sentiment.score > 0.1 ? 'bg-emerald-900/60 text-emerald-300' :
+              sentiment.score < -0.1 ? 'bg-red-900/60 text-red-300' :
+              'bg-gray-800 text-gray-400'
+            }`}>
+              News: {sentiment.label} ({sentiment.score > 0 ? '+' : ''}{sentiment.score.toFixed(2)}) — {sentiment.headline_count} headlines
+            </span>
+          )}
         </div>
         <div className="flex gap-2">
           <button onClick={() => setShowHistory(!showHistory)}
@@ -692,6 +706,21 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
       <div className="px-4 py-3 space-y-3">
         {msg && <div className={`text-xs px-3 py-1.5 rounded ${msg.startsWith('Error') ? 'bg-red-900/30 text-red-300' : 'bg-emerald-900/30 text-emerald-300'}`}>{msg}</div>}
         {noSuggestion && <div className="text-xs text-gray-500 bg-gray-800 rounded px-3 py-2">{noSuggestion}</div>}
+
+        {/* News headlines */}
+        {sentiment?.available && sentiment.top_headlines?.length > 0 && (
+          <div className="bg-gray-800/30 rounded px-3 py-2">
+            <p className="text-[10px] text-gray-600 uppercase font-semibold mb-1">Top News ({sentiment.label})</p>
+            {sentiment.top_headlines.slice(0, 3).map((h, i) => (
+              <div key={i} className="flex items-center gap-2 text-[11px] py-0.5">
+                <span className={`w-8 text-right font-mono ${h.sentiment > 0.1 ? 'text-emerald-400' : h.sentiment < -0.1 ? 'text-red-400' : 'text-gray-500'}`}>
+                  {h.sentiment > 0 ? '+' : ''}{h.sentiment.toFixed(2)}
+                </span>
+                <span className="text-gray-400 truncate">{h.title}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Current suggestion */}
         {suggestion && (

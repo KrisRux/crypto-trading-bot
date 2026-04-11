@@ -148,20 +148,23 @@ class LLMAdvisor:
         guardrails_status: dict,
         guardrails_config: dict,
         regime_snapshot: dict,
+        news_sentiment: dict | None = None,
     ) -> dict:
         """
         Generate guardrails tuning suggestions.
 
         Tries Ollama LLM first. Falls back to rule-based engine if Ollama
-        is unavailable or returns an error.
+        is unavailable or returns an error. News sentiment is used as an
+        additional safety factor when available.
 
         Returns:
             {
-                "changes": [{"path": str, "from": X, "to": Y, "reason": str}, ...],
+                "changes": [...],
                 "reasoning": str,
                 "confidence": float,
                 "risk_level": "low"|"medium"|"high",
-                "source": "ollama"|"rules",
+                "source": "ollama"|"rules"|"safety_gate",
+                "news_sentiment": dict | None,
             }
         """
         from app.adaptive.ollama_client import generate_suggestions, check_ollama
@@ -171,6 +174,19 @@ class LLMAdvisor:
         consec = perf.get("consecutive_losses", 0)
         dd = perf.get("drawdown_intraday", 0)
         wr = perf.get("win_rate_last_10", 0)
+        sentiment_score = (news_sentiment or {}).get("score", 0)
+
+        # Block loosening when news are very bearish
+        if news_sentiment and news_sentiment.get("available") and sentiment_score < -0.3:
+            return {
+                "changes": [],
+                "reasoning": f"No loosening: news sentiment bearish ({sentiment_score:.2f}). Headlines suggest caution.",
+                "confidence": 0.0,
+                "risk_level": "high",
+                "source": "safety_gate",
+                "news_sentiment": news_sentiment,
+            }
+
         if consec >= 4 or dd >= 1.5 or wr <= 20:
             return {
                 "changes": [],
@@ -178,6 +194,7 @@ class LLMAdvisor:
                 "confidence": 0.0,
                 "risk_level": "high",
                 "source": "safety_gate",
+                "news_sentiment": news_sentiment,
             }
 
         # Try Ollama first
@@ -191,12 +208,15 @@ class LLMAdvisor:
                     regime_snapshot=regime_snapshot,
                     ollama_url=settings.ollama_url,
                     model=settings.ollama_model,
+                    news_sentiment=news_sentiment,
                 )
                 if result is not None:
                     result["source"] = "ollama"
+                    result["news_sentiment"] = news_sentiment
                     logger.info(
-                        "TUNING_ADVISOR [ollama]: %d suggestions | confidence=%.0f%% | risk=%s",
+                        "TUNING_ADVISOR [ollama]: %d suggestions | confidence=%.0f%% | risk=%s | sentiment=%.2f",
                         len(result["changes"]), result["confidence"] * 100, result["risk_level"],
+                        sentiment_score,
                     )
                     return result
                 logger.warning("TUNING_ADVISOR: Ollama returned None, falling back to rules")
@@ -206,7 +226,15 @@ class LLMAdvisor:
             logger.debug("TUNING_ADVISOR: Ollama not available at %s, using rules", settings.ollama_url)
 
         # Fallback: rule-based engine
-        return self._rule_based_suggestions(perf, guardrails_status, guardrails_config, regime_snapshot)
+        result = self._rule_based_suggestions(perf, guardrails_status, guardrails_config, regime_snapshot)
+        result["news_sentiment"] = news_sentiment
+
+        # Rules: reduce confidence if sentiment is mildly bearish
+        if news_sentiment and news_sentiment.get("available") and sentiment_score < -0.1 and result["changes"]:
+            result["confidence"] = max(result["confidence"] - 0.2, 0.1)
+            result["reasoning"] += f" (confidence reduced: news sentiment {sentiment_score:.2f})"
+
+        return result
 
     def _rule_based_suggestions(
         self, perf: dict, guardrails_status: dict,

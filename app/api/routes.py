@@ -924,11 +924,13 @@ async def get_tuning_suggestions(db: Session = Depends(get_db), _admin: dict = D
     except Exception:
         guardrails_config = {}
 
+    news = mc.news_sentiment.snapshot.to_dict() if mc.news_sentiment.snapshot.available else None
     result = await mc.advisor.generate_tuning_suggestions(
         perf=perf,
         guardrails_status=guardrails_status,
         guardrails_config=guardrails_config,
         regime_snapshot=regime,
+        news_sentiment=news,
     )
 
     return {
@@ -1045,11 +1047,13 @@ async def generate_and_save_suggestion(db: Session = Depends(get_db),
     except Exception:
         guardrails_config = {}
 
+    news = mc.news_sentiment.snapshot.to_dict() if mc.news_sentiment.snapshot.available else None
     result = await mc.advisor.generate_tuning_suggestions(
         perf=perf,
         guardrails_status=guardrails_status,
         guardrails_config=guardrails_config,
         regime_snapshot=regime,
+        news_sentiment=news,
     )
 
     if not result["changes"]:
@@ -1125,6 +1129,15 @@ async def ollama_status(_admin: dict = Depends(require_admin)):
         "configured_model": settings.ollama_model,
         "installed_models": models,
     }
+
+
+@router.get("/adaptive/news-sentiment")
+async def get_news_sentiment(_admin: dict = Depends(require_admin)):
+    """Return current news sentiment snapshot. Triggers refresh if stale."""
+    mc = get_meta_controller()
+    if mc.news_sentiment.needs_refresh(interval_minutes=15):
+        await mc.news_sentiment.fetch_and_score()
+    return mc.news_sentiment.snapshot.to_dict()
 
 
 @router.get("/adaptive/profiles")

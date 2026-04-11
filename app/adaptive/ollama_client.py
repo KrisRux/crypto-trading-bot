@@ -80,6 +80,9 @@ USER_PROMPT_TEMPLATE = """Analyze this trading bot state and suggest guardrails 
 ## Per-Symbol Regimes
 {symbol_regimes}
 
+## News Sentiment
+{news_section}
+
 Respond with this exact JSON structure:
 {{
   "changes": [
@@ -123,6 +126,7 @@ async def generate_suggestions(
     regime_snapshot: dict,
     ollama_url: str = DEFAULT_URL,
     model: str = DEFAULT_MODEL,
+    news_sentiment: dict | None = None,
 ) -> dict | None:
     """
     Call Ollama to generate tuning suggestions.
@@ -150,6 +154,16 @@ async def generate_suggestions(
         sym_lines.append(f"  {sym}: {snap.get('regime', '?')} (ADX={snap.get('adx', 0):.1f}, Vol={snap.get('volume_ratio', 0):.1f})")
     symbol_regimes = "\n".join(sym_lines) if sym_lines else "  No symbol data available"
 
+    # News sentiment section
+    if news_sentiment and news_sentiment.get("available"):
+        ns_lines = [f"Score: {news_sentiment.get('score', 0):.2f} ({news_sentiment.get('label', 'unknown')})"]
+        ns_lines.append(f"Headlines: {news_sentiment.get('headline_count', 0)} (bull={news_sentiment.get('bullish_count', 0)} bear={news_sentiment.get('bearish_count', 0)})")
+        for h in news_sentiment.get("top_headlines", [])[:3]:
+            ns_lines.append(f'  "{h.get("title", "")}" → {h.get("sentiment", 0):.2f}')
+        news_section = "\n".join(ns_lines)
+    else:
+        news_section = "Not available"
+
     prompt = USER_PROMPT_TEMPLATE.format(
         global_regime=global_regime,
         active_profile=perf.get("active_profile", "unknown"),
@@ -169,6 +183,7 @@ async def generate_suggestions(
         current_base_score=ds_cfg.get("base_min_score", 80),
         current_max_cap=ds_cfg.get("max_score_cap", 95),
         symbol_regimes=symbol_regimes,
+        news_section=news_section,
     )
 
     try:

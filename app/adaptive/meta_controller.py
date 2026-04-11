@@ -26,6 +26,7 @@ from app.adaptive.profile_manager import ProfileManager
 from app.adaptive.notification_service import NotificationService
 from app.adaptive.approval_service import ApprovalService
 from app.adaptive.llm_advisor import LLMAdvisor
+from app.adaptive.news_sentiment import NewsSentimentService
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ class MetaController:
         self.notifier = NotificationService(bot_token=bot_token)
         self.approval_service = ApprovalService()
         self.advisor = LLMAdvisor()
+        self.news_sentiment = NewsSentimentService()
 
         self._last_global_regime: str | None = None
         self._daily_summary_sent: str | None = None
@@ -143,7 +145,14 @@ class MetaController:
             # Check for previously approved requests that can now be applied
             await self._apply_approved_requests(db, chat_ids)
 
-            # 4. LLM Advisor (read-only)
+            # 4. News sentiment (refresh every 30 min)
+            if self.news_sentiment.needs_refresh(interval_minutes=30):
+                try:
+                    await self.news_sentiment.fetch_and_score()
+                except Exception:
+                    logger.debug("News sentiment fetch failed (non-critical)")
+
+            # 5. LLM Advisor (read-only)
             self.advisor.analyze(
                 regime_snapshot, perf_dict,
                 self.profile_manager.active_profile,
