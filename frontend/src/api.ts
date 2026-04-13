@@ -172,6 +172,21 @@ export interface AssetItem {
   value_usdt: number
 }
 
+export interface NewsSentiment {
+  score: number
+  headline_score: number
+  headline_count: number
+  bullish_count: number
+  bearish_count: number
+  neutral_count: number
+  fear_greed_value: number
+  fear_greed_label: string
+  label: string
+  top_headlines: { title: string; sentiment: number; source: string }[]
+  last_updated: string
+  available: boolean
+}
+
 export interface TuningSuggestionItem {
   id: number
   status: string
@@ -292,6 +307,7 @@ export const api = {
     request<SkillItem[]>(category ? `/skills?category=${category}` : '/skills'),
   getSkill: (name: string) => request<SkillItem>(`/skills/${name}`),
   getAdaptiveStatus: () => request<AdaptiveStatus>('/adaptive/status'),
+  getNewsSentiment: () => request<NewsSentiment>('/adaptive/news-sentiment'),
   generateTuningSuggestion: () =>
     request<{ ok: boolean; suggestion: TuningSuggestionItem | null; reasoning?: string }>('/adaptive/tuning/generate', { method: 'POST' }),
   getTuningHistory: () => request<TuningSuggestionItem[]>('/adaptive/tuning/history'),

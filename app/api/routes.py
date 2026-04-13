@@ -1150,7 +1150,7 @@ async def llm_status(_admin: dict = Depends(require_admin)):
 
 
 @router.get("/adaptive/news-sentiment")
-async def get_news_sentiment(_admin: dict = Depends(require_admin)):
+async def get_news_sentiment(_user: dict = Depends(require_auth)):
     """Return current news sentiment snapshot. Triggers refresh if stale."""
     mc = get_meta_controller()
     if mc.news_sentiment.needs_refresh(interval_minutes=15):

@@ -1,5 +1,5 @@
 import { useCallback, useState, useMemo } from 'react'
-import { api, Balance, Position, TradeItem, EngineStatus, AdaptiveStatus } from '../api'
+import { api, Balance, Position, TradeItem, EngineStatus, AdaptiveStatus, NewsSentiment } from '../api'
 import { usePolling } from '../hooks/usePolling'
 import { useLang } from '../hooks/useLang'
 import StatCard from '../components/StatCard'
@@ -13,12 +13,14 @@ export default function Dashboard() {
   const fetchTrades = useCallback(() => api.getTrades(), [])
   const fetchEngine = useCallback(() => api.getEngineStatus(), [])
   const fetchAdaptive = useCallback(() => api.getAdaptiveStatus(), [])
+  const fetchSentiment = useCallback(() => api.getNewsSentiment(), [])
 
   const [balance, , , refetchBalance] = usePolling<Balance>(fetchBalance, 5000)
   const [positions, , , refetchPositions] = usePolling<Position[]>(fetchPositions, 5000)
   const [trades, , , refetchTrades] = usePolling<TradeItem[]>(fetchTrades, 10000)
   const [engine] = usePolling<EngineStatus>(fetchEngine, 5000)
   const [adaptive] = usePolling<AdaptiveStatus>(fetchAdaptive, 15000)
+  const [sentiment] = usePolling<NewsSentiment>(fetchSentiment, 60000)
 
   const dataMode = balance?.mode || 'paper'
 
@@ -189,6 +191,73 @@ export default function Dashboard() {
               <span className="text-blue-400/70 ml-1">
                 ({(adaptive.advisor.confidence * 100).toFixed(0)}% {l('confidenza', 'confidence')})
               </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Market Sentiment */}
+      {sentiment?.available && (
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-gray-400">Market Sentiment</h3>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                sentiment.score > 0.1 ? 'bg-emerald-900/60 text-emerald-300' :
+                sentiment.score < -0.1 ? 'bg-red-900/60 text-red-300' :
+                'bg-gray-800 text-gray-400'
+              }`}>
+                {sentiment.label}
+              </span>
+            </div>
+            <span className="text-[10px] text-gray-600">{sentiment.headline_count} {l('notizie', 'headlines')}</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+            <div className="bg-gray-800/50 rounded px-3 py-2">
+              <p className="text-[10px] text-gray-500 uppercase">{l('Punteggio', 'Score')}</p>
+              <p className={`text-lg font-bold ${sentiment.score > 0.1 ? 'text-emerald-400' : sentiment.score < -0.1 ? 'text-red-400' : 'text-gray-300'}`}>
+                {sentiment.score > 0 ? '+' : ''}{sentiment.score.toFixed(2)}
+              </p>
+            </div>
+            {sentiment.fear_greed_label && (
+              <div className="bg-gray-800/50 rounded px-3 py-2">
+                <p className="text-[10px] text-gray-500 uppercase">Fear & Greed</p>
+                <p className={`text-lg font-bold ${
+                  sentiment.fear_greed_value >= 60 ? 'text-emerald-400' :
+                  sentiment.fear_greed_value <= 40 ? 'text-red-400' : 'text-yellow-400'
+                }`}>
+                  {sentiment.fear_greed_value}
+                </p>
+                <p className="text-[10px] text-gray-500">{sentiment.fear_greed_label}</p>
+              </div>
+            )}
+            <div className="bg-gray-800/50 rounded px-3 py-2">
+              <p className="text-[10px] text-gray-500 uppercase">Bull / Bear</p>
+              <p className="text-sm font-bold text-gray-300">
+                <span className="text-emerald-400">{sentiment.bullish_count}</span>
+                {' / '}
+                <span className="text-red-400">{sentiment.bearish_count}</span>
+              </p>
+            </div>
+            <div className="bg-gray-800/50 rounded px-3 py-2">
+              <p className="text-[10px] text-gray-500 uppercase">{l('Notizie', 'News')}</p>
+              <p className="text-sm font-bold text-gray-300">{sentiment.headline_count}</p>
+              <p className="text-[10px] text-gray-500">{sentiment.neutral_count} neutral</p>
+            </div>
+          </div>
+          {sentiment.top_headlines?.length > 0 && (
+            <div className="space-y-0.5">
+              {sentiment.top_headlines.slice(0, 3).map((h, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs py-0.5">
+                  <span className={`w-10 text-right font-mono text-[11px] shrink-0 ${
+                    h.sentiment > 0.1 ? 'text-emerald-400' : h.sentiment < -0.1 ? 'text-red-400' : 'text-gray-500'
+                  }`}>
+                    {h.sentiment > 0 ? '+' : ''}{h.sentiment.toFixed(2)}
+                  </span>
+                  <span className="text-gray-400 truncate">{h.title}</span>
+                  <span className="text-[9px] text-gray-600 shrink-0">{h.source}</span>
+                </div>
+              ))}
             </div>
           )}
         </div>
