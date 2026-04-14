@@ -160,14 +160,19 @@ class MarketRegimeService:
             return 0.0
 
     def _calc_volume_ratio(self, df: pd.DataFrame) -> float:
-        """Current volume / 20-period average volume."""
+        """Last completed candle volume / 20-period average.
+
+        Uses iloc[-2] (last closed candle) instead of iloc[-1] (current
+        in-progress candle) to avoid near-zero volume on incomplete bars.
+        """
         try:
-            if len(df) < 21 or "volume" not in df.columns:
+            if len(df) < 22 or "volume" not in df.columns:
                 return 1.0
-            avg_vol = df["volume"].iloc[-21:-1].mean()
+            current_vol = df["volume"].iloc[-2]   # last CLOSED candle
+            avg_vol = df["volume"].iloc[-22:-2].mean()  # 20-bar average of closed candles
             if avg_vol <= 0:
                 return 1.0
-            return float(df["volume"].iloc[-1] / avg_vol)
+            return float(current_vol / avg_vol)
         except Exception:
             return 1.0
 

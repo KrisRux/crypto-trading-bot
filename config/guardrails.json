@@ -2,6 +2,7 @@
   "kill_switch": {
     "consecutive_losses_threshold": 6,
     "low_win_rate_threshold": 15,
+    "min_trades_for_win_rate_check": 5,
     "intraday_drawdown_threshold": 2.0,
     "pnl_24h_threshold": -6.0,
     "pause_minutes_losses": 90,

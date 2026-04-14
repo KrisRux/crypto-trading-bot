@@ -65,10 +65,17 @@ class TestKillSwitch:
 
     def test_activates_on_low_win_rate(self):
         ks = KillSwitch(_default_cfg())
-        ks.update(_perf(win_rate_last_10=10))
+        # Need total_recent_trades >= min_trades_for_win_rate_check (5) for the check to fire
+        ks.update(_perf(win_rate_last_10=10, total_recent_trades=10))
         assert ks.active
         v = ks.check()
         assert "low_win_rate" in v.reason
+
+    def test_no_kill_switch_on_zero_trades(self):
+        """Win rate of 0% with 0 trades must NOT activate kill switch (no history)."""
+        ks = KillSwitch(_default_cfg())
+        ks.update(_perf(win_rate_last_10=0, total_recent_trades=0))
+        assert not ks.active
 
     def test_activates_on_drawdown(self):
         ks = KillSwitch(_default_cfg())

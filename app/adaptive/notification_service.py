@@ -17,11 +17,16 @@ Config:
 import hashlib
 import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+_DEDUP_PERSIST_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "logs", "telegram_dedup_cache.json"
+)
 
 
 class NotificationService:
@@ -38,8 +43,10 @@ class NotificationService:
         self._enabled = bool(bot_token)
         # Rate limit state
         self._sent_timestamps: list[datetime] = []
-        # Dedup: hash -> last sent time
+        # Dedup: hash -> last sent time (persisted to disk to survive restarts)
         self._dedup_cache: dict[str, datetime] = {}
+        self._dedup_last_save: datetime = datetime.now(timezone.utc)
+        self._load_dedup_cache()
         # Telegram callback polling offset
         self._callback_offset: int = 0
 
@@ -47,6 +54,43 @@ class NotificationService:
             logger.info("Telegram notifications enabled (bot token configured)")
         else:
             logger.info("Telegram notifications disabled (missing bot token)")
+
+    def _load_dedup_cache(self):
+        """Load persisted dedup cache from disk (ignores missing/corrupt file)."""
+        try:
+            path = os.path.normpath(_DEDUP_PERSIST_PATH)
+            if not os.path.exists(path):
+                return
+            with open(path, "r") as f:
+                raw = json.load(f)
+            now = datetime.now(timezone.utc)
+            cutoff = now - timedelta(seconds=self.DEDUP_WINDOW_SECONDS)
+            for k, v in raw.items():
+                try:
+                    dt = datetime.fromisoformat(v)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    if dt > cutoff:
+                        self._dedup_cache[k] = dt
+                except Exception:
+                    pass
+            logger.info("Telegram dedup cache restored: %d active entries", len(self._dedup_cache))
+        except Exception:
+            pass  # non-critical: fresh cache is fine
+
+    def _save_dedup_cache(self):
+        """Persist dedup cache to disk (throttled to at most once per 30s)."""
+        now = datetime.now(timezone.utc)
+        if (now - self._dedup_last_save).total_seconds() < 30:
+            return
+        self._dedup_last_save = now
+        try:
+            path = os.path.normpath(_DEDUP_PERSIST_PATH)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                json.dump({k: v.isoformat() for k, v in self._dedup_cache.items()}, f)
+        except Exception:
+            pass  # non-critical
 
     @property
     def enabled(self) -> bool:
@@ -79,6 +123,8 @@ class NotificationService:
             # Prune old entries
             cutoff = now - timedelta(seconds=self.DEDUP_WINDOW_SECONDS * 2)
             self._dedup_cache = {k: v for k, v in self._dedup_cache.items() if v > cutoff}
+            # Persist to disk so dedup survives restarts
+            self._save_dedup_cache()
 
         # Rate limit check
         now = datetime.now(timezone.utc)

@@ -108,6 +108,7 @@ class KillSwitch:
         c = cfg.get("kill_switch", {})
         self.consec_loss_thresh = c.get("consecutive_losses_threshold", 6)
         self.low_wr_thresh = c.get("low_win_rate_threshold", 15)
+        self.min_trades_for_wr = c.get("min_trades_for_win_rate_check", 5)
         self.dd_thresh = c.get("intraday_drawdown_threshold", 2.0)
         self.pnl_24h_thresh = c.get("pnl_24h_threshold", -6.0)
         self.pause_min_losses = c.get("pause_minutes_losses", 90)
@@ -138,10 +139,13 @@ class KillSwitch:
         wr = perf.get("win_rate_last_10", 100)
         dd = perf.get("drawdown_intraday", 0)
         pnl24 = perf.get("pnl_24h", 0)
+        total_trades = perf.get("total_recent_trades", 0)
 
         if consec >= self.consec_loss_thresh:
             self._activate("consecutive_losses", consec, self.pause_min_losses)
-        elif wr <= self.low_wr_thresh:
+        elif wr <= self.low_wr_thresh and total_trades >= self.min_trades_for_wr:
+            # Only block on low win-rate when we have enough trades to trust the metric.
+            # Avoids infinite loop when bot has 0 trades (wr=0% with no history).
             self._activate("low_win_rate", wr, self.pause_min_losses)
         elif dd >= self.dd_thresh:
             self._activate("intraday_drawdown", dd, self.pause_min_dd)
