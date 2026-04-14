@@ -575,6 +575,7 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
   l: (it: string, en: string) => string
 }) {
   const [generating, setGenerating] = useState(false)
+  const [generateCooldown, setGenerateCooldown] = useState(false)
   const [suggestion, setSuggestion] = useState<TuningSuggestionItem | null>(null)
   const [noSuggestion, setNoSuggestion] = useState('')
   const [history, setHistory] = useState<TuningSuggestionItem[]>([])
@@ -592,25 +593,27 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
     try {
       const h = await api.getTuningHistory()
       setHistory(h)
-    } catch { /* ignore */ }
+    } catch (e) {
+      setMsg(`Error loading history: ${e}`)
+    }
   }, [])
 
   useEffect(() => { loadHistory() }, [loadHistory])
 
   // Check Ollama + sentiment status on mount
   useEffect(() => {
-    fetch('/api/adaptive/tuning/ollama-status', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data) setLlmStatus(data) })
+    api.getOllamaStatus()
+      .then(data => setLlmStatus(data))
       .catch(() => {})
-    fetch('/api/adaptive/news-sentiment', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data) setSentiment(data) })
+    api.getNewsSentiment()
+      .then(data => setSentiment(data))
       .catch(() => {})
   }, [])
 
   const handleGenerate = async () => {
+    if (generateCooldown) return
     setGenerating(true)
+    setGenerateCooldown(true)
     setSuggestion(null)
     setNoSuggestion('')
     setMsg('')
@@ -626,6 +629,8 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
       setMsg(`Error: ${e}`)
     } finally {
       setGenerating(false)
+      // Re-enable generate button after 30 seconds
+      setTimeout(() => setGenerateCooldown(false), 30000)
     }
   }
 
@@ -651,13 +656,21 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
       await api.rejectTuningSuggestion(s.id)
       setSuggestion(null)
       loadHistory()
-    } catch { /* ignore */ }
+    } catch (e) {
+      setMsg(`Error: ${e}`)
+    }
   }
 
-  const handlePreview = (s: TuningSuggestionItem) => {
+  const handlePreview = async (s: TuningSuggestionItem) => {
     onApplyChanges(s.changes)
     setMsg(l('Valori copiati nel form — salva per applicare', 'Values copied to form — save to apply'))
     setTimeout(() => setMsg(''), 5000)
+    // Mark suggestion as rejected so it doesn't stay orphaned in "new" state
+    try {
+      await api.rejectTuningSuggestion(s.id)
+      setSuggestion(null)
+      loadHistory()
+    } catch { /* best-effort */ }
   }
 
   const riskBadge = (risk: string) => {
@@ -702,9 +715,9 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
             className="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded transition-colors">
             {l('Cronologia', 'History')} ({history.length})
           </button>
-          <button onClick={handleGenerate} disabled={generating}
+          <button onClick={handleGenerate} disabled={generating || generateCooldown}
             className="px-3 py-1 bg-purple-900/60 hover:bg-purple-800/70 border border-purple-800/50 text-purple-300 text-xs rounded transition-colors disabled:opacity-40">
-            {generating ? l('Analisi...', 'Analyzing...') : l('Genera suggerimento', 'Generate suggestion')}
+            {generating ? l('Analisi...', 'Analyzing...') : generateCooldown ? l('Attendi...', 'Wait...') : l('Genera suggerimento', 'Generate suggestion')}
           </button>
         </div>
       </div>

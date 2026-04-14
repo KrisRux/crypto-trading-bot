@@ -58,6 +58,9 @@ def init_db():
         ("telegram_chat_id", "VARCHAR DEFAULT ''"),
         ("telegram_enabled", "BOOLEAN DEFAULT 0"),
     ])
+    _migrate_add_columns(engine, "tuning_suggestions", [
+        ("source", "VARCHAR DEFAULT 'rules'"),
+    ])
 
     db = SessionLocal()
     try:

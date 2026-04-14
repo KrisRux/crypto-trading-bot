@@ -15,10 +15,15 @@ Setup:
 import json
 import logging
 import re
+import time
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Cache for check_deepseek() — avoids burning API credits on every page load
+_deepseek_check_cache: tuple[bool, float] = (False, 0.0)
+_DEEPSEEK_CHECK_TTL = 300  # 5 minutes
 
 API_URL = "https://api.deepseek.com/chat/completions"
 DEFAULT_MODEL = "deepseek-chat"
@@ -97,18 +102,24 @@ If no changes are needed, return: {{"changes": [], "reasoning": "<why current co
 
 
 async def check_deepseek(api_key: str) -> bool:
-    """Check if DeepSeek API key is configured and valid."""
+    """Check if DeepSeek API key is configured and valid (cached for 5 min)."""
+    global _deepseek_check_cache
     if not api_key:
         return False
+    cached_ok, cached_ts = _deepseek_check_cache
+    if time.time() - cached_ts < _DEEPSEEK_CHECK_TTL:
+        return cached_ok
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
                 "https://api.deepseek.com/models",
                 headers={"Authorization": f"Bearer {api_key}"},
             )
-            return resp.status_code == 200
+            result = resp.status_code == 200
     except Exception:
-        return False
+        result = False
+    _deepseek_check_cache = (result, time.time())
+    return result
 
 
 async def generate_suggestions(

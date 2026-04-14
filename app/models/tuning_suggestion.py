@@ -6,7 +6,7 @@ Lifecycle: new → applied | rejected | expired
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean, Index
 
 from app.database import Base
 
@@ -31,6 +31,12 @@ class TuningSuggestion(Base):
     reasoning = Column(Text, nullable=True)
     confidence = Column(Float, default=0)
     risk_level = Column(String, default="low")   # low, medium, high
+    source = Column(String, default="rules")     # deepseek | ollama | rules | safety_gate
     # Resolution
     resolved_at = Column(DateTime, nullable=True)
     resolved_by = Column(String, nullable=True)
+
+
+# Performance indexes for history queries
+Index("ix_tuning_suggestion_status", TuningSuggestion.status)
+Index("ix_tuning_suggestion_created_at", TuningSuggestion.created_at)

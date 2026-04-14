@@ -203,6 +203,7 @@ export interface TuningSuggestionItem {
   reasoning: string
   confidence: number
   risk_level: string
+  source: string
   resolved_at: string | null
   resolved_by: string | null
 }
@@ -308,6 +309,11 @@ export const api = {
   getSkill: (name: string) => request<SkillItem>(`/skills/${name}`),
   getAdaptiveStatus: () => request<AdaptiveStatus>('/adaptive/status'),
   getNewsSentiment: () => request<NewsSentiment>('/adaptive/news-sentiment'),
+  getOllamaStatus: () => request<{
+    deepseek?: { available: boolean; configured: boolean; model: string }
+    ollama?: { available: boolean; configured_model: string }
+    available: boolean; configured_model: string
+  }>('/adaptive/tuning/ollama-status'),
   generateTuningSuggestion: () =>
     request<{ ok: boolean; suggestion: TuningSuggestionItem | null; reasoning?: string }>('/adaptive/tuning/generate', { method: 'POST' }),
   getTuningHistory: () => request<TuningSuggestionItem[]>('/adaptive/tuning/history'),

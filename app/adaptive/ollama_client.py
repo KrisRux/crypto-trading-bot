@@ -173,7 +173,7 @@ async def generate_suggestions(
                     "system": SYSTEM_PROMPT,
                     "stream": False,
                     "format": "json",
-                    "options": {"temperature": 0.3, "num_predict": 256},
+                    "options": {"temperature": 0.3, "num_predict": 768},  # 256 caused systematic truncation
                 },
             )
             if resp.status_code != 200:

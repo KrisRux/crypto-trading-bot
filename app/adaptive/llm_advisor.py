@@ -19,9 +19,11 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 # Maximum parameter adjustment per suggestion (safety cap)
-_MAX_ADX_DELTA = 4
-_MAX_VOLUME_DELTA = 0.4
-_MAX_SCORE_DELTA = 5
+# These are the EFFECTIVE limits applied in _rule_based_suggestions()
+# They match the first argument of min() in each rule — kept explicit for clarity.
+_MAX_ADX_DELTA = 3      # max ADX change per suggestion (was 4 but effective limit was 3)
+_MAX_VOLUME_DELTA = 0.3  # max volume ratio change per suggestion (was 0.4 but effective was 0.3)
+_MAX_SCORE_DELTA = 3    # max base_min_score change per suggestion (was 5 but effective was 3)
 
 
 class LLMAdvisor:
@@ -279,14 +281,14 @@ class LLMAdvisor:
         if block_pct > 70 and tph < 0.2 and blocked_gate > blocked_score and dd < 1.0:
             regime_key = global_regime if global_regime in tg else "range"
             current_adx = tg.get(regime_key, {}).get("min_adx", 25)
-            new_adx = max(current_adx - min(3, _MAX_ADX_DELTA), 15)
+            new_adx = max(current_adx - _MAX_ADX_DELTA, 15)
             if new_adx < current_adx:
                 changes.append({"path": f"trade_gate.{regime_key}.min_adx", "from": current_adx, "to": new_adx,
                                 "reason": f"Block rate {block_pct:.0f}% dominated by trade_gate, trades/h={tph:.2f}"})
                 reasons.append(f"ADX too strict for {regime_key} ({block_pct:.0f}% blocked)")
             current_vol = tg.get(regime_key, {}).get("min_volume_ratio", 1.0)
             if current_vol > 1.2:
-                new_vol = round(max(current_vol - min(0.3, _MAX_VOLUME_DELTA), 0.5), 1)
+                new_vol = round(max(current_vol - _MAX_VOLUME_DELTA, 0.5), 1)
                 if new_vol < current_vol:
                     changes.append({"path": f"trade_gate.{regime_key}.min_volume_ratio", "from": current_vol, "to": new_vol,
                                     "reason": f"Volume threshold {current_vol} filtering valid signals"})
@@ -294,7 +296,7 @@ class LLMAdvisor:
         # Rule 2: Score filter dominant → lower base_min_score
         if blocked_score > blocked_gate and blocked_score > 5 and dd < 1.0:
             current_score = ds.get("base_min_score", 80)
-            new_score = max(current_score - min(3, _MAX_SCORE_DELTA), 70)
+            new_score = max(current_score - _MAX_SCORE_DELTA, 70)
             if new_score < current_score:
                 changes.append({"path": "dynamic_score.base_min_score", "from": current_score, "to": new_score,
                                 "reason": f"Score blocked {blocked_score} signals, min={current_score}"})
@@ -305,7 +307,7 @@ class LLMAdvisor:
             if blocked_gate > 0 and not any(c["path"].startswith("trade_gate") for c in changes):
                 regime_key = global_regime if global_regime in tg else "range"
                 current_adx = tg.get(regime_key, {}).get("min_adx", 25)
-                new_adx = max(current_adx - 2, 15)
+                new_adx = max(current_adx - min(2, _MAX_ADX_DELTA), 15)
                 if new_adx < current_adx:
                     changes.append({"path": f"trade_gate.{regime_key}.min_adx", "from": current_adx, "to": new_adx,
                                     "reason": "Zero trades despite signals — bot too restrictive"})

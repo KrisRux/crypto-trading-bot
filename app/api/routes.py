@@ -913,7 +913,11 @@ async def get_tuning_suggestions(db: Session = Depends(get_db), _admin: dict = D
     mc = get_meta_controller()
     engine = get_engine()
 
-    perf = mc.perf_monitor.snapshot.to_dict() if mc.perf_monitor.snapshot else {}
+    # Inject active_profile into perf dict so LLM prompts receive it
+    perf = {
+        **(mc.perf_monitor.snapshot.to_dict() if mc.perf_monitor.snapshot else {}),
+        "active_profile": mc.profile_manager.active_profile,
+    }
     regime = mc.regime_service.global_snapshot()
     guardrails_status = engine.guardrails.status()
 
@@ -926,7 +930,9 @@ async def get_tuning_suggestions(db: Session = Depends(get_db), _admin: dict = D
     except Exception:
         guardrails_config = {}
 
-    news = mc.news_sentiment.snapshot.to_dict() if mc.news_sentiment.snapshot.available else None
+    # Guard against uninitialized snapshot (NPE fix)
+    snap = mc.news_sentiment.snapshot
+    news = snap.to_dict() if (snap is not None and snap.available) else None
     result = await mc.advisor.generate_tuning_suggestions(
         perf=perf,
         guardrails_status=guardrails_status,
@@ -954,6 +960,19 @@ def apply_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
     import json as _json, os, tempfile
     from app.models.tuning_suggestion import TuningSuggestion
 
+    # Whitelist of paths the advisor is allowed to modify (path injection guard)
+    ALLOWED_TUNING_PATHS = {
+        f"trade_gate.{regime}.{field}"
+        for regime in ("defensive", "range", "trend", "volatile")
+        for field in ("min_adx", "min_volume_ratio", "min_bb_width_pct")
+    } | {
+        "dynamic_score.base_min_score",
+        "dynamic_score.min_score_after_3_losses",
+        "dynamic_score.min_score_after_5_losses",
+        "dynamic_score.extra_score_in_bad_regime",
+        "dynamic_score.max_score_cap",
+    }
+
     suggestion = db.query(TuningSuggestion).filter(TuningSuggestion.id == suggestion_id).first()
     if not suggestion:
         raise HTTPException(404, "Suggestion not found")
@@ -967,10 +986,30 @@ def apply_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
     except Exception as exc:
         raise HTTPException(500, f"Failed to read config: {exc}")
 
-    # Apply changes
+    # Apply changes with whitelist validation and stale check
     changes = _json.loads(suggestion.changes_json or "[]")
     for change in changes:
-        parts = change["path"].split(".")
+        path = change.get("path", "")
+
+        # Security: reject unauthorized paths
+        if path not in ALLOWED_TUNING_PATHS:
+            raise HTTPException(400, f"Unauthorized config path: '{path}'")
+
+        # Stale check: verify 'from' value matches current config before overwriting
+        parts = path.split(".")
+        current_val = config
+        for p in parts:
+            current_val = current_val.get(p) if isinstance(current_val, dict) else None
+        expected_from = change.get("from")
+        if expected_from is not None and current_val is not None and current_val != expected_from:
+            raise HTTPException(
+                409,
+                f"Config changed since suggestion was generated: '{path}' "
+                f"expected {expected_from}, current value is {current_val}. "
+                "Re-generate the suggestion and try again.",
+            )
+
+        # Apply the change
         obj = config
         for p in parts[:-1]:
             obj = obj.setdefault(p, {})
@@ -1038,7 +1077,11 @@ async def generate_and_save_suggestion(db: Session = Depends(get_db),
     mc = get_meta_controller()
     engine = get_engine()
 
-    perf = mc.perf_monitor.snapshot.to_dict() if mc.perf_monitor.snapshot else {}
+    # Inject active_profile into perf dict so LLM prompts receive it
+    perf = {
+        **(mc.perf_monitor.snapshot.to_dict() if mc.perf_monitor.snapshot else {}),
+        "active_profile": mc.profile_manager.active_profile,
+    }
     regime = mc.regime_service.global_snapshot()
     guardrails_status = engine.guardrails.status()
 
@@ -1049,7 +1092,9 @@ async def generate_and_save_suggestion(db: Session = Depends(get_db),
     except Exception:
         guardrails_config = {}
 
-    news = mc.news_sentiment.snapshot.to_dict() if mc.news_sentiment.snapshot.available else None
+    # Guard against uninitialized snapshot (NPE fix)
+    snap = mc.news_sentiment.snapshot
+    news = snap.to_dict() if (snap is not None and snap.available) else None
     result = await mc.advisor.generate_tuning_suggestions(
         perf=perf,
         guardrails_status=guardrails_status,
@@ -1074,6 +1119,7 @@ async def generate_and_save_suggestion(db: Session = Depends(get_db),
         reasoning=result["reasoning"],
         confidence=result["confidence"],
         risk_level=result["risk_level"],
+        source=result.get("source", "rules"),
     )
     db.add(suggestion)
     db.commit()
@@ -1087,6 +1133,7 @@ async def generate_and_save_suggestion(db: Session = Depends(get_db),
             "reasoning": result["reasoning"],
             "confidence": result["confidence"],
             "risk_level": result["risk_level"],
+            "source": result.get("source", "rules"),
             "created_at": str(suggestion.created_at),
         },
     }
@@ -1099,6 +1146,14 @@ def get_tuning_history(limit: int = 20, db: Session = Depends(get_db),
     import json as _json
     from app.models.tuning_suggestion import TuningSuggestion
 
+    # Expire stale "new" suggestions older than 24 hours
+    from datetime import timedelta
+    db.query(TuningSuggestion).filter(
+        TuningSuggestion.status == "new",
+        TuningSuggestion.created_at < datetime.utcnow() - timedelta(hours=24),
+    ).update({"status": "expired"}, synchronize_session=False)
+    db.commit()
+
     rows = db.query(TuningSuggestion).order_by(TuningSuggestion.created_at.desc()).limit(limit).all()
     return [
         {
@@ -1109,7 +1164,7 @@ def get_tuning_history(limit: int = 20, db: Session = Depends(get_db),
             "total_blocked": r.total_blocked, "total_passed": r.total_passed,
             "changes": _json.loads(r.changes_json or "[]"),
             "reasoning": r.reasoning, "confidence": r.confidence,
-            "risk_level": r.risk_level,
+            "risk_level": r.risk_level, "source": r.source or "rules",
             "resolved_at": str(r.resolved_at) if r.resolved_at else None,
             "resolved_by": r.resolved_by,
         }
