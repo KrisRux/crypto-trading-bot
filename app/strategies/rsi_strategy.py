@@ -16,20 +16,23 @@ class RsiStrategy(Strategy):
     enabled = True
 
     def __init__(self, period: int = 14, oversold: float = 30.0,
-                 overbought: float = 70.0):
+                 overbought: float = 70.0, enabled_in_trend: bool = False):
         self.period = period
         self.oversold = oversold
         self.overbought = overbought
+        self.enabled_in_trend = enabled_in_trend
 
     def get_params(self) -> dict:
         return {
             "period": self.period,
             "oversold": self.oversold,
             "overbought": self.overbought,
+            "enabled_in_trend": self.enabled_in_trend,
             "enabled": self.enabled,
         }
 
-    def generate_signals(self, df: pd.DataFrame, symbol: str) -> list[Signal]:
+    def generate_signals(self, df: pd.DataFrame, symbol: str,
+                         precomputed_adx: float | None = None) -> list[Signal]:
         if len(df) < self.period + 2:
             return []
 

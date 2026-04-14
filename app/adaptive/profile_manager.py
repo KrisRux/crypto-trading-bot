@@ -61,9 +61,20 @@ class ProfileManager:
             self._profiles = self._data.get("profiles", {})
             self._switching_rules = self._data.get("switching_rules", {})
             self._active_profile = self._data.get("active_profile", "normal")
+            # Restore persisted switch_history (survives restarts for daily limit tracking)
+            self._switch_history = self._data.get("switch_history", [])
+            # Restore last switch time from history
+            if self._switch_history:
+                try:
+                    self._last_switch_time = datetime.fromisoformat(
+                        self._switch_history[-1]["at"]
+                    )
+                except (KeyError, ValueError):
+                    pass
             logger.info(
-                "Profiles loaded: %s (active: %s)",
+                "Profiles loaded: %s (active: %s, history: %d switches)",
                 list(self._profiles.keys()), self._active_profile,
+                len(self._switch_history),
             )
         except Exception:
             logger.exception("Failed to load profiles from %s", self._profiles_path)
@@ -131,9 +142,18 @@ class ProfileManager:
             if win_rate >= 55 and drawdown < 1 and perf.get("api_error_count", 0) <= 2:
                 return "normal"
 
-        # Rule 3: normal → aggressive_trend (requires approval)
+        # Rule 3: normal → aggressive_trend (requires approval + min trades)
         if current == "normal" and regime == "trend":
             if win_rate >= 60 and perf.get("pnl_6h", 0) > 0:
+                # Enforce min_trades_for_upgrade before allowing aggressive switch
+                min_trades = self._switching_rules.get("min_trades_for_upgrade", 5)
+                total_recent_trades = perf.get("total_recent_trades", 0)
+                if total_recent_trades < min_trades:
+                    logger.info(
+                        "Profile upgrade blocked: insufficient trades (%d/%d) for aggressive_trend",
+                        total_recent_trades, min_trades,
+                    )
+                    return None
                 return "aggressive_trend"
 
         # Rule 4: aggressive → defensive if things go wrong
@@ -249,9 +269,11 @@ class ProfileManager:
         return True
 
     def _save_active_profile(self):
-        """Persist active_profile to the JSON file."""
+        """Persist active_profile and switch_history to the JSON file."""
         try:
             self._data["active_profile"] = self._active_profile
+            # Persist switch_history (keep last 30 entries to avoid unbounded growth)
+            self._data["switch_history"] = self._switch_history[-30:]
             with open(self._profiles_path, "w") as f:
                 json.dump(self._data, f, indent=2)
         except Exception:

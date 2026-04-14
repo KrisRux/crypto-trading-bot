@@ -39,12 +39,17 @@ class Strategy(ABC):
     enabled: bool = True
 
     @abstractmethod
-    def generate_signals(self, df: pd.DataFrame, symbol: str) -> list[Signal]:
+    def generate_signals(self, df: pd.DataFrame, symbol: str,
+                         precomputed_adx: float | None = None) -> list[Signal]:
         """
         Analyse the OHLCV DataFrame and return trading signals.
 
         Expected DataFrame columns: open, high, low, close, volume
         (indexed by datetime).
+
+        Args:
+            precomputed_adx: if provided, use this ADX value instead of
+                             recomputing internally (avoids redundant computation).
         """
         ...
 

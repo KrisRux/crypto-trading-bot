@@ -16,12 +16,14 @@ class MacdStrategy(Strategy):
     enabled = True
 
     def __init__(self, fast: int = 12, slow: int = 26, signal: int = 9,
-                 adx_period: int = 14, adx_threshold: float = 25.0):
+                 adx_period: int = 14, adx_threshold: float = 25.0,
+                 mode: str = "standalone"):
         self.fast = fast
         self.slow = slow
         self.signal = signal
         self.adx_period = adx_period
         self.adx_threshold = adx_threshold
+        self.mode = mode  # "standalone" | "confirm_only"
 
     def get_params(self) -> dict:
         return {
@@ -30,18 +32,22 @@ class MacdStrategy(Strategy):
             "signal": self.signal,
             "adx_period": self.adx_period,
             "adx_threshold": self.adx_threshold,
+            "mode": self.mode,
             "enabled": self.enabled,
         }
 
-    def generate_signals(self, df: pd.DataFrame, symbol: str) -> list[Signal]:
+    def generate_signals(self, df: pd.DataFrame, symbol: str,
+                         precomputed_adx: float | None = None) -> list[Signal]:
         if len(df) < self.slow + self.signal + 1:
             return []
 
         # ADX filter: only trade MACD crossovers in trending markets (ADX > threshold)
-        if "high" in df.columns and "low" in df.columns and len(df) >= self.adx_period * 2 + 2:
+        adx_val = precomputed_adx
+        if adx_val is None and "high" in df.columns and "low" in df.columns and len(df) >= self.adx_period * 2 + 2:
             adx = Indicators.adx(df["high"], df["low"], df["close"], self.adx_period)
-            if pd.notna(adx.iloc[-1]) and float(adx.iloc[-1]) < self.adx_threshold:
-                return []  # ranging market — MACD crossovers produce false signals
+            adx_val = float(adx.iloc[-1]) if pd.notna(adx.iloc[-1]) else None
+        if adx_val is not None and adx_val < self.adx_threshold:
+            return []  # ranging market — MACD crossovers produce false signals
 
         macd_line, signal_line, _ = Indicators.macd(
             df["close"], self.fast, self.slow, self.signal
@@ -55,6 +61,10 @@ class MacdStrategy(Strategy):
 
         current_price = float(df["close"].iloc[-1])
 
+        # In confirm_only mode, MACD signals are tagged as confirmation-only
+        # so the engine regime gate can suppress them when no embient signal agrees
+        is_confirm = (self.mode == "confirm_only")
+
         # MACD crosses above signal -> BUY
         if prev_macd <= prev_sig and curr_macd > curr_sig:
             return [Signal(
@@ -62,8 +72,9 @@ class MacdStrategy(Strategy):
                 symbol=symbol,
                 price=current_price,
                 strategy_name=self.name,
-                reason="MACD bullish crossover",
+                reason="MACD bullish crossover" + (" [confirm]" if is_confirm else ""),
                 confidence=0.82,
+                metadata={"confirm_only": is_confirm},
             )]
 
         # MACD crosses below signal -> SELL
@@ -73,8 +84,9 @@ class MacdStrategy(Strategy):
                 symbol=symbol,
                 price=current_price,
                 strategy_name=self.name,
-                reason="MACD bearish crossover",
+                reason="MACD bearish crossover" + (" [confirm]" if is_confirm else ""),
                 confidence=0.82,
+                metadata={"confirm_only": is_confirm},
             )]
 
         return []

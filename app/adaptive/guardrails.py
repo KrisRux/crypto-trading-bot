@@ -418,9 +418,11 @@ class EntryThrottle:
             "defensive": 2, "range": 3, "trend": 5, "volatile": 3,
         })
         self.default_max_per_hour = c.get("default_max_entries_per_hour", 3)
-        # Tracking
-        self._candle_entries: dict[str, int] = {}  # f"{symbol}_{candle_key}" -> count
-        self._hourly_entries: list[datetime] = []
+        # Tracking — per-user to avoid cross-user throttling
+        # f"{user_id}_{symbol}_{candle_key}" -> count
+        self._candle_entries: dict[str, int] = {}
+        # user_id -> list[datetime]
+        self._hourly_entries: dict[int, list[datetime]] = {}
         self._current_candle_key: str = ""
 
     def new_candle(self, candle_key: str):
@@ -429,36 +431,38 @@ class EntryThrottle:
             self._candle_entries.clear()
             self._current_candle_key = candle_key
 
-    def record_entry(self, symbol: str):
+    def record_entry(self, symbol: str, user_id: int = 0):
         """Record that a new entry was made."""
-        key = f"{symbol}_{self._current_candle_key}"
+        key = f"{user_id}_{symbol}_{self._current_candle_key}"
         self._candle_entries[key] = self._candle_entries.get(key, 0) + 1
-        self._hourly_entries.append(datetime.now(timezone.utc))
+        self._hourly_entries.setdefault(user_id, []).append(datetime.now(timezone.utc))
 
-    def check(self, symbol: str, global_regime: str) -> TradeVerdict:
+    def check(self, symbol: str, global_regime: str, user_id: int = 0) -> TradeVerdict:
         """Check if entry is allowed given throttle limits."""
         now = datetime.now(timezone.utc)
 
-        # Per-symbol per-candle
-        key = f"{symbol}_{self._current_candle_key}"
+        # Per-symbol per-candle per-user
+        key = f"{user_id}_{symbol}_{self._current_candle_key}"
         candle_count = self._candle_entries.get(key, 0)
         if candle_count >= self.max_per_symbol_per_candle:
             reason = "one_trade_per_candle"
-            logger.info("ENTRY_THROTTLE: blocked | symbol=%s | reason=%s | count=%d",
-                         symbol, reason, candle_count)
+            logger.info("ENTRY_THROTTLE: blocked | symbol=%s user=%d | reason=%s | count=%d",
+                         symbol, user_id, reason, candle_count)
             return TradeVerdict(allowed=False, reason=reason,
                                 details={"candle_count": candle_count})
 
-        # Hourly global limit
+        # Hourly per-user limit
         cutoff = now - timedelta(hours=1)
-        self._hourly_entries = [t for t in self._hourly_entries if t >= cutoff]
+        user_entries = self._hourly_entries.get(user_id, [])
+        user_entries = [t for t in user_entries if t >= cutoff]
+        self._hourly_entries[user_id] = user_entries
         max_hour = self.max_per_hour.get(global_regime, self.default_max_per_hour)
-        if len(self._hourly_entries) >= max_hour:
+        if len(user_entries) >= max_hour:
             reason = f"hourly_limit_{global_regime}"
-            logger.info("ENTRY_THROTTLE: blocked | symbol=%s | reason=%s | entries_this_hour=%d max=%d",
-                         symbol, reason, len(self._hourly_entries), max_hour)
+            logger.info("ENTRY_THROTTLE: blocked | symbol=%s user=%d | reason=%s | entries_this_hour=%d max=%d",
+                         symbol, user_id, reason, len(user_entries), max_hour)
             return TradeVerdict(allowed=False, reason=reason,
-                                details={"hourly_count": len(self._hourly_entries), "max": max_hour})
+                                details={"hourly_count": len(user_entries), "max": max_hour})
 
         return TradeVerdict(allowed=True)
 
@@ -684,6 +688,7 @@ class Guardrails:
         bb_width_pct: float,
         signal_score: float | None = None,
         strategy_name: str = "",
+        user_id: int = 0,
     ) -> TradeVerdict:
         """
         Single entry point: check all guardrails in order.
@@ -742,7 +747,7 @@ class Guardrails:
             return v
 
         # 6. Entry Throttle
-        v = self.entry_throttle.check(symbol, global_regime)
+        v = self.entry_throttle.check(symbol, global_regime, user_id=user_id)
         if not v.allowed:
             self.stats.blocked_entry_throttle += 1
             self.stats.total_blocked += 1

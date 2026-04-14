@@ -86,6 +86,10 @@ class MarketRegimeService:
         )
         return snap
 
+    # Minimum number of symbols that must be defensive before overriding
+    # the global regime to defensive (avoids a single illiquid symbol blocking all trading)
+    DEFENSIVE_OVERRIDE_MIN = 2
+
     def global_regime(self) -> str:
         """Aggregate regime across all tracked symbols (majority vote)."""
         if not self._snapshots:
@@ -94,8 +98,12 @@ class MarketRegimeService:
         counts: dict[str, int] = {}
         for r in regimes:
             counts[r] = counts.get(r, 0) + 1
-        # defensive takes priority if any symbol is defensive
-        if counts.get("defensive", 0) > 0:
+        # defensive takes priority only if enough symbols are defensive
+        defensive_count = counts.get("defensive", 0)
+        if defensive_count >= self.DEFENSIVE_OVERRIDE_MIN:
+            return "defensive"
+        # If only 1 symbol is defensive and there's only 1 symbol total
+        if defensive_count > 0 and len(regimes) <= 1:
             return "defensive"
         return max(counts, key=counts.get)
 

@@ -87,8 +87,10 @@ class MetaController:
             # Collect per-user chat_ids for notifications
             chat_ids = self._get_chat_ids(db)
 
-            # 1. Regime snapshots
-            if dataframes:
+            # 1. Regime snapshots — reuse if already computed by engine in this cycle
+            existing_snaps = self.regime_service.snapshots
+            if dataframes and not existing_snaps:
+                # First cycle or snapshots not yet populated — compute here
                 for symbol, df in dataframes.items():
                     if not df.empty:
                         self.regime_service.compute(df, symbol)

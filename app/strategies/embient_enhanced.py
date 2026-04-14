@@ -506,7 +506,8 @@ class EmbientEnhancedStrategy(Strategy):
     # Main entry point
     # ------------------------------------------------------------------
 
-    def generate_signals(self, df: pd.DataFrame, symbol: str) -> list[Signal]:
+    def generate_signals(self, df: pd.DataFrame, symbol: str,
+                         precomputed_adx: float | None = None) -> list[Signal]:
         min_req = max(
             self.sma_slow,
             self.bb_period,
@@ -517,8 +518,8 @@ class EmbientEnhancedStrategy(Strategy):
             return []
 
         # --- ADX → regime detection ---
-        adx_value: float | None = None
-        if "high" in df.columns and "low" in df.columns:
+        adx_value: float | None = precomputed_adx
+        if adx_value is None and "high" in df.columns and "low" in df.columns:
             adx_series = Indicators.adx(df["high"], df["low"], df["close"], self._ADX_PERIOD)
             if pd.notna(adx_series.iloc[-1]):
                 adx_value = float(adx_series.iloc[-1])

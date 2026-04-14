@@ -35,6 +35,7 @@ class PerformanceSnapshot:
     trades_per_hour: float = 0.0
     cooldown_hits: int = 0
     api_error_count: int = 0
+    total_recent_trades: int = 0  # total closed trades in last 24h (for min_trades_for_upgrade)
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict:
@@ -48,6 +49,7 @@ class PerformanceSnapshot:
             "trades_per_hour": round(self.trades_per_hour, 2),
             "cooldown_hits": self.cooldown_hits,
             "api_error_count": self.api_error_count,
+            "total_recent_trades": self.total_recent_trades,
             "timestamp": self.timestamp,
         }
 
@@ -72,25 +74,35 @@ class PerformanceMonitor:
 
     def compute(self, db: Session) -> PerformanceSnapshot:
         """Compute all metrics from closed trades in the DB."""
-        # Use naive UTC datetime — SQLite stores naive timestamps
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
-        # Fetch recent closed trades (last 24h + extra for streak calc)
+        # Fetch recent closed trades (last 48h + extra for streak calc)
         cutoff_48h = now - timedelta(hours=48)
+
+        # Strip tzinfo for comparison with naive DB timestamps (SQLite)
+        cutoff_48h_naive = cutoff_48h.replace(tzinfo=None)
+        now_naive = now.replace(tzinfo=None)
+
         trades = (
             db.query(Trade)
             .filter(
                 Trade.status == TradeStatus.CLOSED,
-                Trade.closed_at >= cutoff_48h,
+                Trade.closed_at >= cutoff_48h_naive,
             )
             .order_by(Trade.closed_at.desc())
             .all()
         )
 
         # PnL in time windows
-        pnl_1h = sum(t.pnl or 0 for t in trades if t.closed_at and t.closed_at >= now - timedelta(hours=1))
-        pnl_6h = sum(t.pnl or 0 for t in trades if t.closed_at and t.closed_at >= now - timedelta(hours=6))
-        pnl_24h = sum(t.pnl or 0 for t in trades if t.closed_at and t.closed_at >= now - timedelta(hours=24))
+        cutoff_1h = now_naive - timedelta(hours=1)
+        cutoff_6h = now_naive - timedelta(hours=6)
+        cutoff_24h = now_naive - timedelta(hours=24)
+        pnl_1h = sum(t.pnl or 0 for t in trades if t.closed_at and t.closed_at >= cutoff_1h)
+        pnl_6h = sum(t.pnl or 0 for t in trades if t.closed_at and t.closed_at >= cutoff_6h)
+        pnl_24h = sum(t.pnl or 0 for t in trades if t.closed_at and t.closed_at >= cutoff_24h)
+
+        # Total recent trades (last 24h) — for min_trades_for_upgrade check
+        total_recent_trades = sum(1 for t in trades if t.closed_at and t.closed_at >= cutoff_24h)
 
         # Win rate last 10
         last_10 = trades[:10]
@@ -109,11 +121,11 @@ class PerformanceMonitor:
                 break
 
         # Trades per hour (last 6h)
-        trades_6h = [t for t in trades if t.closed_at and t.closed_at >= now - timedelta(hours=6)]
+        trades_6h = [t for t in trades if t.closed_at and t.closed_at >= cutoff_6h]
         trades_per_hour = len(trades_6h) / 6.0
 
         # Intraday drawdown (cumulative PnL curve from midnight UTC)
-        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        midnight = now_naive.replace(hour=0, minute=0, second=0, microsecond=0)
         today_trades = [
             t for t in reversed(trades)
             if t.closed_at and t.closed_at >= midnight
@@ -130,6 +142,7 @@ class PerformanceMonitor:
             trades_per_hour=trades_per_hour,
             cooldown_hits=self._cooldown_hits,
             api_error_count=self._api_errors,
+            total_recent_trades=total_recent_trades,
         )
         self._snapshot = snap
         logger.info(

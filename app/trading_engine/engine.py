@@ -60,9 +60,16 @@ class TradingEngine:
         # Guardrails — centralized pre-trade validation
         self.guardrails = Guardrails()
 
-    # ADX thresholds for regime gate (shared with embient strategy)
+    # ADX period (shared with embient) — threshold read dynamically from embient strategy
     _ADX_PERIOD = 14
-    _TREND_ADX_THRESHOLD = 25.0
+
+    @property
+    def _trend_adx_threshold(self) -> float:
+        """Read ADX trend threshold from the embient strategy instance (synced with profile)."""
+        for strat in self.strategies:
+            if strat.name == "embient_enhanced" and hasattr(strat, "adx_trend_threshold"):
+                return float(strat.adx_trend_threshold)
+        return 25.0  # fallback
 
     @property
     def last_price(self) -> float:
@@ -106,13 +113,14 @@ class TradingEngine:
         df.set_index("datetime", inplace=True)
         return df
 
-    def _run_strategies(self, df: pd.DataFrame, symbol: str) -> list[Signal]:
+    def _run_strategies(self, df: pd.DataFrame, symbol: str,
+                        precomputed_adx: float | None = None) -> list[Signal]:
         all_signals: list[Signal] = []
         for strat in self.strategies:
             if not strat.enabled:
                 continue
             try:
-                signals = strat.generate_signals(df, symbol)
+                signals = strat.generate_signals(df, symbol, precomputed_adx=precomputed_adx)
                 all_signals.extend(signals)
             except Exception:
                 logger.exception("Strategy %s error on %s", strat.name, symbol)
@@ -209,18 +217,6 @@ class TradingEngine:
     # Regime detection + gate
     # ------------------------------------------------------------------
 
-    def _get_adx(self, df: pd.DataFrame) -> float | None:
-        """Compute current ADX from OHLCV DataFrame. Returns None if not computable."""
-        try:
-            if "high" in df.columns and "low" in df.columns and len(df) >= self._ADX_PERIOD * 2:
-                adx_series = Indicators.adx(df["high"], df["low"], df["close"], self._ADX_PERIOD)
-                val = adx_series.iloc[-1]
-                if pd.notna(val):
-                    return float(val)
-        except Exception:
-            logger.debug("ADX computation failed")
-        return None
-
     def _apply_regime_gate(
         self, signals: list[Signal], adx: float | None, symbol: str
     ) -> list[Signal]:
@@ -242,7 +238,9 @@ class TradingEngine:
         if adx is None or not signals:
             return signals
 
-        if adx >= self._TREND_ADX_THRESHOLD:
+        threshold = self._trend_adx_threshold
+
+        if adx >= threshold:
             # Determine embient direction (if any signal was generated)
             embient_sigs = [s for s in signals if s.strategy_name == "embient_enhanced"]
             embient_dir = embient_sigs[0].signal_type if embient_sigs else None
@@ -255,8 +253,16 @@ class TradingEngine:
                         adx, sig.signal_type.value,
                     )
                     continue
-                if sig.strategy_name == "macd_crossover" and embient_dir is not None:
-                    if sig.signal_type != embient_dir:
+                if sig.strategy_name == "macd_crossover":
+                    is_confirm = (sig.metadata or {}).get("confirm_only", False)
+                    # In confirm_only mode, MACD only passes if embient agrees
+                    if is_confirm and embient_dir is None:
+                        logger.info(
+                            "REGIME: TREND (ADX=%.1f) → MACD %s blocked (confirm_only, no embient signal)",
+                            adx, sig.signal_type.value,
+                        )
+                        continue
+                    if embient_dir is not None and sig.signal_type != embient_dir:
                         logger.info(
                             "REGIME: TREND (ADX=%.1f) → MACD %s blocked (misaligned, embient=%s)",
                             adx, sig.signal_type.value, embient_dir.value,
@@ -266,7 +272,10 @@ class TradingEngine:
             return filtered
 
         else:
-            # RANGE: embient only if score >= 80
+            # RANGE: embient only if score >= 80; MACD confirm_only needs embient
+            embient_sigs = [s for s in signals if s.strategy_name == "embient_enhanced"]
+            embient_dir = embient_sigs[0].signal_type if embient_sigs else None
+
             filtered = []
             for sig in signals:
                 if sig.strategy_name == "embient_enhanced":
@@ -278,6 +287,14 @@ class TradingEngine:
                             adx, sig.signal_type.value, score,
                         )
                         continue
+                if sig.strategy_name == "macd_crossover":
+                    is_confirm = (sig.metadata or {}).get("confirm_only", False)
+                    if is_confirm and embient_dir is None:
+                        logger.info(
+                            "REGIME: RANGE (ADX=%.1f) → MACD %s blocked (confirm_only, no embient signal)",
+                            adx, sig.signal_type.value,
+                        )
+                        continue
                 filtered.append(sig)
             return filtered
 
@@ -286,7 +303,8 @@ class TradingEngine:
     # ------------------------------------------------------------------
 
     def _apply_guardrails(self, signals: list[Signal], symbol: str,
-                          global_regime: str, sym_snap) -> list[Signal]:
+                          global_regime: str, sym_snap,
+                          user_id: int = 0) -> list[Signal]:
         """
         Filter BUY signals through the centralized guardrails.
         SELL signals always pass (we never block exits).
@@ -314,6 +332,7 @@ class TradingEngine:
                 bb_width_pct=sym_snap.bb_width_pct,
                 signal_score=score,
                 strategy_name=sig.strategy_name,
+                user_id=user_id,
             )
             if verdict.allowed:
                 filtered.append(sig)
@@ -377,7 +396,9 @@ class TradingEngine:
             logger.info("[%s] conflict: ADX unavailable — skip", symbol)
             return [], []
 
-        if adx >= 25:
+        threshold = self._trend_adx_threshold
+
+        if adx >= threshold:
             # ── TREND: embient priority ──────────────────────────────
             # rsi SELL allowed as exit only if there is an open profitable position
             if rsi_sell and open_trades:
@@ -555,7 +576,7 @@ class TradingEngine:
                 order.user_id = user.id
                 self._last_trade_time[cooldown_key] = datetime.now(timezone.utc)
                 # Record entry in throttle
-                self.guardrails.entry_throttle.record_entry(symbol)
+                self.guardrails.entry_throttle.record_entry(symbol, user_id=user.id)
                 filled_price = order.filled_price or current_price
                 trade = Trade(
                     user_id=user.id, symbol=symbol, side=OrderSide.BUY,
@@ -668,7 +689,7 @@ class TradingEngine:
             tp = self._round_price(symbol, self.risk_manager.calculate_take_profit(current_price))
             self.paper_portfolio.open_position(db, user.id, symbol, qty, current_price, sl, tp)
             self._last_trade_time[cooldown_key] = datetime.now(timezone.utc)
-            self.guardrails.entry_throttle.record_entry(symbol)
+            self.guardrails.entry_throttle.record_entry(symbol, user_id=user.id)
 
         elif sell_signals:
             # Record which trades were open before closing (for guardrails tracking)
@@ -877,7 +898,7 @@ class TradingEngine:
 
                 order.user_id = user.id
                 self._last_trade_time[(user.id, signal.symbol)] = datetime.now(timezone.utc)
-                self.guardrails.entry_throttle.record_entry(signal.symbol)
+                self.guardrails.entry_throttle.record_entry(signal.symbol, user_id=user.id)
                 filled_price = order.filled_price or signal.price
                 trade = Trade(
                     user_id=user.id, symbol=signal.symbol, side=OrderSide.BUY,
@@ -1002,18 +1023,20 @@ class TradingEngine:
                     current_price = float(df["close"].iloc[-1])
                     self.last_prices[symbol] = current_price
 
-                    # Generate signals (shared across all users)
-                    signals = self._run_strategies(df, symbol)
+                    # Use ADX from pre-computed regime snapshot (single computation)
+                    sym_snap = regime_snapshots.get(symbol)
+                    adx = sym_snap.adx if sym_snap else None
+
+                    # Generate signals (shared across all users) — pass pre-computed ADX
+                    signals = self._run_strategies(df, symbol, precomputed_adx=adx)
 
                     # Regime gate: filter signals based on ADX before execution
-                    adx = self._get_adx(df)
                     if adx is not None and signals:
-                        regime_label = "TREND" if adx >= self._TREND_ADX_THRESHOLD else "RANGE"
+                        regime_label = "TREND" if adx >= self._trend_adx_threshold else "RANGE"
                         logger.info("REGIME: %s (ADX=%.1f) [%s]", regime_label, adx, symbol)
                     signals = self._apply_regime_gate(signals, adx, symbol)
 
                     # Guardrails: filter BUY signals through centralized gate
-                    sym_snap = regime_snapshots.get(symbol)
                     if signals:
                         if sym_snap:
                             signals = self._apply_guardrails(signals, symbol, global_regime, sym_snap)
