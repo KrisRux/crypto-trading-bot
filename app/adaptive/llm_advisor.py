@@ -190,10 +190,10 @@ class LLMAdvisor:
                 "news_sentiment": news_sentiment,
             }
 
-        if consec >= 4 or dd >= 1.5 or wr <= 20:
+        if consec >= 4 or dd >= 1.5:
             return {
                 "changes": [],
-                "reasoning": f"No tuning suggested: risk elevated (CL={consec}, DD={dd:.2f}%, WR={wr:.0f}%).",
+                "reasoning": f"No tuning suggested: risk elevated (CL={consec}, DD={dd:.2f}%).",
                 "confidence": 0.0,
                 "risk_level": "high",
                 "source": "safety_gate",
