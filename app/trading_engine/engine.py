@@ -1021,6 +1021,12 @@ class TradingEngine:
                         continue
 
                     current_price = float(df["close"].iloc[-1])
+                    # Use live WebSocket price for TP/SL checks if available —
+                    # candle close is the last *completed* candle, so intracandle
+                    # TP/SL hits would be missed without the live price.
+                    ws_price = self.last_prices.get(symbol, 0.0)
+                    if ws_price > 0:
+                        current_price = ws_price
                     self.last_prices[symbol] = current_price
 
                     # Use ADX from pre-computed regime snapshot (single computation)
