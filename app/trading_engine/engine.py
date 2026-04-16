@@ -132,7 +132,9 @@ class TradingEngine:
 
     async def _execute_for_user(self, db: Session, user: User,
                                 symbol: str, signals: list[Signal],
-                                current_price: float):
+                                current_price: float,
+                                candle_high: float | None = None,
+                                candle_low: float | None = None):
         """Route execution to paper or live path based on user's trading mode."""
         user_mode = user.trading_mode or "paper"
         within_hours = user.is_within_trading_hours()
@@ -140,11 +142,13 @@ class TradingEngine:
         if user_mode == "dry_run":
             await self._execute_dry_run(db, user, symbol, signals, current_price, within_hours)
         elif user_mode == "paper":
-            await self._execute_paper(db, user, symbol, signals, current_price, within_hours)
+            await self._execute_paper(db, user, symbol, signals, current_price, within_hours,
+                                      candle_high=candle_high, candle_low=candle_low)
         elif user_mode == "live":
             if not user.has_api_keys(live=True):
                 return
-            await self._execute_live(db, user, symbol, signals, current_price, within_hours)
+            await self._execute_live(db, user, symbol, signals, current_price, within_hours,
+                                     candle_high=candle_high, candle_low=candle_low)
 
     async def _execute_dry_run(self, db: Session, user: User,
                                symbol: str, signals: list[Signal],
@@ -469,7 +473,9 @@ class TradingEngine:
 
     async def _execute_paper(self, db: Session, user: User,
                              symbol: str, signals: list[Signal],
-                             current_price: float, within_hours: bool):
+                             current_price: float, within_hours: bool,
+                             candle_high: float | None = None,
+                             candle_low: float | None = None):
         """
         Paper trading — two sub-paths:
           • Testnet (preferred): real orders sent to Binance Testnet if keys are configured.
@@ -477,13 +483,17 @@ class TradingEngine:
         Both paths track trades in the DB and share the same risk / cooldown logic.
         """
         if user.has_api_keys(live=False):
-            await self._execute_paper_testnet(db, user, symbol, signals, current_price, within_hours)
+            await self._execute_paper_testnet(db, user, symbol, signals, current_price, within_hours,
+                                              candle_high=candle_high, candle_low=candle_low)
         else:
-            await self._execute_paper_simulated(db, user, symbol, signals, current_price, within_hours)
+            await self._execute_paper_simulated(db, user, symbol, signals, current_price, within_hours,
+                                                candle_high=candle_high, candle_low=candle_low)
 
     async def _execute_paper_testnet(self, db: Session, user: User,
                                      symbol: str, signals: list[Signal],
-                                     current_price: float, within_hours: bool):
+                                     current_price: float, within_hours: bool,
+                                     candle_high: float | None = None,
+                                     candle_low: float | None = None):
         """Paper via Binance Testnet: real orders, virtual money, DB tracking."""
         client = BinanceRestClient(
             api_key=user.get_api_key(live=False),
@@ -501,7 +511,8 @@ class TradingEngine:
         ).all()
         for trade in open_trades:
             result = self.risk_manager.should_close_position(
-                trade.entry_price, current_price, trade.stop_loss, trade.take_profit
+                trade.entry_price, current_price, trade.stop_loss, trade.take_profit,
+                candle_high=candle_high, candle_low=candle_low,
             )
             if result:
                 await self._close_trade(db, user, trade, current_price, result, client, order_mgr)
@@ -609,10 +620,15 @@ class TradingEngine:
 
     async def _execute_paper_simulated(self, db: Session, user: User,
                                        symbol: str, signals: list[Signal],
-                                       current_price: float, within_hours: bool):
+                                       current_price: float, within_hours: bool,
+                                       candle_high: float | None = None,
+                                       candle_low: float | None = None):
         """Paper simulation fallback — no API keys needed, virtual portfolio in DB."""
         # Check TP/SL on open paper positions (always, even outside trading hours)
-        closed_positions = self.paper_portfolio.check_tp_sl_symbol(db, user.id, symbol, current_price)
+        closed_positions = self.paper_portfolio.check_tp_sl_symbol(
+            db, user.id, symbol, current_price,
+            candle_high=candle_high, candle_low=candle_low,
+        )
         for pos, reason in (closed_positions or []):
             # Record in guardrails for cooldown/breaker tracking
             pnl = (current_price - pos.entry_price) * pos.quantity if pos.entry_price else 0
@@ -708,7 +724,9 @@ class TradingEngine:
 
     async def _execute_live(self, db: Session, user: User,
                             symbol: str, signals: list[Signal],
-                            current_price: float, within_hours: bool):
+                            current_price: float, within_hours: bool,
+                            candle_high: float | None = None,
+                            candle_low: float | None = None):
         """Live trading: place real orders on Binance using the user's API keys."""
         client = BinanceRestClient(
             api_key=user.get_api_key(live=True),
@@ -727,7 +745,8 @@ class TradingEngine:
         for trade in open_trades:
             result = self.risk_manager.should_close_position(
                 trade.entry_price, current_price,
-                trade.stop_loss, trade.take_profit
+                trade.stop_loss, trade.take_profit,
+                candle_high=candle_high, candle_low=candle_low,
             )
             if result:
                 await self._close_trade(db, user, trade, current_price, result, client, order_mgr)
@@ -1021,11 +1040,13 @@ class TradingEngine:
                         continue
 
                     current_price = float(df["close"].iloc[-1])
-                    # Use live WebSocket price for TP/SL checks if available —
-                    # candle close is the last *completed* candle, so intracandle
-                    # TP/SL hits would be missed without the live price.
+                    candle_high   = float(df["high"].iloc[-1])
+                    candle_low    = float(df["low"].iloc[-1])
+                    # Supplement with live WebSocket price for the current open candle
                     ws_price = self.last_prices.get(symbol, 0.0)
                     if ws_price > 0:
+                        candle_high = max(candle_high, ws_price)
+                        candle_low  = min(candle_low,  ws_price)
                         current_price = ws_price
                     self.last_prices[symbol] = current_price
 
@@ -1079,7 +1100,8 @@ class TradingEngine:
                     for user in active_users:
                         try:
                             await self._execute_for_user(
-                                db, user, symbol, signals, current_price
+                                db, user, symbol, signals, current_price,
+                                candle_high=candle_high, candle_low=candle_low,
                             )
                         except Exception:
                             logger.exception("Error executing for user %d on %s",

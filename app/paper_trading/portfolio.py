@@ -142,21 +142,26 @@ class PaperPortfolioManager:
             self.close_position(db, pos, exit_price, reason="signal_sell")
 
     def check_tp_sl_symbol(self, db: Session, user_id: int,
-                           symbol: str, current_price: float) -> list[tuple]:
+                           symbol: str, current_price: float,
+                           candle_high: float | None = None,
+                           candle_low: float | None = None) -> list[tuple]:
         positions = db.query(PaperPosition).filter(
             PaperPosition.user_id == user_id,
             PaperPosition.symbol == symbol,
         ).all()
+
+        high = candle_high if candle_high is not None else current_price
+        low  = candle_low  if candle_low  is not None else current_price
 
         closed = []
         for pos in positions:
             pos.current_price = current_price
             pos.unrealized_pnl = (current_price - pos.entry_price) * pos.quantity
 
-            if pos.take_profit and current_price >= pos.take_profit:
+            if pos.take_profit and (high >= pos.take_profit or current_price >= pos.take_profit):
                 self.close_position(db, pos, current_price, "take_profit")
                 closed.append((pos, "take_profit"))
-            elif pos.stop_loss and current_price <= pos.stop_loss:
+            elif pos.stop_loss and (low <= pos.stop_loss or current_price <= pos.stop_loss):
                 self.close_position(db, pos, current_price, "stop_loss")
                 closed.append((pos, "stop_loss"))
 

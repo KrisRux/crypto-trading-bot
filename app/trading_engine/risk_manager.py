@@ -44,14 +44,25 @@ class RiskManager:
         return round(tp, 2)
 
     def should_close_position(self, entry_price: float, current_price: float,
-                              stop_loss: float, take_profit: float) -> str | None:
+                              stop_loss: float, take_profit: float,
+                              candle_high: float | None = None,
+                              candle_low: float | None = None) -> str | None:
         """
         Check if a position should be closed.
+
+        Uses candle high/low to detect intracandle TP/SL hits (consistent with
+        backtesting). current_price supplements for the live candle not yet closed.
+
         Returns 'tp' if take-profit hit, 'sl' if stop-loss hit, None otherwise.
         """
-        if current_price >= take_profit:
+        high = candle_high if candle_high is not None else current_price
+        low  = candle_low  if candle_low  is not None else current_price
+
+        # TP: candle reached take-profit level, or live price already above it
+        if high >= take_profit or current_price >= take_profit:
             return "tp"
-        if current_price <= stop_loss:
+        # SL: candle reached stop-loss level, or live price already below it
+        if low <= stop_loss or current_price <= stop_loss:
             return "sl"
         return None
 
