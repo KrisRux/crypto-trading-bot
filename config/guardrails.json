@@ -24,9 +24,9 @@
     },
     "range": {
       "require_symbol_trend": true,
-      "min_adx": 28,
+      "min_adx": 25,
       "min_volume_ratio": 1.0,
-      "min_bb_width_pct": 1.4
+      "min_bb_width_pct": 0.8
     },
     "trend": {
       "require_symbol_trend": true,
@@ -40,7 +40,7 @@
       "min_volume_ratio": 1.4,
       "min_bb_width_pct": 1.0
     },
-    "block_entry_on_symbol_regime": ["range", "defensive"]
+    "block_entry_on_symbol_regime": ["defensive"]
   },
   "dynamic_score": {
     "base_min_score": 80,

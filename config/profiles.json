@@ -52,8 +52,8 @@
           "neutral_sell_threshold": 75.0
         },
         "rsi_reversal": {
-          "oversold": 22.0,
-          "overbought": 78.0,
+          "oversold": 25.0,
+          "overbought": 75.0,
           "enabled_in_trend": false
         },
         "macd_crossover": {

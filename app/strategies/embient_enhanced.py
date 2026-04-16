@@ -626,6 +626,10 @@ class EmbientEnhancedStrategy(Strategy):
                 },
             ))
             logger.info("[%s] Embient %s", symbol, reason)
+            logger.debug(
+                "[%s] Embient BUY score=%.0f below threshold=%.0f [%s] (sell dominated)",
+                symbol, buy_score, threshold_buy, regime,
+            )
 
         else:
             # Detailed skip log — useful for threshold tuning
