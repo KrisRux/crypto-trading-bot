@@ -45,42 +45,40 @@ MAX_DELTA = {
     "base_min_score": 5,
 }
 
-SYSTEM_PROMPT = """You are an expert crypto trading bot tuning advisor specialized in quantitative analysis.
-You analyze bot metrics and suggest SAFE, SMALL adjustments to guardrails parameters.
+SYSTEM_PROMPT = """You are a parameter optimization advisor for a crypto trading bot.
+You analyze bot performance metrics and suggest concrete, data-driven parameter adjustments.
 
 RULES:
-- NEVER suggest changes when consecutive_losses >= 4 or drawdown >= 1.5%
-- NEVER suggest large changes. Max adjustment: ADX +-4, volume +-0.4, score +-5
-- ONLY suggest loosening when block_rate is high AND risk is low
-- ONLY suggest tightening when losses are increasing
-- If conditions are normal, respond with zero changes
-- Consider news sentiment: bearish news = no loosening
-- Each suggestion MUST have a reason grounded in the data
+- ALWAYS suggest at least 1 change when win_rate < 35% OR block_rate > 60%, even if other metrics look stable
+- NEVER suggest large changes — max adjustment is 15% of the current value per parameter
+- When risk is elevated (consecutive_losses >= 4 or drawdown >= 1.5%), ONLY suggest tightening
+- When block_rate is high (> 60%), prioritize loosening the dominant block reason threshold
+- Consider news sentiment: bearish sentiment = no loosening of entry thresholds
+- Each change MUST cite the specific metric that justifies it
 - Respond with valid JSON only"""
 
-USER_PROMPT_TEMPLATE = """Analyze this crypto trading bot state and suggest guardrails parameter adjustments.
+USER_PROMPT_TEMPLATE = """You are a parameter optimization advisor for a crypto trading bot.
+Your job is to suggest concrete, data-driven parameter adjustments — even when the bot is stable but underperforming.
 
-## Bot Metrics
-- Global market regime: {global_regime}
-- Active profile: {active_profile}
-- Win rate (last 10 trades): {win_rate:.1f}%
-- Consecutive losses: {consecutive_losses}
-- Intraday drawdown: {drawdown:.2f}%
-- PnL 24h: {pnl_24h:.2f} USDT
-- Trades per hour: {trades_per_hour:.2f}
-- Signals blocked: {total_blocked} | Signals passed: {total_passed}
-- Block rate: {block_rate:.0f}%
+## Performance Metrics
+- Global regime: {global_regime} | Active profile: {active_profile}
+- Win rate (last 10 trades): {win_rate:.1f}% — TARGET: >35%
+- Consecutive losses: {consecutive_losses} | Intraday drawdown: {drawdown:.2f}%
+- PnL 24h: {pnl_24h:.2f} USDT | Trades per hour: {trades_per_hour:.2f}
+- Signals blocked: {total_blocked} | Passed: {total_passed} | Block rate: {block_rate:.0f}%
 - Dominant block reason: {top_block_source}
 
-## Current Guardrails Config (trade_gate for "{gate_regime}" regime)
-- min_adx: {current_adx}
-- min_volume_ratio: {current_volume}
-- min_bb_width_pct: {current_bb}
-- base_min_score: {current_base_score}
-- max_score_cap: {current_max_cap}
-- EFFECTIVE dynamic_score_min (after losses+regime penalty): {effective_min_score}
-- Blocked by dynamic_score: {blocked_score_count}
-- Blocked by trade_gate: {blocked_gate_count}
+## Current Trade Gate ({gate_regime} regime)
+- min_adx: {current_adx} | min_volume_ratio: {current_volume} | min_bb_width_pct: {current_bb}
+- base_min_score: {current_base_score} | max_score_cap: {current_max_cap}
+- effective dynamic_score_min (after penalties): {effective_min_score}
+- Blocked by dynamic_score: {blocked_score_count} | Blocked by trade_gate: {blocked_gate_count}
+
+## Strategy Parameters (current values)
+{strategy_params_section}
+
+## Kill Switch & Guardrails State
+{guardrails_section}
 
 ## Per-Symbol Market Data
 {symbol_regimes}
@@ -88,17 +86,39 @@ USER_PROMPT_TEMPLATE = """Analyze this crypto trading bot state and suggest guar
 ## News Sentiment
 {news_section}
 
-Respond with exactly this JSON structure:
+## Instructions
+- If win_rate < 35%: suggest loosening entry filters OR tightening exit thresholds to improve selectivity
+- If block_rate > 60%: suggest relaxing the dominant block reason threshold by 10-15%
+- If trades_per_hour < 0.5 in a TREND regime: the bot is too conservative — suggest specific relaxations
+- If consecutive_losses >= 3: suggest tightening score thresholds or reducing position exposure
+- Always suggest at least 1 change unless all metrics are at target AND block_rate < 30%
+- Prefer small incremental changes (10-15% of current value), never suggest changes >30% of current value
+- You may suggest changes to: trade_gate thresholds, dynamic_score thresholds, strategy score thresholds
+
+Respond with exactly this JSON (changes array may contain 1-3 items):
 {{
   "changes": [
-    {{"path": "trade_gate.{gate_regime}.min_adx", "from": {current_adx}, "to": <new_value>, "reason": "<data-driven reason>"}}
+    {{
+      "path": "<full.parameter.path>",
+      "from": <current_value>,
+      "to": <new_value>,
+      "reason": "<specific metric that justifies this change>"
+    }}
   ],
-  "reasoning": "<1-2 sentence explanation of the overall recommendation>",
+  "reasoning": "<2-3 sentences: what is the main bottleneck and what do these changes address>",
   "confidence": <float 0.0 to 1.0>,
   "risk_level": "<low|medium|high>"
 }}
 
-If no changes are needed, return: {{"changes": [], "reasoning": "<why current config is fine>", "confidence": 0.0, "risk_level": "low"}}"""
+Valid path examples:
+- trade_gate.{gate_regime}.min_adx
+- trade_gate.{gate_regime}.min_volume_ratio
+- trade_gate.{gate_regime}.min_bb_width_pct
+- dynamic_score.base_min_score
+- dynamic_score.extra_score_in_bad_regime
+- embient_enhanced.trend_buy_threshold
+- embient_enhanced.range_buy_threshold
+- embient_enhanced.range_sell_threshold"""
 
 
 async def check_deepseek(api_key: str) -> bool:
@@ -130,6 +150,7 @@ async def generate_suggestions(
     api_key: str,
     model: str = DEFAULT_MODEL,
     news_sentiment: dict | None = None,
+    strategy_params: dict | None = None,
 ) -> dict | None:
     """
     Call DeepSeek API to generate tuning suggestions.
@@ -168,6 +189,31 @@ async def generate_suggestions(
     else:
         news_section = "Not available"
 
+    # Strategy parameters (embient thresholds, macd mode, etc.)
+    if strategy_params:
+        sp_lines = []
+        for name, params in strategy_params.items():
+            # Show only tunable numeric/string params, skip noise
+            tunable = {k: v for k, v in params.items()
+                       if not isinstance(v, bool) and k != "enabled"}
+            sp_lines.append(f"- {name}: {json.dumps(tunable)}")
+        strategy_params_section = "\n".join(sp_lines) if sp_lines else "  No data"
+    else:
+        strategy_params_section = "  Not provided"
+
+    # Kill switch and risk state from guardrails_status + config
+    ks_status = guardrails_status.get("kill_switch", {})
+    ks_cfg = guardrails_config.get("kill_switch", {})
+    guardrails_section = (
+        f"- kill_switch: active={ks_status.get('active', False)} "
+        f"reason={ks_status.get('reason', '—')} "
+        f"consec_threshold={ks_cfg.get('consecutive_losses_threshold', 6)} "
+        f"wr_threshold={ks_cfg.get('low_win_rate_threshold', 15)}%\n"
+        f"- risk_multiplier: {guardrails_status.get('risk_multiplier', 1.0):.2f}\n"
+        f"- dynamic_score_min (current): {guardrails_status.get('dynamic_score_min', 80)}\n"
+        f"- symbol_cooldowns_active: {len(guardrails_status.get('symbol_cooldowns', {}))}"
+    )
+
     prompt = USER_PROMPT_TEMPLATE.format(
         global_regime=global_regime,
         active_profile=perf.get("active_profile", "unknown"),
@@ -189,6 +235,8 @@ async def generate_suggestions(
         effective_min_score=guardrails_status.get("dynamic_score_min", 80),
         blocked_score_count=stats.get("blocked_dynamic_score", 0),
         blocked_gate_count=stats.get("blocked_trade_gate", 0),
+        strategy_params_section=strategy_params_section,
+        guardrails_section=guardrails_section,
         symbol_regimes=symbol_regimes,
         news_section=news_section,
     )

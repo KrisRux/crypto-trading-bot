@@ -222,6 +222,12 @@ class MetaController:
         guardrails = getattr(self._engine, "guardrails", None)
         if guardrails is None:
             return
+        # Build strategy params dict from live strategy instances
+        strategy_params = {
+            s.name: s.get_params()
+            for s in getattr(self._engine, "strategies", [])
+            if hasattr(s, "get_params")
+        }
         try:
             tuning = await self.advisor.generate_tuning_suggestions(
                 perf=perf_dict,
@@ -229,6 +235,7 @@ class MetaController:
                 guardrails_config=guardrails._cfg,
                 regime_snapshot=regime_snapshot,
                 news_sentiment=self.news_sentiment.snapshot.to_dict(),
+                strategy_params=strategy_params or None,
             )
         except Exception:
             logger.exception("LLM tuning: generate failed")

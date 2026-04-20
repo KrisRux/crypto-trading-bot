@@ -184,6 +184,7 @@ class LLMAdvisor:
         guardrails_config: dict,
         regime_snapshot: dict,
         news_sentiment: dict | None = None,
+        strategy_params: dict | None = None,
     ) -> dict:
         """
         Generate guardrails tuning suggestions.
@@ -244,7 +245,7 @@ class LLMAdvisor:
 
         llm_args = dict(perf=perf, guardrails_status=guardrails_status,
                         guardrails_config=guardrails_config, regime_snapshot=regime_snapshot,
-                        news_sentiment=news_sentiment)
+                        news_sentiment=news_sentiment, strategy_params=strategy_params)
 
         def _apply_tighten_filter(result: dict) -> dict:
             """If risk is elevated, keep only tightening suggestions."""
