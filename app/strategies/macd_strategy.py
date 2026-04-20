@@ -17,13 +17,17 @@ class MacdStrategy(Strategy):
 
     def __init__(self, fast: int = 12, slow: int = 26, signal: int = 9,
                  adx_period: int = 14, adx_threshold: float = 25.0,
-                 mode: str = "standalone"):
+                 mode: str = "independent"):
         self.fast = fast
         self.slow = slow
         self.signal = signal
         self.adx_period = adx_period
         self.adx_threshold = adx_threshold
-        self.mode = mode  # "standalone" | "confirm_only"
+        # Modes:
+        #   "independent" — MACD trades on its own, no dependency on other strategies
+        #   "standalone"  — legacy alias for "independent" (kept for back-compat)
+        #   "confirm_only" — suppressed unless embient agrees (conservative)
+        self.mode = mode
 
     def get_params(self) -> dict:
         return {
@@ -61,9 +65,12 @@ class MacdStrategy(Strategy):
 
         current_price = float(df["close"].iloc[-1])
 
-        # In confirm_only mode, MACD signals are tagged as confirmation-only
-        # so the engine regime gate can suppress them when no embient signal agrees
+        # Mode is passed to the engine via metadata so the regime gate can
+        # apply different rules (independent trades on its own, confirm_only
+        # waits for embient agreement).
         is_confirm = (self.mode == "confirm_only")
+        mode_tag = self.mode
+        tag_suffix = f" [{mode_tag}]"
 
         # MACD crosses above signal -> BUY
         if prev_macd <= prev_sig and curr_macd > curr_sig:
@@ -72,9 +79,9 @@ class MacdStrategy(Strategy):
                 symbol=symbol,
                 price=current_price,
                 strategy_name=self.name,
-                reason="MACD bullish crossover" + (" [confirm]" if is_confirm else ""),
+                reason="MACD bullish crossover" + tag_suffix,
                 confidence=0.82,
-                metadata={"confirm_only": is_confirm},
+                metadata={"confirm_only": is_confirm, "mode": mode_tag},
             )]
 
         # MACD crosses below signal -> SELL
@@ -84,9 +91,9 @@ class MacdStrategy(Strategy):
                 symbol=symbol,
                 price=current_price,
                 strategy_name=self.name,
-                reason="MACD bearish crossover" + (" [confirm]" if is_confirm else ""),
+                reason="MACD bearish crossover" + tag_suffix,
                 confidence=0.82,
-                metadata={"confirm_only": is_confirm},
+                metadata={"confirm_only": is_confirm, "mode": mode_tag},
             )]
 
         return []

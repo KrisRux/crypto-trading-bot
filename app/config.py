@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
     ollama_url: str = Field(default="http://localhost:11434", alias="OLLAMA_URL")
     ollama_model: str = Field(default="mistral", alias="OLLAMA_MODEL")
+    # When True, the meta controller auto-applies LLM tuning suggestions with
+    # confidence >= threshold and non-high risk. When False, suggestions are
+    # only logged (advisory mode).
+    enable_llm_tuning: bool = Field(default=False, alias="ENABLE_LLM_TUNING")
+    llm_tuning_min_confidence: float = Field(default=0.6, alias="LLM_TUNING_MIN_CONFIDENCE")
 
     # Server
     backend_host: str = Field(default="0.0.0.0", alias="BACKEND_HOST")

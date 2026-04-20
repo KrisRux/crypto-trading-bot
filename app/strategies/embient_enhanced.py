@@ -74,12 +74,14 @@ class EmbientEnhancedStrategy(Strategy):
     def __init__(
         self,
         skills_library: SkillsLibrary | None = None,
-        # Per-regime score thresholds (0-100) — see presets in module docstring
-        trend_buy_threshold: float = 65.0,
-        trend_sell_threshold: float = 65.0,
-        range_buy_threshold: float = 60.0,
-        range_sell_threshold: float = 60.0,
-        neutral_sell_threshold: float = 72.0,   # exits only in neutral mode
+        # Per-regime score thresholds (0-100).
+        # Defaults align with the "normal" profile in config/profiles.json —
+        # profiles overwrite these at runtime via set_params().
+        trend_buy_threshold: float = 80.0,
+        trend_sell_threshold: float = 75.0,
+        range_buy_threshold: float = 80.0,
+        range_sell_threshold: float = 75.0,
+        neutral_sell_threshold: float = 70.0,   # exits only in neutral mode
         # SMA
         sma_fast: int = 9,
         sma_slow: int = 21,

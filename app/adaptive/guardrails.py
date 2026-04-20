@@ -117,12 +117,21 @@ class KillSwitch:
         self._reason = ""
         self._value: Any = None
         self._pause_until: datetime | None = None
+        # Timestamp of the last deactivation — used as a cutoff so that
+        # consecutive_losses is computed only on trades AFTER the pause
+        # expired, avoiding immediate re-activation caused by stale losses.
+        self._last_deactivated_at: datetime | None = None
 
     @property
     def active(self) -> bool:
         if self._pause_until and datetime.now(timezone.utc) >= self._pause_until:
             self._deactivate()
         return self._active
+
+    @property
+    def last_deactivated_at(self) -> datetime | None:
+        """Timestamp of last pause expiry — used as cutoff for consec_losses."""
+        return self._last_deactivated_at
 
     def update(self, perf: dict):
         """Re-evaluate kill switch conditions from performance snapshot."""
@@ -163,11 +172,12 @@ class KillSwitch:
         )
 
     def _deactivate(self):
-        logger.info("KILL_SWITCH: expired | trading re-enabled")
+        logger.info("KILL_SWITCH: expired | trading re-enabled | consec_losses reset barrier set")
         self._active = False
         self._reason = ""
         self._value = None
         self._pause_until = None
+        self._last_deactivated_at = datetime.now(timezone.utc)
 
     def check(self) -> TradeVerdict:
         if self.active:
@@ -623,9 +633,18 @@ class Guardrails:
         self._perf: dict = {}
         logger.info("Guardrails initialized from %s", CONFIG_PATH)
 
-    def reload_config(self):
-        """Hot-reload config from disk. Only updates thresholds, preserves runtime state."""
-        self._cfg = _load_config()
+    def reload_config(self, from_disk: bool = True):
+        """
+        Hot-reload config. Only updates thresholds, preserves runtime state.
+
+        Args:
+            from_disk: if True (default) reload from the JSON file.
+                       If False, re-apply the current in-memory ``self._cfg``
+                       (used after ``apply_tuning_change`` to propagate
+                       changes without disk I/O).
+        """
+        if from_disk:
+            self._cfg = _load_config()
         # Stateless components: safe to recreate (they only hold thresholds)
         self.trade_gate = TradeGate(self._cfg)
         self.dynamic_score = DynamicScoreFilter(self._cfg)
@@ -656,6 +675,45 @@ class Guardrails:
         self.strategy_breaker.pause_min = scb_cfg.get("pause_minutes", 120)
 
         logger.info("Guardrails config reloaded (state preserved)")
+
+    def apply_tuning_change(self, change: dict) -> bool:
+        """
+        Apply a single tuning change (from LLM advisor) to the in-memory config
+        and re-apply thresholds to affected components.
+
+        Args:
+            change: {"path": "a.b.c", "from": old, "to": new, "reason": str}
+
+        Returns:
+            True if applied, False if rejected (invalid path/type).
+        """
+        path = change.get("path")
+        new_val = change.get("to")
+        if not path or new_val is None:
+            logger.warning("TUNING: rejected change with missing path/to: %s", change)
+            return False
+
+        parts = path.split(".")
+        node = self._cfg
+        for p in parts[:-1]:
+            if not isinstance(node, dict) or p not in node:
+                logger.warning("TUNING: rejected change, invalid path %s", path)
+                return False
+            node = node[p]
+        leaf = parts[-1]
+        if not isinstance(node, dict) or leaf not in node:
+            logger.warning("TUNING: rejected change, leaf %s not found in %s", leaf, path)
+            return False
+
+        old_val = node[leaf]
+        node[leaf] = new_val
+        logger.info(
+            "TUNING_APPLIED: %s %s -> %s (%s)",
+            path, old_val, new_val, change.get("reason", ""),
+        )
+        # Propagate to components without touching disk
+        self.reload_config(from_disk=False)
+        return True
 
     def update_performance(self, perf: dict):
         """Update cached performance snapshot and re-evaluate kill switch."""

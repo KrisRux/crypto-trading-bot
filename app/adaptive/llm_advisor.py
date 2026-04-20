@@ -25,6 +25,39 @@ _MAX_ADX_DELTA = 3      # max ADX change per suggestion (was 4 but effective lim
 _MAX_VOLUME_DELTA = 0.3  # max volume ratio change per suggestion (was 0.4 but effective was 0.3)
 _MAX_SCORE_DELTA = 3    # max base_min_score change per suggestion (was 5 but effective was 3)
 
+# Classify parameter direction — True if raising the value tightens (makes entries harder)
+# For fields not listed, direction is inferred as ambiguous and changes are kept.
+_TIGHTEN_ON_INCREASE = {
+    "min_adx", "min_volume_ratio", "min_bb_width_pct",
+    "base_min_score", "min_score_after_3_losses", "min_score_after_5_losses",
+    "extra_score_in_bad_regime", "max_score_cap",
+    "consecutive_losses_threshold",  # lower = earlier circuit break = tighter? Actually higher = looser. Higher threshold → tolerate more losses → looser
+}
+_LOOSEN_ON_INCREASE = {
+    "max_entries_per_hour", "max_entries_per_symbol_per_candle",
+    "max_position_pct", "pnl_24h_threshold",  # less negative = looser
+}
+
+
+def _is_tightening(change: dict) -> bool:
+    """Return True if a change tightens constraints (makes entries harder / safer)."""
+    path = change.get("path", "")
+    field = path.split(".")[-1] if "." in path else path
+    try:
+        new_val = float(change.get("to", 0))
+        old_val = float(change.get("from", 0)) if change.get("from") is not None else new_val
+    except (TypeError, ValueError):
+        return True  # keep if unclear — better safe
+    delta = new_val - old_val
+    if delta == 0:
+        return True
+    if field in _TIGHTEN_ON_INCREASE:
+        return delta > 0
+    if field in _LOOSEN_ON_INCREASE:
+        return delta < 0
+    # Unknown field → keep (don't filter) during tighten-only mode
+    return True
+
 
 class LLMAdvisor:
     """
@@ -173,36 +206,60 @@ class LLMAdvisor:
         from app.adaptive.ollama_client import generate_suggestions as ollama_generate, check_ollama
         from app.config import settings
 
-        # Safety gate (applied regardless of source)
+        # Safety gate (applied regardless of source).
+        # Two tiers:
+        #   EXTREME: block ALL suggestions (wait for conditions to normalize)
+        #   ELEVATED: allow LLM to run but keep only tightening suggestions
         consec = perf.get("consecutive_losses", 0)
         dd = perf.get("drawdown_intraday", 0)
         wr = perf.get("win_rate_last_10", 0)
+        total_trades = perf.get("total_recent_trades", 0)
         sentiment_score = (news_sentiment or {}).get("score", 0)
+        sentiment_available = bool(news_sentiment and news_sentiment.get("available"))
 
-        # Block loosening when news are very bearish
-        if news_sentiment and news_sentiment.get("available") and sentiment_score < -0.3:
+        # EXTREME: everything off
+        if (consec >= 7
+            or dd >= 3.0
+            or (sentiment_available and sentiment_score < -0.5)
+            or (total_trades >= 10 and wr <= 10)):
             return {
                 "changes": [],
-                "reasoning": f"No loosening: news sentiment bearish ({sentiment_score:.2f}). Headlines suggest caution.",
+                "reasoning": (
+                    f"No tuning: extreme risk (CL={consec}, DD={dd:.2f}%, WR={wr:.0f}%, "
+                    f"sentiment={sentiment_score:.2f})."
+                ),
                 "confidence": 0.0,
                 "risk_level": "high",
                 "source": "safety_gate",
                 "news_sentiment": news_sentiment,
             }
 
-        if consec >= 4 or dd >= 1.5 or (perf.get("total_recent_trades", 0) >= 5 and wr <= 20):
-            return {
-                "changes": [],
-                "reasoning": f"No tuning suggested: risk elevated (CL={consec}, DD={dd:.2f}%, WR={wr:.0f}%).",
-                "confidence": 0.0,
-                "risk_level": "high",
-                "source": "safety_gate",
-                "news_sentiment": news_sentiment,
-            }
+        # ELEVATED: allow LLM but restrict to tightening
+        tighten_only = (
+            consec >= 4
+            or dd >= 1.5
+            or (sentiment_available and sentiment_score < -0.3)
+            or (total_trades >= 10 and wr <= 20)
+        )
 
         llm_args = dict(perf=perf, guardrails_status=guardrails_status,
                         guardrails_config=guardrails_config, regime_snapshot=regime_snapshot,
                         news_sentiment=news_sentiment)
+
+        def _apply_tighten_filter(result: dict) -> dict:
+            """If risk is elevated, keep only tightening suggestions."""
+            if not tighten_only or not result.get("changes"):
+                return result
+            kept = [c for c in result["changes"] if _is_tightening(c)]
+            dropped = len(result["changes"]) - len(kept)
+            result["changes"] = kept
+            if dropped:
+                result["reasoning"] = (
+                    f"{result.get('reasoning','')} [tighten-only mode: "
+                    f"{dropped} loosening suggestion(s) dropped]"
+                ).strip()
+                result["risk_level"] = "high"
+            return result
 
         # 1. Try DeepSeek API first (fast, cheap, best quality)
         if settings.deepseek_api_key:
@@ -211,12 +268,13 @@ class LLMAdvisor:
                     **llm_args, api_key=settings.deepseek_api_key, model=settings.deepseek_model,
                 )
                 if result is not None:
+                    result = _apply_tighten_filter(result)
                     result["source"] = "deepseek"
                     result["news_sentiment"] = news_sentiment
                     logger.info(
-                        "TUNING_ADVISOR [deepseek]: %d suggestions | confidence=%.0f%% | risk=%s | sentiment=%.2f",
+                        "TUNING_ADVISOR [deepseek]: %d suggestions | confidence=%.0f%% | risk=%s | sentiment=%.2f%s",
                         len(result["changes"]), result["confidence"] * 100, result["risk_level"],
-                        sentiment_score,
+                        sentiment_score, " [tighten-only]" if tighten_only else "",
                     )
                     return result
                 logger.warning("TUNING_ADVISOR: DeepSeek returned None, trying Ollama")
@@ -231,12 +289,13 @@ class LLMAdvisor:
                     **llm_args, ollama_url=settings.ollama_url, model=settings.ollama_model,
                 )
                 if result is not None:
+                    result = _apply_tighten_filter(result)
                     result["source"] = "ollama"
                     result["news_sentiment"] = news_sentiment
                     logger.info(
-                        "TUNING_ADVISOR [ollama]: %d suggestions | confidence=%.0f%% | risk=%s | sentiment=%.2f",
+                        "TUNING_ADVISOR [ollama]: %d suggestions | confidence=%.0f%% | risk=%s | sentiment=%.2f%s",
                         len(result["changes"]), result["confidence"] * 100, result["risk_level"],
-                        sentiment_score,
+                        sentiment_score, " [tighten-only]" if tighten_only else "",
                     )
                     return result
                 logger.warning("TUNING_ADVISOR: Ollama returned None, falling back to rules")
@@ -245,6 +304,7 @@ class LLMAdvisor:
 
         # 3. Fallback: rule-based engine
         result = self._rule_based_suggestions(perf, guardrails_status, guardrails_config, regime_snapshot)
+        result = _apply_tighten_filter(result)
         result["news_sentiment"] = news_sentiment
 
         if news_sentiment and news_sentiment.get("available") and sentiment_score < -0.1 and result["changes"]:

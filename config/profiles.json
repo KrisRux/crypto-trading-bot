@@ -23,7 +23,7 @@
           "enabled_in_trend": false
         },
         "macd_crossover": {
-          "mode": "confirm_only"
+          "mode": "independent"
         },
         "sma_crossover": {
           "adx_threshold": 25.0
@@ -57,7 +57,7 @@
           "enabled_in_trend": false
         },
         "macd_crossover": {
-          "mode": "confirm_only"
+          "mode": "independent"
         },
         "sma_crossover": {
           "adx_threshold": 25.0
@@ -91,7 +91,7 @@
           "enabled_in_trend": false
         },
         "macd_crossover": {
-          "mode": "confirm_only"
+          "mode": "independent"
         },
         "sma_crossover": {
           "adx_threshold": 25.0

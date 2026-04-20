@@ -258,20 +258,21 @@ class TradingEngine:
                     )
                     continue
                 if sig.strategy_name == "macd_crossover":
-                    is_confirm = (sig.metadata or {}).get("confirm_only", False)
-                    # In confirm_only mode, MACD only passes if embient agrees
-                    if is_confirm and embient_dir is None:
-                        logger.info(
-                            "REGIME: TREND (ADX=%.1f) → MACD %s blocked (confirm_only, no embient signal)",
-                            adx, sig.signal_type.value,
-                        )
-                        continue
-                    if embient_dir is not None and sig.signal_type != embient_dir:
-                        logger.info(
-                            "REGIME: TREND (ADX=%.1f) → MACD %s blocked (misaligned, embient=%s)",
-                            adx, sig.signal_type.value, embient_dir.value,
-                        )
-                        continue
+                    macd_mode = (sig.metadata or {}).get("mode", "independent")
+                    if macd_mode == "confirm_only":
+                        if embient_dir is None:
+                            logger.info(
+                                "REGIME: TREND (ADX=%.1f) → MACD %s blocked (confirm_only, no embient signal)",
+                                adx, sig.signal_type.value,
+                            )
+                            continue
+                        if sig.signal_type != embient_dir:
+                            logger.info(
+                                "REGIME: TREND (ADX=%.1f) → MACD %s blocked (confirm_only, misaligned embient=%s)",
+                                adx, sig.signal_type.value, embient_dir.value,
+                            )
+                            continue
+                    # independent / standalone: MACD passes without depending on embient
                 filtered.append(sig)
             return filtered
 
@@ -280,20 +281,32 @@ class TradingEngine:
             embient_sigs = [s for s in signals if s.strategy_name == "embient_enhanced"]
             embient_dir = embient_sigs[0].signal_type if embient_sigs else None
 
+            # Read current embient thresholds from the live strategy instance —
+            # single source of truth, kept in sync with the active profile.
+            embient_strat = next(
+                (s for s in self.strategies if s.name == "embient_enhanced"), None,
+            )
+            range_buy_th  = getattr(embient_strat, "range_buy_threshold", 80.0)
+            range_sell_th = getattr(embient_strat, "range_sell_threshold", 75.0)
+
             filtered = []
             for sig in signals:
                 if sig.strategy_name == "embient_enhanced":
-                    score_key = "buy_score" if sig.signal_type == SignalType.BUY else "sell_score"
-                    score = float((sig.metadata or {}).get(score_key, 0))
-                    if score < 80:
+                    if sig.signal_type == SignalType.BUY:
+                        score = float((sig.metadata or {}).get("buy_score", 0))
+                        min_th = range_buy_th
+                    else:
+                        score = float((sig.metadata or {}).get("sell_score", 0))
+                        min_th = range_sell_th
+                    if score < min_th:
                         logger.info(
-                            "REGIME: RANGE (ADX=%.1f) → embient %s blocked (score=%.0f<80)",
-                            adx, sig.signal_type.value, score,
+                            "REGIME: RANGE (ADX=%.1f) → embient %s blocked (score=%.0f<%.0f)",
+                            adx, sig.signal_type.value, score, min_th,
                         )
                         continue
                 if sig.strategy_name == "macd_crossover":
-                    is_confirm = (sig.metadata or {}).get("confirm_only", False)
-                    if is_confirm and embient_dir is None:
+                    macd_mode = (sig.metadata or {}).get("mode", "independent")
+                    if macd_mode == "confirm_only" and embient_dir is None:
                         logger.info(
                             "REGIME: RANGE (ADX=%.1f) → MACD %s blocked (confirm_only, no embient signal)",
                             adx, sig.signal_type.value,
@@ -306,6 +319,25 @@ class TradingEngine:
     # Guardrails integration
     # ------------------------------------------------------------------
 
+    def _is_deeply_bearish_market(self) -> tuple[bool, str]:
+        """
+        Check the macro safety gate: BUY entries are skipped when both news
+        sentiment is clearly negative AND the Fear & Greed index is low.
+
+        Returns (blocked, reason). Silent (False, "") when news data is
+        unavailable — we don't block entries based on missing data.
+        """
+        if not self.meta_controller:
+            return (False, "")
+        snap = getattr(self.meta_controller.news_sentiment, "snapshot", None)
+        if snap is None or not getattr(snap, "available", False):
+            return (False, "")
+        sentiment = float(getattr(snap, "score", 0) or 0)
+        fg_value = int(getattr(snap, "fear_greed_value", 50) or 50)
+        if sentiment < -0.3 and fg_value < 30:
+            return (True, f"sentiment={sentiment:.2f} F&G={fg_value}")
+        return (False, "")
+
     def _apply_guardrails(self, signals: list[Signal], symbol: str,
                           global_regime: str, sym_snap,
                           user_id: int = 0) -> list[Signal]:
@@ -314,9 +346,18 @@ class TradingEngine:
         SELL signals always pass (we never block exits).
         """
         filtered = []
+        bearish_block, bearish_reason = self._is_deeply_bearish_market()
         for sig in signals:
             if sig.signal_type != SignalType.BUY:
                 filtered.append(sig)
+                continue
+
+            # Macro safety gate: no long entries in deeply bearish conditions
+            if bearish_block:
+                logger.info(
+                    "BUY skipped: bearish sentiment gate | symbol=%s | %s",
+                    symbol, bearish_reason,
+                )
                 continue
 
             # Extract score from signal metadata

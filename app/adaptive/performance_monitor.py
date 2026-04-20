@@ -72,8 +72,18 @@ class PerformanceMonitor:
     def increment_api_error(self):
         self._api_errors += 1
 
-    def compute(self, db: Session) -> PerformanceSnapshot:
-        """Compute all metrics from closed trades in the DB."""
+    def compute(self, db: Session,
+                consec_reset_cutoff: datetime | None = None) -> PerformanceSnapshot:
+        """
+        Compute all metrics from closed trades in the DB.
+
+        Args:
+            db: database session
+            consec_reset_cutoff: if provided, only trades closed AFTER this
+                timestamp are counted towards ``consecutive_losses``. Used by
+                the kill switch to avoid counting stale losses that caused the
+                previous pause.
+        """
         now = datetime.now(timezone.utc)
 
         # Fetch recent closed trades (last 48h + extra for streak calc)
@@ -112,9 +122,18 @@ class PerformanceMonitor:
         else:
             win_rate = 0.0
 
-        # Consecutive losses (from most recent)
+        # Consecutive losses (from most recent).
+        # If the kill switch just expired, exclude trades older than the
+        # reset cutoff so a fresh streak is required to re-trigger it.
+        consec_trades = trades
+        if consec_reset_cutoff is not None:
+            cutoff_naive = consec_reset_cutoff.replace(tzinfo=None)
+            consec_trades = [
+                t for t in trades
+                if t.closed_at and t.closed_at >= cutoff_naive
+            ]
         consec_losses = 0
-        for t in trades:
+        for t in consec_trades:
             if (t.pnl or 0) < 0:
                 consec_losses += 1
             else:

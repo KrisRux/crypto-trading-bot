@@ -108,8 +108,13 @@ class MetaController:
                 )
             self._last_global_regime = global_regime
 
-            # 2. Performance metrics
-            perf_snap = self.perf_monitor.compute(db)
+            # 2. Performance metrics — pass kill switch reset cutoff so that
+            # consecutive_losses restarts fresh after a pause expires.
+            guardrails = getattr(self._engine, "guardrails", None)
+            consec_cutoff = (
+                guardrails.kill_switch.last_deactivated_at if guardrails else None
+            )
+            perf_snap = self.perf_monitor.compute(db, consec_reset_cutoff=consec_cutoff)
             perf_dict = perf_snap.to_dict()
 
             # HIGH notifications — once per episode + 30min silence to avoid oscillation spam
@@ -145,7 +150,30 @@ class MetaController:
             else:
                 self._api_errors_alerted = False
 
-            # 3. Evaluate profile switch
+            # 3. Emergency escalation (bypasses cooldown/hysteresis)
+            # Triggers when the bot is clearly losing money and not already in
+            # the most conservative profile. Prevents staying in a bad profile
+            # for the full 90-min cooldown while perdite si accumulano.
+            active = self.profile_manager.active_profile
+            if (active != "defensive"
+                and perf_snap.total_recent_trades >= 5
+                and perf_snap.win_rate_last_10 < 25
+                and perf_snap.consecutive_losses >= 3):
+                reason = (
+                    f"emergency: WR={perf_snap.win_rate_last_10:.0f}% "
+                    f"CL={perf_snap.consecutive_losses} "
+                    f"DD={perf_snap.drawdown_intraday:.1f}%"
+                )
+                logger.warning("META_CTRL: EMERGENCY escalation → defensive (%s)", reason)
+                applied = self.profile_manager.apply_profile(
+                    "defensive", self._engine, reason,
+                )
+                if applied:
+                    await self.notifier.notify_profile_switch(
+                        active, "defensive", reason, perf_dict, chat_ids=chat_ids,
+                    )
+
+            # 4. Evaluate standard profile switch
             switch = self.profile_manager.evaluate_switch(perf_dict, global_regime)
             if switch:
                 await self._handle_switch(db, switch, perf_dict, chat_ids)
@@ -153,19 +181,20 @@ class MetaController:
             # Check for previously approved requests that can now be applied
             await self._apply_approved_requests(db, chat_ids)
 
-            # 4. News sentiment (refresh every 30 min)
+            # 5. News sentiment (refresh every 30 min)
             if self.news_sentiment.needs_refresh(interval_minutes=30):
                 try:
                     await self.news_sentiment.fetch_and_score()
                 except Exception:
                     logger.debug("News sentiment fetch failed (non-critical)")
 
-            # 5. LLM Advisor (read-only)
+            # 6. LLM Advisor (read-only diagnostic + optional auto-tuning)
             self.advisor.analyze(
                 regime_snapshot, perf_dict,
                 self.profile_manager.active_profile,
                 self.profile_manager.switch_history,
             )
+            await self._apply_llm_tuning(perf_dict, regime_snapshot, chat_ids)
 
             # 5. Daily summary (once per day at ~00:00 UTC cycle)
             await self._maybe_send_daily_summary(perf_dict, chat_ids)
@@ -180,6 +209,58 @@ class MetaController:
 
         except Exception:
             logger.exception("MetaController.evaluate failed")
+
+    async def _apply_llm_tuning(self, perf_dict: dict, regime_snapshot: dict,
+                                chat_ids: list[str]):
+        """
+        Ask the LLM advisor for guardrail tuning suggestions and apply them
+        if auto-tuning is enabled and confidence is high enough.
+        """
+        from app.config import settings
+        if not settings.enable_llm_tuning:
+            return
+        guardrails = getattr(self._engine, "guardrails", None)
+        if guardrails is None:
+            return
+        try:
+            tuning = await self.advisor.generate_tuning_suggestions(
+                perf=perf_dict,
+                guardrails_status=guardrails.status(),
+                guardrails_config=guardrails._cfg,
+                regime_snapshot=regime_snapshot,
+                news_sentiment=self.news_sentiment.snapshot.to_dict(),
+            )
+        except Exception:
+            logger.exception("LLM tuning: generate failed")
+            return
+
+        if not tuning:
+            return
+        confidence = float(tuning.get("confidence", 0))
+        risk_level = tuning.get("risk_level", "medium")
+        changes = tuning.get("changes", [])
+        if (not changes or confidence < settings.llm_tuning_min_confidence
+                or risk_level == "high"):
+            return
+
+        applied = 0
+        for change in changes:
+            if guardrails.apply_tuning_change(change):
+                applied += 1
+        if applied:
+            logger.info(
+                "LLM_TUNING: applied %d/%d changes | confidence=%.0f%% | source=%s",
+                applied, len(changes), confidence * 100, tuning.get("source", "?"),
+            )
+            try:
+                await self.notifier.notify_tuning_applied(
+                    applied, changes, confidence, chat_ids=chat_ids,
+                )
+            except AttributeError:
+                # Notification method not implemented — silent fallback
+                pass
+            except Exception:
+                logger.exception("LLM tuning: notification failed")
 
     async def _handle_switch(self, db: Session, switch: dict,
                              perf_dict: dict, chat_ids: list[str]):
