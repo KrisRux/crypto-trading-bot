@@ -244,6 +244,17 @@ class NewsSentimentService:
 
         headline_avg = weighted_sum / total_weight if total_weight > 0 else 0.0
 
+        # Require a minimum number of headlines before trusting the sentiment.
+        # With too few samples the VADER average is noisy and biases the
+        # composite score — force neutral when below threshold.
+        MIN_HEADLINES_FOR_SCORE = 5
+        if len(self._headlines) < MIN_HEADLINES_FOR_SCORE:
+            logger.warning(
+                "NEWS_SENTIMENT: insufficient headlines (%d<%d) → score forced to neutral",
+                len(self._headlines), MIN_HEADLINES_FOR_SCORE,
+            )
+            headline_avg = 0.0
+
         # Composite: 70% headlines + 30% Fear & Greed (normalized to -1..+1)
         fg_normalized = (fg_value - 50) / 50 if fg_label else headline_avg
         composite = headline_avg * 0.7 + fg_normalized * 0.3
