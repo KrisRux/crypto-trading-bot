@@ -37,7 +37,7 @@ function UtcClock() {
 
 function AppContent() {
   const [menuOpen, setMenuOpen] = useState(false)
-  const { lang, setLang, t } = useLang()
+  const { lang, setLang, t, l } = useLang()
   const navigate = useNavigate()
 
   // Auth state — token lives in httpOnly cookie (not in JS/localStorage).
@@ -113,19 +113,24 @@ function AppContent() {
   // Auto-logout on inactivity
   useIdleTimeout(sessionTimeout, logout, isAuthenticated === true)
 
-  const navLinkClass = ({ isActive }: { isActive: boolean }) =>
-    `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-      isActive
-        ? 'bg-gray-700 text-white'
-        : 'text-gray-300 hover:bg-gray-700 hover:text-white'
-    }`
+  const navLinkClass = (mobile: boolean) =>
+    ({ isActive }: { isActive: boolean }) =>
+      `${mobile ? 'block w-full px-3 py-2.5' : 'px-3 py-2'} rounded-md text-sm font-medium transition-colors ${
+        isActive ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+      }`
 
-  const mobileNavLinkClass = ({ isActive }: { isActive: boolean }) =>
-    `block w-full px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${
-      isActive
-        ? 'bg-gray-700 text-white'
-        : 'text-gray-300 hover:bg-gray-700 hover:text-white'
-    }`
+  const navItems = [
+    { to: '/',            label: t('nav_dashboard'), adminOnly: false },
+    { to: '/wallet',      label: t('nav_assets'),    adminOnly: false },
+    { to: '/strategies',  label: t('nav_strategies'),adminOnly: true  },
+    { to: '/skills',      label: t('nav_skills'),    adminOnly: true  },
+    { to: '/manual',      label: t('nav_manual'),    adminOnly: false },
+    { to: '/settings',    label: t('nav_settings'),  adminOnly: false },
+    { to: '/users',       label: l('Utenti', 'Users'),adminOnly: true  },
+    { to: '/diagnostics', label: 'Diagnostics',      adminOnly: true  },
+    { to: '/guardrails',  label: 'Guardrails',       adminOnly: true  },
+    { to: '/logs',        label: t('nav_logs'),      adminOnly: false },
+  ]
 
   // Still checking auth (first render)
   if (isAuthenticated === null) {
@@ -162,22 +167,20 @@ function AppContent() {
     <AuthContext.Provider value={authValue}>
       <div className="min-h-screen bg-gray-950">
         {/* Navigation bar */}
-        <nav className="bg-gray-900 border-b border-gray-800">
+        <nav className="bg-gray-900 border-b border-gray-800" aria-label="Navigazione principale">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between h-16">
               <div className="flex items-center gap-4">
                 <span className="text-xl font-bold text-white">CryptoBot</span>
                 <div className="hidden md:flex items-center gap-1">
-                  <NavLink to="/" className={navLinkClass}>{t('nav_dashboard')}</NavLink>
-                  <NavLink to="/wallet" className={navLinkClass}>{t('nav_assets')}</NavLink>
-                  {isAdmin && <NavLink to="/strategies" className={navLinkClass}>{t('nav_strategies')}</NavLink>}
-                  {isAdmin && <NavLink to="/skills" className={navLinkClass}>{t('nav_skills')}</NavLink>}
-                  <NavLink to="/manual" className={navLinkClass}>{t('nav_manual')}</NavLink>
-                  <NavLink to="/settings" className={navLinkClass}>{t('nav_settings')}</NavLink>
-                  {isAdmin && <NavLink to="/users" className={navLinkClass}>Utenti</NavLink>}
-                  {isAdmin && <NavLink to="/diagnostics" className={navLinkClass}>Diagnostics</NavLink>}
-                  {isAdmin && <NavLink to="/guardrails" className={navLinkClass}>Guardrails</NavLink>}
-                  <NavLink to="/logs" className={navLinkClass}>{t('nav_logs')}</NavLink>
+                  {navItems
+                    .filter(item => !item.adminOnly || isAdmin)
+                    .map(item => (
+                      <NavLink key={item.to} to={item.to} className={navLinkClass(false)}>
+                        {item.label}
+                      </NavLink>
+                    ))
+                  }
                 </div>
               </div>
 
@@ -209,8 +212,10 @@ function AppContent() {
                 <button
                   className="md:hidden text-gray-300 hover:text-white"
                   onClick={() => setMenuOpen(!menuOpen)}
+                  aria-expanded={menuOpen}
+                  aria-label={menuOpen ? l('Chiudi menu', 'Close menu') : l('Apri menu', 'Open menu')}
                 >
-                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                       d={menuOpen ? 'M6 18L18 6M6 6l12 12' : 'M4 6h16M4 12h16M4 18h16'} />
                   </svg>
@@ -221,46 +226,14 @@ function AppContent() {
             {/* Mobile nav links */}
             {menuOpen && (
               <div className="md:hidden pb-3 pt-1 space-y-0.5 border-t border-gray-800">
-                <NavLink to="/" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
-                  {t('nav_dashboard')}
-                </NavLink>
-                <NavLink to="/wallet" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
-                  {t('nav_assets')}
-                </NavLink>
-                {isAdmin && (
-                  <NavLink to="/strategies" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
-                    {t('nav_strategies')}
-                  </NavLink>
-                )}
-                {isAdmin && (
-                  <NavLink to="/skills" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
-                    {t('nav_skills')}
-                  </NavLink>
-                )}
-                <NavLink to="/manual" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
-                  {t('nav_manual')}
-                </NavLink>
-                <NavLink to="/settings" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
-                  {t('nav_settings')}
-                </NavLink>
-                {isAdmin && (
-                  <NavLink to="/users" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
-                    Utenti
-                  </NavLink>
-                )}
-                {isAdmin && (
-                  <NavLink to="/diagnostics" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
-                    Diagnostics
-                  </NavLink>
-                )}
-                {isAdmin && (
-                  <NavLink to="/guardrails" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
-                    Guardrails
-                  </NavLink>
-                )}
-                <NavLink to="/logs" className={mobileNavLinkClass} onClick={() => setMenuOpen(false)}>
-                  {t('nav_logs')}
-                </NavLink>
+                {navItems
+                  .filter(item => !item.adminOnly || isAdmin)
+                  .map(item => (
+                    <NavLink key={item.to} to={item.to} className={navLinkClass(true)} onClick={() => setMenuOpen(false)}>
+                      {item.label}
+                    </NavLink>
+                  ))
+                }
               </div>
             )}
           </div>

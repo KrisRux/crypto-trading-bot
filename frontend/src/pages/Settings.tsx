@@ -18,9 +18,8 @@ interface KeysState {
 }
 
 export default function Settings() {
-  const { lang } = useLang()
+  const { lang, l } = useLang()
   useAuth() // ensure authenticated
-  const t = (it: string, en: string) => (lang === 'it' ? it : en)
 
   const [keys, setKeys] = useState<KeysState | null>(null)
   const [form, setForm] = useState({
@@ -110,10 +109,10 @@ export default function Settings() {
 
   const handleClearKeys = async (type: 'live' | 'testnet') => {
     const label = type === 'live'
-      ? t('Live API', 'Live API')
-      : t('Testnet API', 'Testnet API')
+      ? l('Live API', 'Live API')
+      : l('Testnet API', 'Testnet API')
     const confirmed = confirm(
-      t(
+      l(
         `Sei sicuro di voler eliminare le chiavi ${label}? Questa azione è irreversibile.`,
         `Are you sure you want to delete the ${label} keys? This action cannot be undone.`
       )
@@ -134,10 +133,10 @@ export default function Settings() {
     <div className="max-w-2xl space-y-8">
       <div>
         <h2 className="text-lg font-semibold text-white mb-1">
-          {t('Impostazioni Account', 'Account Settings')}
+          {l('Impostazioni Account', 'Account Settings')}
         </h2>
         <p className="text-sm text-gray-400">
-          {t(
+          {l(
             'Configura le tue chiavi API Binance e la modalita di trading. Ogni utente ha il proprio portafoglio separato.',
             'Configure your Binance API keys and trading mode. Each user has their own separate portfolio.'
           )}
@@ -149,10 +148,10 @@ export default function Settings() {
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold text-white">
-              {t('Abilita Trading', 'Enable Trading')}
+              {l('Abilita Trading', 'Enable Trading')}
             </h3>
             <p className="text-xs text-gray-500 mt-0.5">
-              {t(
+              {l(
                 'Il bot eseguira operazioni sul tuo portafoglio solo se il trading e abilitato.',
                 'The bot will only execute trades on your portfolio when trading is enabled.'
               )}
@@ -171,7 +170,7 @@ export default function Settings() {
         </div>
         {!form.trading_enabled && (
           <div className="bg-yellow-900/30 border border-yellow-800/50 rounded-lg p-3 text-xs text-yellow-300">
-            {t(
+            {l(
               'Trading disabilitato. Il bot analizza il mercato ma non apre posizioni per il tuo account.',
               'Trading disabled. The bot analyses the market but does not open positions for your account.'
             )}
@@ -183,11 +182,11 @@ export default function Settings() {
         ) && (
           <div className="bg-red-900/30 border border-red-800/50 rounded-lg p-3 text-xs text-red-300">
             {form.trading_mode === 'paper'
-              ? t(
+              ? l(
                   'Trading abilitato ma chiavi Testnet mancanti! Configura le chiavi Testnet qui sotto per operare in Paper.',
                   'Trading enabled but Testnet keys missing! Configure Testnet keys below to trade in Paper mode.'
                 )
-              : t(
+              : l(
                   'Trading abilitato ma chiavi Live mancanti! Configura le chiavi Live qui sotto per operare.',
                   'Trading enabled but Live keys missing! Configure Live keys below to trade.'
                 )
@@ -199,17 +198,17 @@ export default function Settings() {
       {/* Trading Schedule */}
       <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
         <h3 className="text-sm font-semibold text-white">
-          {t('Orario di Trading', 'Trading Schedule')}
+          {l('Orario di Trading', 'Trading Schedule')}
         </h3>
         <p className="text-xs text-gray-500">
-          {t(
+          {l(
             'Configura le ore in cui il bot puo aprire nuove posizioni (fuso orario UTC). Le posizioni aperte vengono sempre monitorate per SL/TP anche fuori orario. Lascia vuoto per operare 24/7.',
             'Set the hours during which the bot can open new positions (UTC timezone). Open positions are always monitored for SL/TP even outside hours. Leave empty to trade 24/7.'
           )}
         </p>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-400">{t('Dalle (UTC)', 'From (UTC)')}</label>
+            <label className="text-xs text-gray-400">{l('Dalle (UTC)', 'From (UTC)')}</label>
             <select
               value={form.trading_start_hour ?? ''}
               onChange={(e) => setForm({
@@ -226,7 +225,7 @@ export default function Settings() {
           </div>
           <span className="text-gray-600">—</span>
           <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-400">{t('Alle (UTC)', 'To (UTC)')}</label>
+            <label className="text-xs text-gray-400">{l('Alle (UTC)', 'To (UTC)')}</label>
             <select
               value={form.trading_end_hour ?? ''}
               onChange={(e) => setForm({
@@ -245,11 +244,11 @@ export default function Settings() {
         {form.trading_start_hour != null && form.trading_end_hour != null && (
           <p className="text-xs text-blue-400">
             {form.trading_start_hour <= form.trading_end_hour
-              ? t(
+              ? l(
                   `Il bot opera dalle ${String(form.trading_start_hour).padStart(2,'0')}:00 alle ${String(form.trading_end_hour).padStart(2,'0')}:00 UTC`,
                   `Bot trades from ${String(form.trading_start_hour).padStart(2,'0')}:00 to ${String(form.trading_end_hour).padStart(2,'0')}:00 UTC`
                 )
-              : t(
+              : l(
                   `Il bot opera dalle ${String(form.trading_start_hour).padStart(2,'0')}:00 alle ${String(form.trading_end_hour).padStart(2,'0')}:00 UTC (notturno)`,
                   `Bot trades from ${String(form.trading_start_hour).padStart(2,'0')}:00 to ${String(form.trading_end_hour).padStart(2,'0')}:00 UTC (overnight)`
                 )
@@ -260,7 +259,7 @@ export default function Settings() {
 
       {/* Trading Mode */}
       <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
-        <h3 className="text-sm font-semibold text-white">{t('Modalita Trading', 'Trading Mode')}</h3>
+        <h3 className="text-sm font-semibold text-white">{l('Modalita Trading', 'Trading Mode')}</h3>
         <div className="flex gap-3">
           <button
             onClick={() => setForm({ ...form, trading_mode: 'dry_run' })}
@@ -280,7 +279,7 @@ export default function Settings() {
                 : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
             }`}
           >
-            {t('Simulato (Paper)', 'Paper (Simulated)')}
+            {l('Simulato (Paper)', 'Paper (Simulated)')}
           </button>
           <button
             onClick={() => setForm({ ...form, trading_mode: 'live' })}
@@ -295,7 +294,7 @@ export default function Settings() {
         </div>
         {form.trading_mode === 'dry_run' && (
           <div className="bg-amber-900/30 border border-amber-800/50 rounded-lg p-3 text-xs text-amber-300">
-            {t(
+            {l(
               'Dry Run: il bot analizza il mercato e logga tutto quello che farebbe (segnali, size, SL/TP, rischio), ma non apre nessuna posizione e non chiama Binance. Nessuna chiave API necessaria.',
               'Dry Run: the bot analyses the market and logs everything it would do (signals, size, SL/TP, risk), but opens no positions and makes no Binance API calls. No API keys required.'
             )}
@@ -303,7 +302,7 @@ export default function Settings() {
         )}
         {form.trading_mode === 'live' && (
           <div className="bg-red-900/30 border border-red-800/50 rounded-lg p-3 text-xs text-red-300">
-            {t(
+            {l(
               'Attenzione: in modalita Live gli ordini vengono inviati realmente a Binance con le tue chiavi API.',
               'Warning: in Live mode, real orders are sent to Binance using your API keys.'
             )}
@@ -317,10 +316,10 @@ export default function Settings() {
           <div>
             <h3 className="text-sm font-semibold text-white">
               Binance Testnet API
-              <span className="ml-2 text-[10px] font-normal text-gray-500">({t('per Paper', 'for Paper')})</span>
+              <span className="ml-2 text-[10px] font-normal text-gray-500">({l('per Paper', 'for Paper')})</span>
             </h3>
             {keys?.has_testnet_keys && (
-              <span className="text-xs text-emerald-400 mt-0.5 block">{t('Configurate', 'Configured')}: {keys.binance_testnet_api_key}</span>
+              <span className="text-xs text-emerald-400 mt-0.5 block">{l('Configurate', 'Configured')}: {keys.binance_testnet_api_key}</span>
             )}
           </div>
           {keys?.has_testnet_keys && (
@@ -330,27 +329,27 @@ export default function Settings() {
               className="px-3 py-1.5 bg-red-900/50 hover:bg-red-800/60 border border-red-800/50 text-red-300 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
             >
               {clearingType === 'testnet'
-                ? t('Eliminazione...', 'Deleting...')
-                : t('Elimina chiavi', 'Delete keys')}
+                ? l('Eliminazione...', 'Deleting...')
+                : l('Elimina chiavi', 'Delete keys')}
             </button>
           )}
         </div>
         <p className="text-xs text-gray-500">
-          {t(
+          {l(
             'Per la modalita Paper. Ordini reali su Binance Testnet (soldi virtuali). Ottieni le chiavi su testnet.binance.vision',
             'For Paper mode. Real orders on Binance Testnet (virtual money). Get keys at testnet.binance.vision'
           )}
         </p>
         <input
           type="text"
-          placeholder={keys?.has_testnet_keys ? t('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'Testnet API Key'}
+          placeholder={keys?.has_testnet_keys ? l('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'Testnet API Key'}
           value={form.binance_testnet_api_key}
           onChange={(e) => setForm({ ...form, binance_testnet_api_key: e.target.value })}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
         />
         <input
           type="password"
-          placeholder={keys?.has_testnet_keys ? t('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'Testnet API Secret'}
+          placeholder={keys?.has_testnet_keys ? l('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'Testnet API Secret'}
           value={form.binance_testnet_api_secret}
           onChange={(e) => setForm({ ...form, binance_testnet_api_secret: e.target.value })}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
@@ -363,10 +362,10 @@ export default function Settings() {
           <div>
             <h3 className="text-sm font-semibold text-white">
               Binance Live API
-              <span className="ml-2 text-[10px] font-normal text-gray-500">({t('per Live', 'for Live')})</span>
+              <span className="ml-2 text-[10px] font-normal text-gray-500">({l('per Live', 'for Live')})</span>
             </h3>
             {keys?.has_live_keys && (
-              <span className="text-xs text-emerald-400 mt-0.5 block">{t('Configurate', 'Configured')}: {keys.binance_api_key}</span>
+              <span className="text-xs text-emerald-400 mt-0.5 block">{l('Configurate', 'Configured')}: {keys.binance_api_key}</span>
             )}
           </div>
           {keys?.has_live_keys && (
@@ -376,27 +375,27 @@ export default function Settings() {
               className="px-3 py-1.5 bg-red-900/50 hover:bg-red-800/60 border border-red-800/50 text-red-300 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
             >
               {clearingType === 'live'
-                ? t('Eliminazione...', 'Deleting...')
-                : t('Elimina chiavi', 'Delete keys')}
+                ? l('Eliminazione...', 'Deleting...')
+                : l('Elimina chiavi', 'Delete keys')}
             </button>
           )}
         </div>
         <div className="bg-red-900/30 border border-red-800/50 rounded-lg p-3 text-xs text-red-300">
-          {t(
+          {l(
             'ATTENZIONE: ordini con denaro reale! Abilita SOLO "Enable Spot & Margin Trading". MAI "Enable Withdrawals".',
             'WARNING: real money orders! Enable ONLY "Enable Spot & Margin Trading". NEVER "Enable Withdrawals".'
           )}
         </div>
         <input
           type="text"
-          placeholder={keys?.has_live_keys ? t('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'API Key'}
+          placeholder={keys?.has_live_keys ? l('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'API Key'}
           value={form.binance_api_key}
           onChange={(e) => setForm({ ...form, binance_api_key: e.target.value })}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
         />
         <input
           type="password"
-          placeholder={keys?.has_live_keys ? t('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'API Secret'}
+          placeholder={keys?.has_live_keys ? l('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'API Secret'}
           value={form.binance_api_secret}
           onChange={(e) => setForm({ ...form, binance_api_secret: e.target.value })}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
@@ -408,10 +407,10 @@ export default function Settings() {
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold text-white">
-              {t('Notifiche Telegram', 'Telegram Notifications')}
+              {l('Notifiche Telegram', 'Telegram Notifications')}
             </h3>
             <p className="text-xs text-gray-500 mt-0.5">
-              {t(
+              {l(
                 'Ricevi notifiche su Telegram per cambi profilo, drawdown, perdite consecutive e report giornaliero.',
                 'Receive Telegram notifications for profile switches, drawdown, consecutive losses, and daily reports.'
               )}
@@ -437,7 +436,7 @@ export default function Settings() {
         />
         <div className="flex items-center gap-3">
           <p className="text-xs text-gray-500 flex-1">
-            {t(
+            {l(
               'Invia /start al bot Telegram del progetto, poi usa getUpdates per trovare il tuo Chat ID.',
               'Send /start to the project Telegram bot, then use getUpdates to find your Chat ID.'
             )}
@@ -454,10 +453,10 @@ export default function Settings() {
                     const err = await resp.json().catch(() => ({ detail: 'Error' }))
                     alert(err.detail || 'Errore invio test')
                   } else {
-                    alert(t('Messaggio di test inviato!', 'Test message sent!'))
+                    alert(l('Messaggio di test inviato!', 'Test message sent!'))
                   }
                 } catch {
-                  alert(t('Errore di rete', 'Network error'))
+                  alert(l('Errore di rete', 'Network error'))
                 } finally {
                   setTestingTelegram(false)
                 }
@@ -465,7 +464,7 @@ export default function Settings() {
               disabled={testingTelegram}
               className="px-3 py-1.5 bg-blue-900/50 hover:bg-blue-800/60 border border-blue-800/50 text-blue-300 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap"
             >
-              {testingTelegram ? '...' : t('Invia Test', 'Send Test')}
+              {testingTelegram ? '...' : l('Invia Test', 'Send Test')}
             </button>
           )}
         </div>
@@ -477,14 +476,14 @@ export default function Settings() {
       )}
       {saved && (
         <div className="bg-emerald-900/30 border border-emerald-800/50 rounded-lg p-3 text-sm text-emerald-300">
-          {t('Impostazioni salvate con successo!', 'Settings saved successfully!')}
+          {l('Impostazioni salvate con successo!', 'Settings saved successfully!')}
         </div>
       )}
       <button
         onClick={handleSave}
         className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
       >
-        {t('Salva Impostazioni', 'Save Settings')}
+        {l('Salva Impostazioni', 'Save Settings')}
       </button>
     </div>
   )

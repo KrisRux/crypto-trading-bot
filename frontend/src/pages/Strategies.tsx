@@ -3,6 +3,7 @@ import { api, StrategyInfo, RiskParams } from '../api'
 import { usePolling } from '../hooks/usePolling'
 import { useLang } from '../hooks/useLang'
 import StatCard from '../components/StatCard'
+import Modal from '../components/Modal'
 
 /* ═══════════════════════════════════════════════════════
    Param hints — human-readable labels and ranges
@@ -48,8 +49,7 @@ const STRATEGY_ICONS: Record<string, string> = {
    ═══════════════════════════════════════════════════════ */
 
 export default function Strategies() {
-  const { lang, t } = useLang()
-  const l = (it: string, en: string) => (lang === 'it' ? it : en)
+  const { lang, t, l } = useLang()
 
   /* data */
   const fetchStrategies = useCallback(() => api.getStrategies(), [])
@@ -78,7 +78,7 @@ export default function Strategies() {
         map[s.name] = { enabled: s.enabled, params: { ...s.params } }
       }
       setDraftStrats(map)
-      setSavedStrats(JSON.parse(JSON.stringify(map)))
+      setSavedStrats(structuredClone(map))
       setExpandedSections(new Set(strategies.map(s => s.name)))
     }
   }, [strategies])
@@ -169,7 +169,7 @@ export default function Strategies() {
         await api.updateRisk(draftRisk)
       }
       // Update saved snapshots
-      setSavedStrats(JSON.parse(JSON.stringify(draftStrats)))
+      setSavedStrats(structuredClone(draftStrats))
       setSavedRisk(draftRisk ? { ...draftRisk } : null)
       setSuccess(l('Configurazione salvata', 'Configuration saved'))
       setTimeout(() => setSuccess(''), 4000)
@@ -181,7 +181,7 @@ export default function Strategies() {
   }
 
   const handleDiscard = () => {
-    setDraftStrats(JSON.parse(JSON.stringify(savedStrats)))
+    setDraftStrats(structuredClone(savedStrats))
     setDraftRisk(savedRisk ? { ...savedRisk } : null)
     setError('')
   }
@@ -236,11 +236,18 @@ export default function Strategies() {
               </div>
               <div className="flex items-center gap-3">
                 {/* ON/OFF toggle */}
-                <div onClick={e => { e.stopPropagation(); toggleEnabled(name) }}
-                  className={`w-10 h-5 rounded-full transition-colors relative cursor-pointer ${draft.enabled ? 'bg-emerald-600' : 'bg-gray-700'}`}>
+                <div
+                  role="switch"
+                  aria-checked={draft.enabled}
+                  aria-label={l('Abilita strategia', 'Enable strategy')}
+                  tabIndex={0}
+                  onClick={e => { e.stopPropagation(); toggleEnabled(name) }}
+                  onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); toggleEnabled(name) } }}
+                  className={`w-10 h-5 rounded-full transition-colors relative cursor-pointer ${draft.enabled ? 'bg-emerald-600' : 'bg-gray-700'}`}
+                >
                   <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${draft.enabled ? 'left-5' : 'left-0.5'}`} />
                 </div>
-                <svg className={`w-4 h-4 text-gray-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className={`w-4 h-4 text-gray-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </div>
@@ -365,34 +372,35 @@ export default function Strategies() {
       </div>
 
       {/* Confirm dialog */}
-      {showConfirm && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowConfirm(false)}>
-          <div className="bg-gray-900 border border-gray-700 rounded-xl max-w-lg w-full p-5 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="text-white font-semibold">{l('Conferma salvataggio', 'Confirm save')}</h3>
-            <p className="text-sm text-gray-400">{l('Le seguenti modifiche verranno salvate:', 'The following changes will be saved:')}</p>
-            <div className="max-h-60 overflow-auto space-y-1">
-              {diffs.map((d, i) => (
-                <div key={i} className="flex items-center gap-2 text-xs font-mono bg-gray-800 rounded px-2 py-1">
-                  <span className="text-gray-400 flex-1 truncate">{d.path}</span>
-                  <span className="text-red-400">{String(d.from)}</span>
-                  <span className="text-gray-600">&rarr;</span>
-                  <span className="text-emerald-400">{String(d.to)}</span>
-                </div>
-              ))}
+      <Modal
+        open={showConfirm}
+        onClose={() => setShowConfirm(false)}
+        title={l('Conferma salvataggio', 'Confirm save')}
+        actions={
+          <>
+            <button onClick={() => setShowConfirm(false)}
+              className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">
+              {l('Annulla', 'Cancel')}
+            </button>
+            <button onClick={handleSave}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
+              {l('Salva', 'Save')}
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm text-gray-400 mb-3">{l('Le seguenti modifiche verranno salvate:', 'The following changes will be saved:')}</p>
+        <div className="max-h-60 overflow-auto space-y-1">
+          {diffs.map((d, i) => (
+            <div key={i} className="flex items-center gap-2 text-xs font-mono bg-gray-800 rounded px-2 py-1">
+              <span className="text-gray-400 flex-1 truncate">{d.path}</span>
+              <span className="text-red-400">{String(d.from)}</span>
+              <span className="text-gray-600">&rarr;</span>
+              <span className="text-emerald-400">{String(d.to)}</span>
             </div>
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setShowConfirm(false)}
-                className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors">
-                {l('Annulla', 'Cancel')}
-              </button>
-              <button onClick={handleSave}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
-                {l('Salva', 'Save')}
-              </button>
-            </div>
-          </div>
+          ))}
         </div>
-      )}
+      </Modal>
     </div>
   )
 }

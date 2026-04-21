@@ -10,5 +10,7 @@ export const LangContext = createContext<{
 export function useLang() {
   const { lang, setLang } = useContext(LangContext)
   const tr = (key: TranslationKey) => t(key, lang)
-  return { lang, setLang, t: tr }
+  /** Inline bilingual shorthand — prefer i18n keys when possible. */
+  const l = (it: string, en: string) => (lang === 'it' ? it : en)
+  return { lang, setLang, t: tr, l }
 }

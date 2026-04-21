@@ -211,8 +211,7 @@ function flatDiff(a: Cfg, b: Cfg, prefix = ''): { path: string; from: unknown; t
    ═══════════════════════════════════════════════════════ */
 
 export default function GuardrailsConfig() {
-  const { lang } = useLang()
-  const l = (it: string, en: string) => (lang === 'it' ? it : en)
+  const { lang, l } = useLang()
 
   /* state */
   const [saved, setSaved] = useState<Cfg | null>(null)     // last loaded from server

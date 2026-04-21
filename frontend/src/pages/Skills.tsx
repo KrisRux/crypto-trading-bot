@@ -22,7 +22,7 @@ const CATEGORY_LABELS: Record<string, { it: string; en: string }> = {
 }
 
 export default function Skills() {
-  const { lang } = useLang()
+  const { lang, l } = useLang()
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [expandedSkill, setExpandedSkill] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -37,8 +37,6 @@ export default function Skills() {
 
   const [summary, , , refetchSummary] = usePolling<SkillsSummary>(fetchSummary, 60000)
   const [skills, , , refetchSkills] = usePolling<SkillItem[]>(fetchSkills, 60000)
-
-  const t = (it: string, en: string) => (lang === 'it' ? it : en)
 
   // Load sync status on mount
   useEffect(() => {
@@ -75,17 +73,17 @@ export default function Skills() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold text-white mb-1">
-            {t('Knowledge Base Embient', 'Embient Knowledge Base')}
+            {l('Knowledge Base Embient', 'Embient Knowledge Base')}
           </h2>
           <p className="text-sm text-gray-400">
-            {t(
+            {l(
               `${summary?.total_skills ?? 0} skill di trading caricate da agent-trading-skills (Embient AI). Queste regole e conoscenze alimentano la strategia "Embient Enhanced".`,
               `${summary?.total_skills ?? 0} trading skills loaded from agent-trading-skills (Embient AI). These rules and knowledge power the "Embient Enhanced" strategy.`
             )}
           </p>
           {syncStatus?.timestamp && (
             <p className="text-[11px] text-gray-600 mt-1">
-              {t('Ultimo sync', 'Last sync')}: {new Date(syncStatus.timestamp).toLocaleString()}
+              {l('Ultimo sync', 'Last sync')}: {new Date(syncStatus.timestamp).toLocaleString()}
               {syncStatus.status === 'ok'
                 ? ` — ${syncStatus.added} added, ${syncStatus.updated} updated`
                 : syncStatus.error ? ` — ${syncStatus.error}` : ''}
@@ -103,7 +101,7 @@ export default function Skills() {
             disabled={syncing}
             className="px-3 py-1.5 bg-blue-900/60 hover:bg-blue-800/70 border border-blue-800/50 text-blue-300 text-xs rounded transition-colors disabled:opacity-40 whitespace-nowrap"
           >
-            {syncing ? t('Sincronizzazione...', 'Syncing...') : t('Sync da repo', 'Sync from repo')}
+            {syncing ? l('Sincronizzazione...', 'Syncing...') : l('Sync da repo', 'Sync from repo')}
           </button>
         </div>
       </div>
@@ -118,7 +116,7 @@ export default function Skills() {
               : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
           }`}
         >
-          {t('Tutte', 'All')} ({summary?.total_skills ?? 0})
+          {l('Tutte', 'All')} ({summary?.total_skills ?? 0})
         </button>
         {summary &&
           Object.entries(summary.categories).map(([cat, count]) => (
@@ -185,7 +183,7 @@ export default function Skills() {
                 {skill.key_rules.length > 0 && (
                   <div>
                     <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
-                      {t('Regole Chiave', 'Key Rules')}
+                      {l('Regole Chiave', 'Key Rules')}
                     </h4>
                     <ul className="space-y-1">
                       {skill.key_rules.map((rule, i) => (
@@ -210,7 +208,7 @@ export default function Skills() {
                 {/* Full body (rendered as preformatted for now) */}
                 <details className="group">
                   <summary className="text-xs text-blue-400 cursor-pointer hover:text-blue-300">
-                    {t('Mostra contenuto completo', 'Show full content')}
+                    {l('Mostra contenuto completo', 'Show full content')}
                   </summary>
                   <pre className="mt-2 p-3 bg-gray-950 border border-gray-800 rounded text-xs text-gray-400 overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto">
                     {skill.body}
@@ -220,7 +218,7 @@ export default function Skills() {
                 {/* Meta */}
                 <div className="text-[10px] text-gray-600 flex gap-4">
                   <span>v{skill.version}</span>
-                  {skill.author && <span>{t('Autore', 'Author')}: {skill.author}</span>}
+                  {skill.author && <span>{l('Autore', 'Author')}: {skill.author}</span>}
                 </div>
               </div>
             )}
