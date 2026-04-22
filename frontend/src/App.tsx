@@ -1,5 +1,8 @@
 import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import NavGroup, { NavGroupItem } from './components/NavGroup'
+import { usePolling } from './hooks/usePolling'
+import { ApprovalRequestItem } from './api'
 import Assets from './pages/Assets'
 import Dashboard from './pages/Dashboard'
 import Strategies from './pages/Strategies'
@@ -120,19 +123,91 @@ function AppContent() {
         isActive ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'
       }`
 
-  const navItems = [
-    { to: '/',            label: t('nav_dashboard'), adminOnly: false },
-    { to: '/wallet',      label: t('nav_assets'),    adminOnly: false },
-    { to: '/strategies',  label: t('nav_strategies'),adminOnly: true  },
-    { to: '/skills',      label: t('nav_skills'),    adminOnly: true  },
-    { to: '/manual',      label: t('nav_manual'),    adminOnly: false },
-    { to: '/settings',    label: t('nav_settings'),  adminOnly: false },
-    { to: '/users',       label: l('Utenti', 'Users'),adminOnly: true  },
-    { to: '/diagnostics', label: 'Diagnostics',      adminOnly: true  },
-    { to: '/guardrails',  label: 'Guardrails',       adminOnly: true  },
-    { to: '/approvals',   label: l('Approvazioni', 'Approvals'), adminOnly: true  },
-    { to: '/logs',        label: t('nav_logs'),      adminOnly: false },
-  ]
+  // Poll pending approvals (admin only) so the Controllo group shows a badge.
+  const fetchPendingApprovals = useCallback(
+    () => (isAuthenticated === true && isAdmin
+      ? api.getPendingApprovals()
+      : Promise.resolve([] as ApprovalRequestItem[])),
+    [isAuthenticated, isAdmin]
+  )
+  const [pendingApprovals] = usePolling<ApprovalRequestItem[]>(fetchPendingApprovals, 15000)
+  const pendingApprovalsCount = pendingApprovals?.length || 0
+
+  type NavEntry =
+    | { kind: 'link'; to: string; label: string; adminOnly?: boolean }
+    | { kind: 'group'; label: string; adminOnly?: boolean; items: (NavGroupItem & { adminOnly?: boolean })[] }
+
+  const navStructure: NavEntry[] = useMemo(() => [
+    { kind: 'link', to: '/', label: t('nav_dashboard') },
+    {
+      kind: 'group',
+      label: l('Operativo', 'Operations'),
+      items: [
+        { to: '/wallet', label: t('nav_assets') },
+        { to: '/logs',   label: t('nav_logs') },
+        { to: '/manual', label: t('nav_manual') },
+      ],
+    },
+    {
+      kind: 'group',
+      label: l('Strategia', 'Strategy'),
+      adminOnly: true,
+      items: [
+        { to: '/strategies', label: t('nav_strategies'), adminOnly: true },
+        { to: '/skills',     label: t('nav_skills'),     adminOnly: true },
+      ],
+    },
+    {
+      kind: 'group',
+      label: l('Controllo', 'Control'),
+      adminOnly: true,
+      items: [
+        { to: '/guardrails',  label: 'Guardrails',                           adminOnly: true },
+        { to: '/approvals',   label: l('Approvazioni', 'Approvals'),         adminOnly: true, badge: pendingApprovalsCount },
+        { to: '/diagnostics', label: 'Diagnostics',                          adminOnly: true },
+      ],
+    },
+    {
+      kind: 'group',
+      label: l('Sistema', 'System'),
+      items: [
+        { to: '/settings', label: t('nav_settings') },
+        { to: '/users',    label: l('Utenti', 'Users'), adminOnly: true },
+      ],
+    },
+  ], [t, l, pendingApprovalsCount])
+
+  const visibleNav = (mobile: boolean) =>
+    navStructure.flatMap((entry, idx) => {
+      if (entry.kind === 'link') {
+        if (entry.adminOnly && !isAdmin) return []
+        return [
+          <NavLink
+            key={`link-${entry.to}`}
+            to={entry.to}
+            className={navLinkClass(mobile)}
+            onClick={mobile ? () => setMenuOpen(false) : undefined}
+            end={entry.to === '/'}
+          >
+            {entry.label}
+          </NavLink>,
+        ]
+      }
+      // group
+      const visibleItems = entry.items
+        .filter(it => !it.adminOnly || isAdmin)
+        .map(({ to, label: lbl, badge }) => ({ to, label: lbl, badge }))
+      if (visibleItems.length === 0) return []
+      return [
+        <NavGroup
+          key={`group-${idx}`}
+          label={entry.label}
+          items={visibleItems}
+          mobile={mobile}
+          onNavigate={() => setMenuOpen(false)}
+        />,
+      ]
+    })
 
   // Still checking auth (first render)
   if (isAuthenticated === null) {
@@ -175,14 +250,7 @@ function AppContent() {
               <div className="flex items-center gap-4">
                 <span className="text-xl font-bold text-white">CryptoBot</span>
                 <div className="hidden md:flex items-center gap-1">
-                  {navItems
-                    .filter(item => !item.adminOnly || isAdmin)
-                    .map(item => (
-                      <NavLink key={item.to} to={item.to} className={navLinkClass(false)}>
-                        {item.label}
-                      </NavLink>
-                    ))
-                  }
+                  {visibleNav(false)}
                 </div>
               </div>
 
@@ -228,14 +296,7 @@ function AppContent() {
             {/* Mobile nav links */}
             {menuOpen && (
               <div className="md:hidden pb-3 pt-1 space-y-0.5 border-t border-gray-800">
-                {navItems
-                  .filter(item => !item.adminOnly || isAdmin)
-                  .map(item => (
-                    <NavLink key={item.to} to={item.to} className={navLinkClass(true)} onClick={() => setMenuOpen(false)}>
-                      {item.label}
-                    </NavLink>
-                  ))
-                }
+                {visibleNav(true)}
               </div>
             )}
           </div>
