@@ -77,6 +77,7 @@ async def lifespan(app: FastAPI):
     meta_controller = MetaController(
         engine,
         bot_token=settings.telegram_bot_token,
+        default_min_level=settings.telegram_min_level,
     )
     engine.meta_controller = meta_controller
 

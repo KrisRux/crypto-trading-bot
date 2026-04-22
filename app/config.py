@@ -43,6 +43,9 @@ class Settings(BaseSettings):
 
     # Telegram notifications (bot token is server-wide; chat_id is per-user in DB)
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    # Global minimum severity to deliver over Telegram. Values: INFO | WARNING | CRITICAL.
+    # Per-user override: users.telegram_min_level (empty string = inherit this global).
+    telegram_min_level: str = Field(default="WARNING", alias="TELEGRAM_MIN_LEVEL")
 
     # AI Tuning Advisor — LLM providers (optional, fallback chain: DeepSeek → Ollama → rules)
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")

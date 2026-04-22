@@ -42,12 +42,20 @@ class MetaController:
       3. meta_controller runs regime -> performance -> profile -> notify -> advise
     """
 
-    def __init__(self, engine, bot_token: str = ""):
+    # Regimes considered "dangerous" — entering one deserves a notification.
+    _DANGEROUS_REGIMES = {"defensive", "volatile"}
+    # Silence window for regime-change notifications to avoid oscillation spam.
+    _REGIME_CHANGE_COOLDOWN = timedelta(minutes=60)
+
+    def __init__(self, engine, bot_token: str = "", default_min_level: str = "WARNING"):
         self._engine = engine
         self.regime_service = MarketRegimeService()
         self.perf_monitor = PerformanceMonitor()
         self.profile_manager = ProfileManager()
-        self.notifier = NotificationService(bot_token=bot_token)
+        self.notifier = NotificationService(
+            bot_token=bot_token,
+            default_min_level=default_min_level,
+        )
         self.approval_service = ApprovalService()
         self.advisor = LLMAdvisor()
         self.news_sentiment = NewsSentimentService()
@@ -59,6 +67,7 @@ class MetaController:
         self._consec_losses_alerted: bool = False
         self._api_errors_alerted: bool = False
         self._alert_silenced_until: dict[str, datetime] = {}  # alert_key → silence_until
+        self._regime_change_silenced_until: datetime | None = None
 
         logger.info(
             "MetaController initialized (profile=%s, telegram=%s)",
@@ -66,14 +75,21 @@ class MetaController:
             "enabled" if self.notifier.enabled else "disabled",
         )
 
-    def _get_chat_ids(self, db: Session) -> list[str]:
-        """Get Telegram chat_ids for all users with notifications enabled."""
+    def _get_chat_ids(self, db: Session) -> list[tuple[str, str]]:
+        """
+        Get Telegram recipients for all users with notifications enabled.
+        Returns a list of (chat_id, per_user_min_level) tuples so the
+        NotificationService can apply per-user severity filtering.
+        """
         users = (
             db.query(User)
             .filter(User.telegram_enabled == True, User.telegram_chat_id != "")
             .all()
         )
-        return [u.telegram_chat_id for u in users if u.telegram_chat_id]
+        return [
+            (u.telegram_chat_id, (u.telegram_min_level or ""))
+            for u in users if u.telegram_chat_id
+        ]
 
     async def evaluate(self, db: Session, dataframes: dict[str, pd.DataFrame] | None = None):
         """
@@ -98,14 +114,29 @@ class MetaController:
             regime_snapshot = self.regime_service.global_snapshot()
             global_regime = regime_snapshot.get("global_regime", "unknown")
 
-            # Detect regime change
+            # Detect regime change. To avoid Telegram spam from range/trend
+            # oscillations, notify only when *entering* a dangerous regime
+            # (defensive/volatile), with a 60-min cooldown. Normal transitions
+            # are still logged but suppressed at Telegram level by default.
             if self._last_global_regime and global_regime != self._last_global_regime:
                 logger.info(
                     "REGIME_CHANGE: %s -> %s", self._last_global_regime, global_regime,
                 )
-                await self.notifier.notify_regime_change(
-                    self._last_global_regime, global_regime, chat_ids=chat_ids,
+                now_utc = datetime.now(timezone.utc)
+                is_dangerous_entry = (
+                    global_regime in self._DANGEROUS_REGIMES
+                    and self._last_global_regime not in self._DANGEROUS_REGIMES
                 )
+                cooldown_ok = (
+                    self._regime_change_silenced_until is None
+                    or now_utc >= self._regime_change_silenced_until
+                )
+                if is_dangerous_entry and cooldown_ok:
+                    await self.notifier.notify_regime_change(
+                        self._last_global_regime, global_regime,
+                        chat_ids=chat_ids, level="WARNING",
+                    )
+                    self._regime_change_silenced_until = now_utc + self._REGIME_CHANGE_COOLDOWN
             self._last_global_regime = global_regime
 
             # 2. Performance metrics — pass kill switch reset cutoff so that

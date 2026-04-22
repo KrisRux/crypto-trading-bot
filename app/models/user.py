@@ -138,6 +138,8 @@ class User(Base):
     # Telegram notifications (per-user)
     telegram_chat_id = Column(String, default="")
     telegram_enabled = Column(Boolean, default=False)
+    # "" = use global TELEGRAM_MIN_LEVEL; else INFO|WARNING|CRITICAL
+    telegram_min_level = Column(String, default="")
 
     def set_api_keys(self, api_key: str = "", api_secret: str = "",
                      testnet_key: str = "", testnet_secret: str = ""):

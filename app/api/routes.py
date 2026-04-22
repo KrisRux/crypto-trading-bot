@@ -211,6 +211,7 @@ def get_api_keys(db: Session = Depends(get_db), user_info: dict = Depends(requir
         "binance_testnet_api_key": user.get_api_key(live=False)[:8] + "..." if user.has_api_keys(live=False) else "",
         "telegram_chat_id": user.telegram_chat_id or "",
         "telegram_enabled": user.telegram_enabled,
+        "telegram_min_level": user.telegram_min_level or "",
     }
 
 
@@ -240,6 +241,11 @@ async def update_api_keys(body: dict, db: Session = Depends(get_db),
         user.telegram_chat_id = str(body["telegram_chat_id"]).strip()
     if "telegram_enabled" in body:
         user.telegram_enabled = bool(body["telegram_enabled"])
+    if "telegram_min_level" in body:
+        val = str(body["telegram_min_level"] or "").strip().upper()
+        if val not in ("", "INFO", "WARNING", "CRITICAL"):
+            raise HTTPException(400, "telegram_min_level must be '', 'INFO', 'WARNING' or 'CRITICAL'")
+        user.telegram_min_level = val
 
     # Validate and save API keys
     api_key = body.get("binance_api_key", "")

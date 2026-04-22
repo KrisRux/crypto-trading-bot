@@ -24,6 +24,29 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Severity ordering for per-user minimum-level filtering.
+_LEVEL_RANK = {"INFO": 0, "WARNING": 1, "CRITICAL": 2}
+
+
+def _level_passes(level: str, min_level: str) -> bool:
+    """True if `level` meets or exceeds `min_level`. Unknown values default to INFO."""
+    return _LEVEL_RANK.get(level, 0) >= _LEVEL_RANK.get(min_level, 0)
+
+
+# A recipient can be a bare chat_id (legacy) or a (chat_id, min_level) tuple.
+Recipient = str | tuple[str, str]
+
+
+def _normalize_recipients(recipients) -> list[tuple[str, str]]:
+    """Normalize list to [(chat_id, min_level)] — bare str becomes (str, '')."""
+    out: list[tuple[str, str]] = []
+    for r in recipients or []:
+        if isinstance(r, tuple) and len(r) == 2:
+            out.append((str(r[0]), str(r[1] or "")))
+        elif isinstance(r, str):
+            out.append((r, ""))
+    return out
+
 _DEDUP_PERSIST_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "logs", "telegram_dedup_cache.json"
 )
@@ -38,9 +61,11 @@ class NotificationService:
     MAX_MESSAGES_PER_MINUTE = 10
     DEDUP_WINDOW_SECONDS = 300  # 5 min dedup for similar messages
 
-    def __init__(self, bot_token: str = ""):
+    def __init__(self, bot_token: str = "", default_min_level: str = "WARNING"):
         self._bot_token = bot_token
         self._enabled = bool(bot_token)
+        # Global fallback min level used when a recipient has no per-user override.
+        self._default_min_level = default_min_level if default_min_level in _LEVEL_RANK else "WARNING"
         # Rate limit state
         self._sent_timestamps: list[datetime] = []
         # Dedup: hash -> last sent time (persisted to disk to survive restarts)
@@ -97,7 +122,8 @@ class NotificationService:
         return self._enabled
 
     async def send(self, text: str, level: str = "INFO",
-                   chat_id: str = "", deduplicate: bool = True) -> bool:
+                   chat_id: str = "", deduplicate: bool = True,
+                   user_min_level: str = "") -> bool:
         """
         Send an HTML message to a specific Telegram chat.
 
@@ -106,10 +132,15 @@ class NotificationService:
             level: INFO | WARNING | CRITICAL.
             chat_id: target chat ID. If empty, message is skipped.
             deduplicate: skip if a similar message was sent recently.
+            user_min_level: per-user minimum level override. Empty = use global.
 
         Returns True if sent, False if skipped or failed.
         """
         if not self._enabled or not chat_id:
+            return False
+        # Severity filter: skip if below the effective minimum for this chat.
+        effective_min = user_min_level if user_min_level in _LEVEL_RANK else self._default_min_level
+        if not _level_passes(level, effective_min):
             return False
 
         # Dedup check (per chat_id)
@@ -166,16 +197,20 @@ class NotificationService:
             return False
 
     async def broadcast(self, text: str, level: str = "INFO",
-                        chat_ids: list[str] | None = None,
+                        chat_ids: "list[Recipient] | None" = None,
                         deduplicate: bool = True) -> int:
         """
-        Send to multiple chat_ids. Returns count of successful sends.
+        Send to multiple recipients. Returns count of successful sends.
+        Accepts either a list of chat_id strings (legacy) or a list of
+        (chat_id, user_min_level) tuples for per-user severity filtering.
         """
         if not chat_ids:
             return 0
         sent = 0
-        for cid in chat_ids:
-            if await self.send(text, level=level, chat_id=cid, deduplicate=deduplicate):
+        for cid, min_level in _normalize_recipients(chat_ids):
+            if await self.send(text, level=level, chat_id=cid,
+                               deduplicate=deduplicate,
+                               user_min_level=min_level):
                 sent += 1
         return sent
 
@@ -212,7 +247,9 @@ class NotificationService:
                 {"text": "\u274c Reject", "callback_data": json.dumps({"action": "reject", "id": request_id})},
             ]]
         }
-        for cid in (chat_ids or []):
+        # Approval requests are CRITICAL — no per-user filtering, but we still
+        # need to handle the (chat_id, min_level) tuple form of chat_ids.
+        for cid, _min in _normalize_recipients(chat_ids or []):
             await self._send_with_keyboard(text, inline_keyboard, chat_id=cid)
 
     async def _send_with_keyboard(self, text: str, reply_markup: dict,
@@ -264,11 +301,11 @@ class NotificationService:
         )
 
     async def notify_regime_change(self, old_regime: str, new_regime: str,
-                                   chat_ids: list[str] = None):
+                                   chat_ids: list = None, level: str = "INFO"):
         await self.broadcast(
             f"<b>Global Regime Change</b>\n"
             f"<code>{old_regime}</code> \u2192 <code>{new_regime}</code>",
-            level="INFO", chat_ids=chat_ids or [],
+            level=level, chat_ids=chat_ids or [],
         )
 
     async def notify_bot_paused(self, reason: str, chat_ids: list[str] = None):

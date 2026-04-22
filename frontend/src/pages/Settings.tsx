@@ -15,6 +15,7 @@ interface KeysState {
   binance_testnet_api_key: string
   telegram_chat_id: string
   telegram_enabled: boolean
+  telegram_min_level: string
 }
 
 export default function Settings() {
@@ -34,6 +35,7 @@ export default function Settings() {
     binance_testnet_api_secret: '',
     telegram_chat_id: '',
     telegram_enabled: false,
+    telegram_min_level: '',
   })
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
@@ -57,6 +59,7 @@ export default function Settings() {
           trading_end_hour: data.trading_end_hour,
           telegram_chat_id: data.telegram_chat_id || '',
           telegram_enabled: data.telegram_enabled || false,
+          telegram_min_level: data.telegram_min_level || '',
         }))
       })
       .catch(() => {})
@@ -76,6 +79,7 @@ export default function Settings() {
         trading_end_hour: form.trading_end_hour,
         telegram_chat_id: form.telegram_chat_id,
         telegram_enabled: form.telegram_enabled,
+        telegram_min_level: form.telegram_min_level,
       }
       if (form.binance_api_key) body.binance_api_key = form.binance_api_key
       if (form.binance_api_secret) body.binance_api_secret = form.binance_api_secret
@@ -434,6 +438,28 @@ export default function Settings() {
           onChange={(e) => setForm({ ...form, telegram_chat_id: e.target.value })}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
         />
+        <div>
+          <label className="block text-xs font-medium text-gray-400 mb-1.5">
+            {l('Livello minimo notifiche', 'Minimum notification level')}
+          </label>
+          <select
+            value={form.telegram_min_level}
+            onChange={(e) => setForm({ ...form, telegram_min_level: e.target.value })}
+            disabled={!form.telegram_enabled}
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-50"
+          >
+            <option value="">{l('Default server (consigliato)', 'Server default (recommended)')}</option>
+            <option value="INFO">{l('Tutto (INFO) — include cambi regime di routine', 'All (INFO) — includes routine regime changes')}</option>
+            <option value="WARNING">{l('Solo importanti (WARNING)', 'Important only (WARNING)')}</option>
+            <option value="CRITICAL">{l('Solo critiche (CRITICAL)', 'Critical only (CRITICAL)')}</option>
+          </select>
+          <p className="text-[11px] text-gray-500 mt-1">
+            {l(
+              'WARNING: cambi profilo, perdite consecutive, ingresso regime difensivo/volatile. CRITICAL: drawdown, errori API, pausa bot, approvazioni.',
+              'WARNING: profile switches, consecutive losses, entering defensive/volatile regime. CRITICAL: drawdown, API errors, bot paused, approvals.'
+            )}
+          </p>
+        </div>
         <div className="flex items-center gap-3">
           <p className="text-xs text-gray-500 flex-1">
             {l(
