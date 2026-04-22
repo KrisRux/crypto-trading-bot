@@ -1,12 +1,15 @@
+import { Link } from 'react-router-dom'
 import { AdaptiveStatus } from '../../api'
 import { useLang } from '../../hooks/useLang'
 import { pnlColor, profileBadgeClass, regimeBadgeClass } from '../../utils/colors'
 
 interface Props {
   adaptive: AdaptiveStatus
+  pendingApprovalsCount?: number
+  isAdmin?: boolean
 }
 
-export default function AdaptiveStatusBar({ adaptive }: Props) {
+export default function AdaptiveStatusBar({ adaptive, pendingApprovalsCount = 0, isAdmin = false }: Props) {
   const { l } = useLang()
 
   return (
@@ -24,6 +27,16 @@ export default function AdaptiveStatusBar({ adaptive }: Props) {
             {adaptive.regime.global_regime}
           </span>
         </div>
+        {isAdmin && pendingApprovalsCount > 0 && (
+          <Link
+            to="/approvals"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-amber-900/50 text-amber-300 border border-amber-800/50 hover:bg-amber-900/70 transition-colors"
+            title={l('Apri pagina approvazioni', 'Open approvals page')}
+          >
+            <span>{pendingApprovalsCount}</span>
+            <span>{pendingApprovalsCount === 1 ? l('approvazione', 'approval') : l('approvazioni', 'approvals')}</span>
+          </Link>
+        )}
         <div className="flex items-center gap-4 ml-auto text-xs">
           <span className={pnlColor(adaptive.performance.pnl_6h)}>
             PnL 6h: {adaptive.performance.pnl_6h >= 0 ? '+' : ''}{adaptive.performance.pnl_6h?.toFixed(2)}
@@ -48,6 +61,12 @@ export default function AdaptiveStatusBar({ adaptive }: Props) {
           <span className="text-blue-400/70 ml-1">
             ({(adaptive.advisor.confidence * 100).toFixed(0)}% {l('confidenza', 'confidence')})
           </span>
+          <div className="text-[11px] text-blue-400/60 mt-1">
+            {l(
+              'Suggerimento informativo dell’LLM (read-only). L’applicazione avviene tramite switching rules; eventuali conferme manuali sono nella pagina Approvazioni.',
+              'Informational LLM suggestion (read-only). Actual changes are driven by switching rules; manual confirmations live on the Approvals page.'
+            )}
+          </div>
         </div>
       )}
     </div>

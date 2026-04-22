@@ -241,6 +241,19 @@ export interface DiagnosticsData {
   events: DiagEvent[]
 }
 
+export interface ApprovalRequestItem {
+  id: number
+  request_type?: string
+  from_profile: string | null
+  to_profile: string | null
+  reason: string | null
+  status?: string
+  created_at: string | null
+  resolved_at?: string | null
+  resolved_by?: string | null
+  expires_at: string | null
+}
+
 export interface AdaptiveStatus {
   active_profile: string
   regime: {
@@ -327,4 +340,10 @@ export const api = {
     request<{ ok: boolean }>('/adaptive/guardrails/config', { method: 'PUT', body: JSON.stringify(config) }),
   resetGuardrailsConfig: () =>
     request<{ ok: boolean; config: Record<string, unknown> }>('/adaptive/guardrails/config/reset', { method: 'POST' }),
+  getApprovals: () => request<ApprovalRequestItem[]>('/approvals'),
+  getPendingApprovals: () => request<ApprovalRequestItem[]>('/approvals/pending'),
+  approveRequest: (id: number) =>
+    request<{ ok: boolean; status: string; id: number }>(`/approvals/${id}/approve`, { method: 'POST' }),
+  rejectRequest: (id: number) =>
+    request<{ ok: boolean; status: string; id: number }>(`/approvals/${id}/reject`, { method: 'POST' }),
 }

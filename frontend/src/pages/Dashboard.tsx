@@ -1,7 +1,8 @@
 import { useCallback, useState } from 'react'
-import { api, Balance, Position, TradeItem, EngineStatus, AdaptiveStatus, NewsSentiment } from '../api'
+import { api, Balance, Position, TradeItem, EngineStatus, AdaptiveStatus, NewsSentiment, ApprovalRequestItem } from '../api'
 import { usePolling } from '../hooks/usePolling'
 import { useLang } from '../hooks/useLang'
+import { useAuth } from '../hooks/useAuth'
 import StatCard from '../components/StatCard'
 import Badge from '../components/Badge'
 import Modal from '../components/Modal'
@@ -14,6 +15,7 @@ import { SkeletonCard } from '../components/Skeleton'
 
 export default function Dashboard() {
   const { t, l } = useLang()
+  const { isAdmin } = useAuth()
 
   const fetchBalance = useCallback(() => api.getBalance(), [])
   const fetchPositions = useCallback(() => api.getPositions(), [])
@@ -21,6 +23,10 @@ export default function Dashboard() {
   const fetchEngine = useCallback(() => api.getEngineStatus(), [])
   const fetchAdaptive = useCallback(() => api.getAdaptiveStatus(), [])
   const fetchSentiment = useCallback(() => api.getNewsSentiment(), [])
+  const fetchPendingApprovals = useCallback(
+    () => (isAdmin ? api.getPendingApprovals() : Promise.resolve([] as ApprovalRequestItem[])),
+    [isAdmin]
+  )
 
   const [balance, , , refetchBalance] = usePolling<Balance>(fetchBalance, 5000)
   const [positions, loadingPositions, , refetchPositions] = usePolling<Position[]>(fetchPositions, 5000)
@@ -28,6 +34,7 @@ export default function Dashboard() {
   const [engine] = usePolling<EngineStatus>(fetchEngine, 5000)
   const [adaptive] = usePolling<AdaptiveStatus>(fetchAdaptive, 15000)
   const [sentiment] = usePolling<NewsSentiment>(fetchSentiment, 60000)
+  const [pendingApprovals] = usePolling<ApprovalRequestItem[]>(fetchPendingApprovals, 15000)
 
   const dataMode = balance?.mode || 'paper'
 
@@ -157,7 +164,13 @@ export default function Dashboard() {
       </div>
 
       {/* Adaptive Layer Status */}
-      {adaptive && <AdaptiveStatusBar adaptive={adaptive} />}
+      {adaptive && (
+        <AdaptiveStatusBar
+          adaptive={adaptive}
+          pendingApprovalsCount={pendingApprovals?.length || 0}
+          isAdmin={isAdmin}
+        />
+      )}
 
       {/* Market Sentiment */}
       {sentiment && <MarketSentimentPanel sentiment={sentiment} />}

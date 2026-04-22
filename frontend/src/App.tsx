@@ -10,6 +10,7 @@ import Users from './pages/Users'
 import Settings from './pages/Settings'
 import Diagnostics from './pages/Diagnostics'
 import GuardrailsConfig from './pages/GuardrailsConfig'
+import Approvals from './pages/Approvals'
 import Login from './pages/Login'
 import { api } from './api'
 import { Lang } from './i18n'
@@ -129,6 +130,7 @@ function AppContent() {
     { to: '/users',       label: l('Utenti', 'Users'),adminOnly: true  },
     { to: '/diagnostics', label: 'Diagnostics',      adminOnly: true  },
     { to: '/guardrails',  label: 'Guardrails',       adminOnly: true  },
+    { to: '/approvals',   label: l('Approvazioni', 'Approvals'), adminOnly: true  },
     { to: '/logs',        label: t('nav_logs'),      adminOnly: false },
   ]
 
@@ -252,6 +254,7 @@ function AppContent() {
             {isAdmin && <Route path="/users" element={<Users />} />}
             {isAdmin && <Route path="/diagnostics" element={<Diagnostics />} />}
             {isAdmin && <Route path="/guardrails" element={<GuardrailsConfig />} />}
+            {isAdmin && <Route path="/approvals" element={<Approvals />} />}
             <Route path="/login" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
