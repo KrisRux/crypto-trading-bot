@@ -405,6 +405,22 @@ export default function GuardrailsConfig() {
         </button>
       </div>
 
+      {/* ── AI Tuning Advisor ── */}
+      <TuningAdvisorSection onApplyChanges={(changes) => {
+        if (!draft) return
+        let next = JSON.parse(JSON.stringify(draft)) as Cfg
+        for (const c of changes) {
+          const parts = (c.path as string).split('.')
+          let obj: Cfg = next
+          for (let i = 0; i < parts.length - 1; i++) {
+            if (!(parts[i] in obj)) obj[parts[i]] = {}
+            obj = obj[parts[i]] as Cfg
+          }
+          obj[parts[parts.length - 1]] = c.to
+        }
+        setDraft(next)
+      }} l={l} />
+
       {/* Sections */}
       {draft && SECTIONS.map(section => {
         const obj = getNestedValue(draft, section.path) as Cfg | undefined
@@ -489,22 +505,6 @@ export default function GuardrailsConfig() {
           </div>
         )
       })}
-
-      {/* ── AI Tuning Advisor ── */}
-      <TuningAdvisorSection onApplyChanges={(changes) => {
-        if (!draft) return
-        let next = JSON.parse(JSON.stringify(draft)) as Cfg
-        for (const c of changes) {
-          const parts = (c.path as string).split('.')
-          let obj: Cfg = next
-          for (let i = 0; i < parts.length - 1; i++) {
-            if (!(parts[i] in obj)) obj[parts[i]] = {}
-            obj = obj[parts[i]] as Cfg
-          }
-          obj[parts[parts.length - 1]] = c.to
-        }
-        setDraft(next)
-      }} l={l} />
 
       {/* Action bar */}
       <div className="flex items-center gap-3 flex-wrap sticky bottom-0 bg-gray-950/95 backdrop-blur py-3 border-t border-gray-800 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
