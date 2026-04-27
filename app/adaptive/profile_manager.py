@@ -138,8 +138,12 @@ class ProfileManager:
 
         # Rule 2: defensive → normal
         if current == "defensive":
-            # Require positive conditions: low drawdown, decent win rate, few errors
-            if win_rate >= 55 and drawdown < 1 and perf.get("api_error_count", 0) <= 2:
+            # Require clean conditions: no recent losses, improved WR, lower drawdown
+            consec_losses = perf.get("consecutive_losses", 0)
+            if (win_rate >= 60
+                    and drawdown < 0.8
+                    and consec_losses == 0
+                    and perf.get("api_error_count", 0) <= 2):
                 return "normal"
 
         # Rule 3: normal → aggressive_trend (requires approval + min trades)

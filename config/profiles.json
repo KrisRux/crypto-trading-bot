@@ -7,18 +7,18 @@
       "risk": {
         "max_position_pct": 1.5,
         "default_sl_pct": 3.0,
-        "default_tp_pct": 5.0
+        "default_tp_pct": 6.0
       },
       "strategies": {
         "embient_enhanced": {
           "trend_buy_threshold": 80.0,
           "trend_sell_threshold": 75.0,
-          "range_buy_threshold": 80.0,
+          "range_buy_threshold": 75.0,
           "range_sell_threshold": 75.0,
           "neutral_sell_threshold": 70.0
         },
         "rsi_reversal": {
-          "oversold": 25.0,
+          "oversold": 30.0,
           "overbought": 75.0,
           "enabled_in_trend": false
         },
@@ -41,18 +41,18 @@
       "risk": {
         "max_position_pct": 1.0,
         "default_sl_pct": 3.0,
-        "default_tp_pct": 5.0
+        "default_tp_pct": 5.5
       },
       "strategies": {
         "embient_enhanced": {
           "trend_buy_threshold": 85.0,
           "trend_sell_threshold": 80.0,
-          "range_buy_threshold": 85.0,
+          "range_buy_threshold": 78.0,
           "range_sell_threshold": 80.0,
           "neutral_sell_threshold": 75.0
         },
         "rsi_reversal": {
-          "oversold": 25.0,
+          "oversold": 28.0,
           "overbought": 75.0,
           "enabled_in_trend": false
         },
@@ -104,10 +104,10 @@
     }
   },
   "switching_rules": {
-    "cooldown_minutes": 60,
-    "min_trades_for_upgrade": 5,
-    "max_profile_changes_per_day": 4,
-    "hysteresis_minutes": 30
+    "cooldown_minutes": 90,
+    "min_trades_for_upgrade": 7,
+    "max_profile_changes_per_day": 3,
+    "hysteresis_minutes": 60
   },
   "active_profile": "normal"
 }
