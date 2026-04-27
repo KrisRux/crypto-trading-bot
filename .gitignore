@@ -35,8 +35,10 @@ Thumbs.db
 # Claude Code
 .claude/
 
-# Runtime state (never tracked — managed by profile_manager at runtime)
+# Runtime state (never tracked — written at runtime by the bot)
 config/profile_state.json
+risk_params.json
+strategy_params.json
 
 # TypeScript incremental build cache
 frontend/tsconfig.tsbuildinfo

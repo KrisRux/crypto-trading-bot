@@ -11,12 +11,10 @@ APP_USER="cryptobot"
 
 echo "Pulling latest code..."
 cd "$APP_DIR"
-# Stash runtime-editable config files before pulling so user changes are not lost.
-# guardrails.json and profiles.json can be modified via the API without a deploy.
-sudo -u "$APP_USER" git stash -- config/guardrails.json config/profiles.json 2>/dev/null || true
+# profiles.json is read-only at runtime — active_profile and switch_history are
+# stored in config/profile_state.json (gitignored), so no stash needed.
+# guardrails.json deploy version always wins; API hot-reload reads from disk anyway.
 sudo -u "$APP_USER" git pull
-# Re-apply the stashed config on top of the pulled code (preserves user edits).
-sudo -u "$APP_USER" git stash pop 2>/dev/null || true
 
 echo "Updating Python dependencies..."
 sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" install -r requirements.txt
