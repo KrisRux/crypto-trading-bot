@@ -22,13 +22,15 @@ from datetime import datetime, timedelta, timezone
 logger = logging.getLogger(__name__)
 
 PROFILES_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "config", "profiles.json")
+PROFILE_STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "config", "profile_state.json")
 
 
 class ProfileManager:
     """Manages profile loading, evaluation, and application."""
 
-    def __init__(self, profiles_path: str = PROFILES_FILE):
+    def __init__(self, profiles_path: str = PROFILES_FILE, state_path: str = PROFILE_STATE_FILE):
         self._profiles_path = os.path.abspath(profiles_path)
+        self._state_path = os.path.abspath(state_path)
         self._data: dict = {}
         self._profiles: dict = {}
         self._switching_rules: dict = {}
@@ -54,32 +56,48 @@ class ProfileManager:
         return list(self._switch_history)
 
     def load(self):
-        """Load profiles from JSON file."""
+        """Load profile config from profiles.json (read-only) and runtime state from profile_state.json."""
         try:
             with open(self._profiles_path, "r") as f:
                 self._data = json.load(f)
             self._profiles = self._data.get("profiles", {})
             self._switching_rules = self._data.get("switching_rules", {})
-            self._active_profile = self._data.get("active_profile", "normal")
-            # Restore persisted switch_history (survives restarts for daily limit tracking)
-            self._switch_history = self._data.get("switch_history", [])
-            # Restore last switch time from history
-            if self._switch_history:
-                try:
-                    self._last_switch_time = datetime.fromisoformat(
-                        self._switch_history[-1]["at"]
-                    )
-                except (KeyError, ValueError):
-                    pass
-            logger.info(
-                "Profiles loaded: %s (active: %s, history: %d switches)",
-                list(self._profiles.keys()), self._active_profile,
-                len(self._switch_history),
-            )
         except Exception:
             logger.exception("Failed to load profiles from %s", self._profiles_path)
             self._profiles = {}
             self._switching_rules = {}
+            return
+
+        # Load runtime state from separate file (gitignored, never stashed during deploy)
+        try:
+            with open(self._state_path, "r") as f:
+                state = json.load(f)
+            self._active_profile = state.get("active_profile", "normal")
+            self._switch_history = state.get("switch_history", [])
+        except FileNotFoundError:
+            # First run after migration: fall back to values embedded in profiles.json
+            self._active_profile = self._data.get("active_profile", "normal")
+            self._switch_history = self._data.get("switch_history", [])
+            logger.info("profile_state.json not found — using profiles.json fallback (first run)")
+        except Exception:
+            logger.exception("Failed to load profile state from %s", self._state_path)
+            self._active_profile = "normal"
+            self._switch_history = []
+
+        # Restore last switch time from history
+        if self._switch_history:
+            try:
+                self._last_switch_time = datetime.fromisoformat(
+                    self._switch_history[-1]["at"]
+                )
+            except (KeyError, ValueError):
+                pass
+
+        logger.info(
+            "Profiles loaded: %s (active: %s, history: %d switches)",
+            list(self._profiles.keys()), self._active_profile,
+            len(self._switch_history),
+        )
 
     def get_profile(self, name: str) -> dict | None:
         return self._profiles.get(name)
@@ -273,12 +291,14 @@ class ProfileManager:
         return True
 
     def _save_active_profile(self):
-        """Persist active_profile and switch_history to the JSON file."""
+        """Persist runtime state (active_profile, switch_history) to profile_state.json.
+        profiles.json is never written at runtime so git stash during deploys is a no-op."""
         try:
-            self._data["active_profile"] = self._active_profile
-            # Persist switch_history (keep last 30 entries to avoid unbounded growth)
-            self._data["switch_history"] = self._switch_history[-30:]
-            with open(self._profiles_path, "w") as f:
-                json.dump(self._data, f, indent=2)
+            state = {
+                "active_profile": self._active_profile,
+                "switch_history": self._switch_history[-30:],
+            }
+            with open(self._state_path, "w") as f:
+                json.dump(state, f, indent=2)
         except Exception:
-            logger.exception("Failed to save active profile")
+            logger.exception("Failed to save profile state to %s", self._state_path)

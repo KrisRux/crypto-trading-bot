@@ -34,3 +34,13 @@ Thumbs.db
 
 # Claude Code
 .claude/
+
+# Runtime state (never tracked — managed by profile_manager at runtime)
+config/profile_state.json
+
+# TypeScript incremental build cache
+frontend/tsconfig.tsbuildinfo
+
+# Exported data / debug snapshots dropped in repo root
+*.txt
+trading_bot.log
