@@ -53,6 +53,7 @@ RULES:
 - NEVER suggest large changes — max adjustment is 15% of the current value per parameter
 - When risk is elevated (consecutive_losses >= 4 or drawdown >= 1.5%), ONLY suggest tightening
 - When block_rate is high (> 60%), prioritize loosening the dominant block reason threshold
+- When a strategy has at least 10 trades and negative estimated net PnL, prefer disabling it over loosening entries
 - Consider news sentiment: bearish sentiment = no loosening of entry thresholds
 - Each change MUST cite the specific metric that justifies it
 - Respond with valid JSON only"""
@@ -77,6 +78,9 @@ Your job is to suggest concrete, data-driven parameter adjustments — even when
 ## Strategy Parameters (current values)
 {strategy_params_section}
 
+## Realized Performance Breakdown (fees/slippage adjusted estimate)
+{performance_breakdown_section}
+
 ## Kill Switch & Guardrails State
 {guardrails_section}
 
@@ -91,9 +95,10 @@ Your job is to suggest concrete, data-driven parameter adjustments — even when
 - If block_rate > 60%: suggest relaxing the dominant block reason threshold by 10-15%
 - If trades_per_hour < 0.5 in a TREND regime: the bot is too conservative — suggest specific relaxations
 - If consecutive_losses >= 3: suggest tightening score thresholds or reducing position exposure
+- If a strategy has >=10 trades and negative estimated_net_pnl: suggest strategy.<name>.enabled=false
 - Always suggest at least 1 change unless all metrics are at target AND block_rate < 30%
 - Prefer small incremental changes (10-15% of current value), never suggest changes >30% of current value
-- You may suggest changes to: trade_gate thresholds, dynamic_score thresholds, strategy score thresholds
+- You may suggest changes to: trade_gate thresholds, dynamic_score thresholds, strategy score thresholds, strategy enable/disable flags
 
 Respond with exactly this JSON (changes array may contain 1-3 items):
 {{
@@ -118,7 +123,11 @@ Valid path examples:
 - dynamic_score.extra_score_in_bad_regime
 - embient_enhanced.trend_buy_threshold
 - embient_enhanced.range_buy_threshold
-- embient_enhanced.range_sell_threshold"""
+- embient_enhanced.range_sell_threshold
+- strategy.embient_enhanced.enabled
+- strategy.sma_crossover.enabled
+- strategy.rsi_reversal.enabled
+- strategy.macd_crossover.enabled"""
 
 
 async def check_deepseek(api_key: str) -> bool:
@@ -151,6 +160,7 @@ async def generate_suggestions(
     model: str = DEFAULT_MODEL,
     news_sentiment: dict | None = None,
     strategy_params: dict | None = None,
+    performance_breakdown: dict | None = None,
 ) -> dict | None:
     """
     Call DeepSeek API to generate tuning suggestions.
@@ -193,13 +203,36 @@ async def generate_suggestions(
     if strategy_params:
         sp_lines = []
         for name, params in strategy_params.items():
-            # Show only tunable numeric/string params, skip noise
+            # Show tunable values plus enabled state so the advisor avoids stale disables.
             tunable = {k: v for k, v in params.items()
-                       if not isinstance(v, bool) and k != "enabled"}
+                       if k == "enabled" or not isinstance(v, bool)}
             sp_lines.append(f"- {name}: {json.dumps(tunable)}")
         strategy_params_section = "\n".join(sp_lines) if sp_lines else "  No data"
     else:
         strategy_params_section = "  Not provided"
+
+    if performance_breakdown:
+        lines = []
+        overall = performance_breakdown.get("overall", {})
+        lines.append(
+            "overall: trades={trades} gross={gross_pnl} est_net={estimated_net_pnl} "
+            "win_rate={win_rate}%".format(**overall)
+        )
+        for name, row in performance_breakdown.get("by_strategy", {}).items():
+            lines.append(
+                f"strategy {name}: trades={row.get('trades', 0)} "
+                f"gross={row.get('gross_pnl', 0)} est_net={row.get('estimated_net_pnl', 0)} "
+                f"win_rate={row.get('win_rate', 0)}%"
+            )
+        for symbol, row in performance_breakdown.get("by_symbol", {}).items():
+            lines.append(
+                f"symbol {symbol}: trades={row.get('trades', 0)} "
+                f"gross={row.get('gross_pnl', 0)} est_net={row.get('estimated_net_pnl', 0)} "
+                f"win_rate={row.get('win_rate', 0)}%"
+            )
+        performance_breakdown_section = "\n".join(lines)
+    else:
+        performance_breakdown_section = "  Not provided"
 
     # Kill switch and risk state from guardrails_status + config
     ks_status = guardrails_status.get("kill_switch", {})
@@ -236,6 +269,7 @@ async def generate_suggestions(
         blocked_score_count=stats.get("blocked_dynamic_score", 0),
         blocked_gate_count=stats.get("blocked_trade_gate", 0),
         strategy_params_section=strategy_params_section,
+        performance_breakdown_section=performance_breakdown_section,
         guardrails_section=guardrails_section,
         symbol_regimes=symbol_regimes,
         news_section=news_section,

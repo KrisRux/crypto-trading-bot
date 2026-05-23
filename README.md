@@ -206,6 +206,8 @@ pytest tests/ -v
 | `MAX_POSITION_SIZE_PCT` | `2.0` | Max % capitale per posizione |
 | `DEFAULT_STOP_LOSS_PCT` | `3.0` | Stop loss default (%) |
 | `DEFAULT_TAKE_PROFIT_PCT` | `5.0` | Take profit default (%) |
+| `PAPER_FEE_PCT` | `0.1` | Commissione simulata per lato nel paper trading (%) |
+| `PAPER_SLIPPAGE_PCT` | `0.02` | Slippage simulato per lato nel paper trading (%) |
 | `JWT_SECRET` | (da cambiare) | Chiave JWT per autenticazione |
 | `ENCRYPTION_KEY` | (generare) | Chiave Fernet per cifrare API keys in DB |
 | `TELEGRAM_BOT_TOKEN` | (vuoto) | Token bot Telegram da @BotFather |
@@ -250,6 +252,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | POST | `/api/positions/{id}/close` | Chiudi posizione manualmente |
 | GET | `/api/orders` | Storico ordini |
 | GET | `/api/trades` | Storico trade |
+| GET | `/api/performance/breakdown` | PnL e win rate aggregati per strategia e simbolo |
 | GET | `/api/signals` | Ultimi segnali generati |
 
 ### Strategie e Rischio

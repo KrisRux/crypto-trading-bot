@@ -185,6 +185,7 @@ class LLMAdvisor:
         regime_snapshot: dict,
         news_sentiment: dict | None = None,
         strategy_params: dict | None = None,
+        performance_breakdown: dict | None = None,
     ) -> dict:
         """
         Generate guardrails tuning suggestions.
@@ -245,7 +246,8 @@ class LLMAdvisor:
 
         llm_args = dict(perf=perf, guardrails_status=guardrails_status,
                         guardrails_config=guardrails_config, regime_snapshot=regime_snapshot,
-                        news_sentiment=news_sentiment, strategy_params=strategy_params)
+                        news_sentiment=news_sentiment, strategy_params=strategy_params,
+                        performance_breakdown=performance_breakdown)
 
         def _apply_tighten_filter(result: dict) -> dict:
             """If risk is elevated, keep only tightening suggestions."""
@@ -304,7 +306,10 @@ class LLMAdvisor:
                 logger.exception("TUNING_ADVISOR: Ollama failed, falling back to rules")
 
         # 3. Fallback: rule-based engine
-        result = self._rule_based_suggestions(perf, guardrails_status, guardrails_config, regime_snapshot)
+        result = self._rule_based_suggestions(
+            perf, guardrails_status, guardrails_config, regime_snapshot,
+            performance_breakdown, strategy_params,
+        )
         result = _apply_tighten_filter(result)
         result["news_sentiment"] = news_sentiment
 
@@ -317,6 +322,8 @@ class LLMAdvisor:
     def _rule_based_suggestions(
         self, perf: dict, guardrails_status: dict,
         guardrails_config: dict, regime_snapshot: dict,
+        performance_breakdown: dict | None = None,
+        strategy_params: dict | None = None,
     ) -> dict:
         """Deterministic rule-based fallback when Ollama is not available."""
         changes: list[dict] = []
@@ -337,6 +344,31 @@ class LLMAdvisor:
         ds = guardrails_config.get("dynamic_score", {})
         total = total_blocked + total_passed or 1
         block_pct = total_blocked / total * 100
+
+        # Rule 0: disable statistically weak strategies before loosening entries.
+        # Strategy changes are manual-only via the saved suggestion apply endpoint.
+        if performance_breakdown:
+            for strategy, row in performance_breakdown.get("by_strategy", {}).items():
+                if strategy in ("unknown", "paper"):
+                    continue
+                if strategy_params and not strategy_params.get(strategy, {}).get("enabled", True):
+                    continue
+                trades = row.get("trades", 0)
+                est_net = row.get("estimated_net_pnl", 0)
+                win_rate = row.get("win_rate", 0)
+                if trades >= 10 and est_net < 0:
+                    changes.append({
+                        "path": f"strategy.{strategy}.enabled",
+                        "from": True,
+                        "to": False,
+                        "reason": (
+                            f"{strategy} has {trades} trades, estimated net PnL "
+                            f"{est_net:.2f}, win rate {win_rate:.1f}%"
+                        ),
+                    })
+                    reasons.append(f"{strategy} is negative after estimated costs")
+                    if len(changes) >= 3:
+                        break
 
         # Rule 1: High block rate + low trades → loosen ADX
         if block_pct > 70 and tph < 0.2 and blocked_gate > blocked_score and dd < 1.0:

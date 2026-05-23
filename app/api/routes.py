@@ -4,6 +4,7 @@ All routes (except /api/login) require JWT authentication.
 """
 
 import logging
+from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
@@ -51,6 +52,54 @@ def get_meta_controller():
     if _meta_controller is None:
         raise HTTPException(500, "MetaController not initialized")
     return _meta_controller
+
+
+def _summarize_trades(group: list[Trade]) -> dict:
+    gross = sum(t.pnl or 0 for t in group)
+    wins = sum(1 for t in group if (t.pnl or 0) > 0)
+    losses = sum(1 for t in group if (t.pnl or 0) < 0)
+    notional = sum((t.entry_price or 0) * (t.quantity or 0) for t in group)
+    estimated_fees = notional * (settings.paper_fee_pct / 100) * 2
+    avg_pct = sum(t.pnl_pct or 0 for t in group) / len(group) if group else 0
+    return {
+        "trades": len(group),
+        "gross_pnl": round(gross, 6),
+        "estimated_roundtrip_fees": round(estimated_fees, 6),
+        "estimated_net_pnl": round(gross - estimated_fees, 6),
+        "wins": wins,
+        "losses": losses,
+        "win_rate": round(wins / len(group) * 100, 2) if group else 0,
+        "avg_pnl_pct": round(avg_pct, 4),
+    }
+
+
+def _performance_breakdown_for_user(db: Session, user: User) -> dict:
+    user_mode = user.trading_mode or "paper"
+    trades = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.mode == user_mode,
+        Trade.status == TradeStatus.CLOSED,
+    ).all()
+    by_strategy: dict[str, list[Trade]] = defaultdict(list)
+    by_symbol: dict[str, list[Trade]] = defaultdict(list)
+    for trade in trades:
+        by_strategy[trade.strategy or "unknown"].append(trade)
+        by_symbol[trade.symbol].append(trade)
+
+    return {
+        "mode": user_mode,
+        "fee_pct_per_side": settings.paper_fee_pct,
+        "slippage_pct_per_side": settings.paper_slippage_pct,
+        "overall": _summarize_trades(trades),
+        "by_strategy": {
+            key: _summarize_trades(group)
+            for key, group in sorted(by_strategy.items())
+        },
+        "by_symbol": {
+            key: _summarize_trades(group)
+            for key, group in sorted(by_symbol.items())
+        },
+    }
 
 
 # ------------------------------------------------------------------ Auth
@@ -358,9 +407,19 @@ async def get_positions(db: Session = Depends(get_db), user_info: dict = Depends
     result = []
     for t in open_trades:
         cp = engine.last_prices.get(t.symbol, 0)
-        upnl = (cp - t.entry_price) * t.quantity if cp else 0
-        upnl_pct = ((cp - t.entry_price) / t.entry_price * 100) if (cp and t.entry_price) else 0
-        pos_value = cp * t.quantity if cp else t.entry_price * t.quantity
+        entry_notional = t.entry_price * t.quantity
+        if cp and user_mode == "paper":
+            exit_price = cp * (1 - settings.paper_slippage_pct / 100)
+            exit_notional = exit_price * t.quantity
+            entry_fee = entry_notional * (settings.paper_fee_pct / 100)
+            exit_fee = exit_notional * (settings.paper_fee_pct / 100)
+            upnl = exit_notional - exit_fee - entry_notional - entry_fee
+            upnl_pct = (upnl / (entry_notional + entry_fee) * 100) if entry_notional else 0
+            pos_value = exit_notional - exit_fee
+        else:
+            upnl = (cp - t.entry_price) * t.quantity if cp else 0
+            upnl_pct = ((cp - t.entry_price) / t.entry_price * 100) if (cp and t.entry_price) else 0
+            pos_value = cp * t.quantity if cp else entry_notional
         result.append(PositionResponse(
             id=t.id, symbol=t.symbol, side=t.side.value,
             quantity=t.quantity, entry_price=t.entry_price,
@@ -484,6 +543,15 @@ def get_trades(db: Session = Depends(get_db), limit: int = 50,
             opened_at=t.opened_at, closed_at=t.closed_at,
         ) for t in trades
     ]
+
+
+@router.get("/performance/breakdown")
+def get_performance_breakdown(
+    db: Session = Depends(get_db),
+    user_info: dict = Depends(require_auth),
+):
+    user = _get_user_obj(user_info, db)
+    return _performance_breakdown_for_user(db, user)
 
 
 # ------------------------------------------------------------------ Price
@@ -926,6 +994,13 @@ async def get_tuning_suggestions(db: Session = Depends(get_db), _admin: dict = D
     }
     regime = mc.regime_service.global_snapshot()
     guardrails_status = engine.guardrails.status()
+    admin_user = _get_user_obj(_admin, db)
+    performance_breakdown = _performance_breakdown_for_user(db, admin_user)
+    strategy_params = {
+        s.name: s.get_params()
+        for s in getattr(engine, "strategies", [])
+        if hasattr(s, "get_params")
+    }
 
     # Read current guardrails config
     import os
@@ -945,6 +1020,8 @@ async def get_tuning_suggestions(db: Session = Depends(get_db), _admin: dict = D
         guardrails_config=guardrails_config,
         regime_snapshot=regime,
         news_sentiment=news,
+        strategy_params=strategy_params or None,
+        performance_breakdown=performance_breakdown,
     )
 
     return {
@@ -955,6 +1032,7 @@ async def get_tuning_suggestions(db: Session = Depends(get_db), _admin: dict = D
             **perf,
             "total_blocked": guardrails_status.get("stats", {}).get("total_blocked", 0),
             "total_passed": guardrails_status.get("stats", {}).get("total_passed", 0),
+            "performance_breakdown": performance_breakdown,
         },
     }
 
@@ -978,6 +1056,11 @@ def apply_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
         "dynamic_score.extra_score_in_bad_regime",
         "dynamic_score.max_score_cap",
     }
+    engine = get_engine()
+    allowed_strategy_paths = {
+        f"strategy.{s.name}.enabled"
+        for s in getattr(engine, "strategies", [])
+    }
 
     suggestion = db.query(TuningSuggestion).filter(TuningSuggestion.id == suggestion_id).first()
     if not suggestion:
@@ -994,13 +1077,21 @@ def apply_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
 
     # Apply changes with whitelist validation and stale check
     changes = _json.loads(suggestion.changes_json or "[]")
+    guardrail_changes = []
+    strategy_changes = []
     for change in changes:
         path = change.get("path", "")
 
         # Security: reject unauthorized paths
-        if path not in ALLOWED_TUNING_PATHS:
+        if path in ALLOWED_TUNING_PATHS:
+            guardrail_changes.append(change)
+        elif path in allowed_strategy_paths:
+            strategy_changes.append(change)
+        else:
             raise HTTPException(400, f"Unauthorized config path: '{path}'")
 
+    for change in guardrail_changes:
+        path = change.get("path", "")
         # Stale check: verify 'from' value matches current config before overwriting
         parts = path.split(".")
         current_val = config
@@ -1021,21 +1112,42 @@ def apply_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
             obj = obj.setdefault(p, {})
         obj[parts[-1]] = change["to"]
 
-    # Validate
-    val_errors = validate_guardrails_values(config)
-    if val_errors:
-        raise HTTPException(400, f"Validation errors: {'; '.join(val_errors)}")
+    for change in strategy_changes:
+        _, strategy_name, field = change["path"].split(".")
+        if field != "enabled" or not isinstance(change.get("to"), bool):
+            raise HTTPException(400, f"Invalid strategy change: '{change['path']}'")
+        strat = next((s for s in engine.strategies if s.name == strategy_name), None)
+        if not strat:
+            raise HTTPException(404, f"Strategy '{strategy_name}' not found")
+        expected_from = change.get("from")
+        if expected_from is not None and bool(strat.enabled) != bool(expected_from):
+            raise HTTPException(
+                409,
+                f"Strategy changed since suggestion was generated: '{strategy_name}' "
+                f"expected {expected_from}, current value is {strat.enabled}. "
+                "Re-generate the suggestion and try again.",
+            )
+        strat.enabled = change["to"]
 
-    # Atomic write
-    config_dir = os.path.dirname(config_path)
-    fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".json")
-    with os.fdopen(fd, "w") as f:
-        _json.dump(config, f, indent=2)
-    os.replace(tmp_path, config_path)
+    if guardrail_changes:
+        # Validate
+        val_errors = validate_guardrails_values(config)
+        if val_errors:
+            raise HTTPException(400, f"Validation errors: {'; '.join(val_errors)}")
 
-    # Hot-reload
-    engine = get_engine()
-    engine.guardrails.reload_config()
+        # Atomic write
+        config_dir = os.path.dirname(config_path)
+        fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".json")
+        with os.fdopen(fd, "w") as f:
+            _json.dump(config, f, indent=2)
+        os.replace(tmp_path, config_path)
+        engine.guardrails.reload_config()
+
+    if strategy_changes:
+        save_strategy_params({
+            s.name: {"enabled": s.enabled, "params": s.get_params()}
+            for s in engine.strategies
+        })
 
     # Mark as applied
     from datetime import datetime
@@ -1090,6 +1202,13 @@ async def generate_and_save_suggestion(db: Session = Depends(get_db),
     }
     regime = mc.regime_service.global_snapshot()
     guardrails_status = engine.guardrails.status()
+    admin_user = _get_user_obj(admin, db)
+    performance_breakdown = _performance_breakdown_for_user(db, admin_user)
+    strategy_params = {
+        s.name: s.get_params()
+        for s in getattr(engine, "strategies", [])
+        if hasattr(s, "get_params")
+    }
 
     config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
     try:
@@ -1107,6 +1226,8 @@ async def generate_and_save_suggestion(db: Session = Depends(get_db),
         guardrails_config=guardrails_config,
         regime_snapshot=regime,
         news_sentiment=news,
+        strategy_params=strategy_params or None,
+        performance_breakdown=performance_breakdown,
     )
 
     if not result["changes"]:

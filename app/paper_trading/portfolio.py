@@ -13,11 +13,22 @@ from sqlalchemy.orm import Session
 
 from app.models.portfolio import PaperPortfolio, PaperPosition
 from app.models.trade import Trade, TradeStatus, OrderSide, Order, OrderType, OrderStatus
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 
 class PaperPortfolioManager:
+    def __init__(self, fee_pct: float | None = None, slippage_pct: float | None = None):
+        self.fee_pct = settings.paper_fee_pct if fee_pct is None else fee_pct
+        self.slippage_pct = settings.paper_slippage_pct if slippage_pct is None else slippage_pct
+
+    def _apply_slippage(self, price: float, side: OrderSide) -> float:
+        mult = 1 + self.slippage_pct / 100 if side == OrderSide.BUY else 1 - self.slippage_pct / 100
+        return price * mult
+
+    def _fee(self, notional: float) -> float:
+        return notional * (self.fee_pct / 100)
 
     def get_or_create(self, db: Session, user_id: int,
                       initial_capital: float = 10000.0) -> PaperPortfolio:
@@ -42,43 +53,46 @@ class PaperPortfolioManager:
                       quantity: float, price: float,
                       stop_loss: float, take_profit: float):
         portfolio = self.get_or_create(db, user_id)
-        cost = quantity * price
+        fill_price = self._apply_slippage(price, OrderSide.BUY)
+        cost = quantity * fill_price
+        fee = self._fee(cost)
+        total_cost = cost + fee
 
-        if cost > portfolio.cash_balance:
+        if total_cost > portfolio.cash_balance:
             logger.warning("User %d: insufficient paper balance (need %.2f, have %.2f)",
-                           user_id, cost, portfolio.cash_balance)
+                           user_id, total_cost, portfolio.cash_balance)
             return None
 
         order = Order(
             user_id=user_id, symbol=symbol, side=OrderSide.BUY,
             order_type=OrderType.MARKET, quantity=quantity,
-            filled_price=price, status=OrderStatus.FILLED, mode="paper",
+            filled_price=fill_price, status=OrderStatus.FILLED, mode="paper",
         )
         db.add(order)
         db.flush()
 
         position = PaperPosition(
             portfolio_id=portfolio.id, user_id=user_id, symbol=symbol,
-            side="BUY", quantity=quantity, entry_price=price,
-            current_price=price, stop_loss=stop_loss, take_profit=take_profit,
+            side="BUY", quantity=quantity, entry_price=fill_price,
+            current_price=fill_price, stop_loss=stop_loss, take_profit=take_profit,
         )
         db.add(position)
 
         trade = Trade(
             user_id=user_id, symbol=symbol, side=OrderSide.BUY,
-            entry_price=price, quantity=quantity, stop_loss=stop_loss,
+            entry_price=fill_price, quantity=quantity, stop_loss=stop_loss,
             take_profit=take_profit, status=TradeStatus.OPEN,
             mode="paper", strategy="paper", entry_order_id=order.id,
         )
         db.add(trade)
 
-        portfolio.cash_balance -= cost
+        portfolio.cash_balance -= total_cost
         portfolio.total_equity = portfolio.cash_balance + cost
         portfolio.total_trades += 1
         db.commit()
 
-        logger.info("User %d: Paper BUY %s qty=%.6f @ %.2f",
-                     user_id, symbol, quantity, price)
+        logger.info("User %d: Paper BUY %s qty=%.6f @ %.2f fee=%.4f",
+                     user_id, symbol, quantity, fill_price, fee)
         return position
 
     def close_position(self, db: Session, position: PaperPosition,
@@ -89,15 +103,19 @@ class PaperPortfolioManager:
         if not portfolio:
             return
 
-        proceeds = position.quantity * exit_price
+        fill_price = self._apply_slippage(exit_price, OrderSide.SELL)
+        proceeds = position.quantity * fill_price
+        exit_fee = self._fee(proceeds)
+        net_proceeds = proceeds - exit_fee
         cost = position.quantity * position.entry_price
-        pnl = proceeds - cost
-        pnl_pct = (pnl / cost) * 100 if cost > 0 else 0
+        entry_fee = self._fee(cost)
+        pnl = net_proceeds - cost - entry_fee
+        pnl_pct = (pnl / (cost + entry_fee)) * 100 if cost > 0 else 0
 
         order = Order(
             user_id=position.user_id, symbol=position.symbol,
             side=OrderSide.SELL, order_type=OrderType.MARKET,
-            quantity=position.quantity, filled_price=exit_price,
+            quantity=position.quantity, filled_price=fill_price,
             status=OrderStatus.FILLED, mode="paper",
         )
         db.add(order)
@@ -110,14 +128,14 @@ class PaperPortfolioManager:
             Trade.mode == "paper",
         ).first()
         if open_trade:
-            open_trade.exit_price = exit_price
+            open_trade.exit_price = fill_price
             open_trade.pnl = pnl
             open_trade.pnl_pct = pnl_pct
             open_trade.status = TradeStatus.CLOSED
             open_trade.exit_order_id = order.id
             open_trade.closed_at = datetime.now(timezone.utc)
 
-        portfolio.cash_balance += proceeds
+        portfolio.cash_balance += net_proceeds
         portfolio.total_pnl += pnl
         if pnl > 0:
             portfolio.winning_trades += 1
@@ -127,9 +145,9 @@ class PaperPortfolioManager:
         db.delete(position)
         db.commit()
 
-        logger.info("User %d: Paper SELL (%s) %s qty=%.6f @ %.2f PnL=%.2f",
+        logger.info("User %d: Paper SELL (%s) %s qty=%.6f @ %.2f fee=%.4f PnL=%.2f",
                      position.user_id, reason, position.symbol,
-                     position.quantity, exit_price, pnl)
+                     position.quantity, fill_price, exit_fee, pnl)
 
     def close_all_positions(self, db: Session, user_id: int,
                             symbol: str, exit_price: float):

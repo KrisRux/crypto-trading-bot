@@ -126,6 +126,7 @@ async def generate_suggestions(
     model: str = DEFAULT_MODEL,
     news_sentiment: dict | None = None,
     strategy_params: dict | None = None,
+    performance_breakdown: dict | None = None,
 ) -> dict | None:
     """
     Call Ollama to generate tuning suggestions.

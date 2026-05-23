@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     max_position_size_pct: float = Field(default=2.0, alias="MAX_POSITION_SIZE_PCT")
     default_stop_loss_pct: float = Field(default=3.0, alias="DEFAULT_STOP_LOSS_PCT")
     default_take_profit_pct: float = Field(default=5.0, alias="DEFAULT_TAKE_PROFIT_PCT")
+    paper_fee_pct: float = Field(default=0.1, alias="PAPER_FEE_PCT")
+    paper_slippage_pct: float = Field(default=0.02, alias="PAPER_SLIPPAGE_PCT")
 
     # Logging
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

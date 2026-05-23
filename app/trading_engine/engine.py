@@ -672,9 +672,6 @@ class TradingEngine:
         )
         for pos, reason in (closed_positions or []):
             # Record in guardrails for cooldown/breaker tracking
-            pnl = (current_price - pos.entry_price) * pos.quantity if pos.entry_price else 0
-            is_win = pnl > 0
-            was_sl = (reason == "stop_loss")
             # PaperPosition has no 'strategy' — look up the associated Trade record
             assoc_trade = db.query(Trade).filter(
                 Trade.user_id == user.id,
@@ -682,6 +679,9 @@ class TradingEngine:
                 Trade.mode == "paper",
                 Trade.status == TradeStatus.CLOSED,
             ).order_by(Trade.closed_at.desc()).first()
+            pnl = assoc_trade.pnl if assoc_trade and assoc_trade.pnl is not None else 0
+            is_win = pnl > 0
+            was_sl = (reason == "stop_loss")
             strat_name = assoc_trade.strategy if assoc_trade and assoc_trade.strategy else "unknown"
             self.guardrails.record_trade_result(
                 symbol, strat_name, is_win, was_stoploss=was_sl,
