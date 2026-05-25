@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, StrategyInfo, RiskParams } from '../api'
+import { api, StrategyInfo, RiskParams, EngineStatus, PerformanceBreakdown, Position } from '../api'
 import { usePolling } from '../hooks/usePolling'
 import { useLang } from '../hooks/useLang'
 import StatCard from '../components/StatCard'
@@ -44,6 +44,8 @@ const STRATEGY_ICONS: Record<string, string> = {
   rsi_reversal: 'R',
 }
 
+const DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'SOLUSDT', 'LTCUSDT']
+
 /* ═══════════════════════════════════════════════════════
    COMPONENT
    ═══════════════════════════════════════════════════════ */
@@ -54,8 +56,14 @@ export default function Strategies() {
   /* data */
   const fetchStrategies = useCallback(() => api.getStrategies(), [])
   const fetchRisk = useCallback(() => api.getRisk(), [])
+  const fetchEngine = useCallback(() => api.getEngineStatus(), [])
+  const fetchPerformance = useCallback(() => api.getPerformanceBreakdown(), [])
+  const fetchPositions = useCallback(() => api.getPositions(), [])
   const [strategies, loadingStrats] = usePolling<StrategyInfo[]>(fetchStrategies, 10000)
   const [risk, loadingRisk] = usePolling<RiskParams>(fetchRisk, 10000)
+  const [engine, , , refetchEngine] = usePolling<EngineStatus>(fetchEngine, 10000)
+  const [performance] = usePolling<PerformanceBreakdown>(fetchPerformance, 30000)
+  const [positions, , , refetchPositions] = usePolling<Position[]>(fetchPositions, 10000)
 
   /* draft state */
   const [draftStrats, setDraftStrats] = useState<Record<string, { enabled: boolean; params: Record<string, unknown> }>>({})
@@ -66,6 +74,8 @@ export default function Strategies() {
   /* UI state */
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
+  const [savingSymbol, setSavingSymbol] = useState<string | null>(null)
+  const [newSymbol, setNewSymbol] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
@@ -79,7 +89,7 @@ export default function Strategies() {
       }
       setDraftStrats(map)
       setSavedStrats(structuredClone(map))
-      setExpandedSections(new Set(strategies.map(s => s.name)))
+      setExpandedSections(new Set(['_symbols', ...strategies.map(s => s.name)]))
     }
   }, [strategies])
 
@@ -122,6 +132,18 @@ export default function Strategies() {
     }
     return out
   }, [draftStrats, savedStrats, draftRisk, savedRisk])
+
+  const openSymbols = useMemo(() => new Set((positions || []).map(p => p.symbol)), [positions])
+  const symbolRows = useMemo(() => {
+    const active = new Set(engine?.symbols || [])
+    const perfSymbols = Object.keys(performance?.by_symbol || {})
+    return [...new Set([...DEFAULT_SYMBOLS, ...active, ...perfSymbols])].sort().map(symbol => ({
+      symbol,
+      active: active.has(symbol),
+      open: openSymbols.has(symbol),
+      perf: performance?.by_symbol?.[symbol],
+    }))
+  }, [engine, performance, openSymbols])
 
   /* handlers */
   const toggleSection = (id: string) => {
@@ -186,6 +208,36 @@ export default function Strategies() {
     setError('')
   }
 
+  const setSymbolActive = async (symbol: string, active: boolean) => {
+    if (!active && openSymbols.has(symbol)) return
+    setSavingSymbol(symbol)
+    setError('')
+    setSuccess('')
+    try {
+      if (active) {
+        await api.addSymbol(symbol)
+        setSuccess(l(`${symbol} aggiunto ai simboli tradabili`, `${symbol} added to trading symbols`))
+      } else {
+        await api.removeSymbol(symbol)
+        setSuccess(l(`${symbol} rimosso dai simboli tradabili`, `${symbol} removed from trading symbols`))
+      }
+      refetchEngine()
+      refetchPositions()
+      setTimeout(() => setSuccess(''), 4000)
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setSavingSymbol(null)
+    }
+  }
+
+  const handleAddCustomSymbol = async () => {
+    const symbol = newSymbol.trim().toUpperCase()
+    if (!symbol) return
+    await setSymbolActive(symbol, true)
+    setNewSymbol('')
+  }
+
   /* render */
   if ((loadingStrats || loadingRisk) && !strategies) {
     return <div className="text-gray-500 text-sm">{l('Caricamento...', 'Loading...')}</div>
@@ -213,6 +265,85 @@ export default function Strategies() {
       {/* Messages */}
       {error && <div className="bg-red-900/30 border border-red-800/50 text-red-300 px-4 py-2 rounded text-sm">{error}</div>}
       {success && <div className="bg-emerald-900/30 border border-emerald-800/50 text-emerald-300 px-4 py-2 rounded text-sm">{success}</div>}
+
+      {/* Trading symbols */}
+      <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+        <button onClick={() => toggleSection('_symbols')}
+          className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-800/50 transition-colors">
+          <div className="flex items-center gap-3">
+            <span className="w-7 h-7 rounded bg-gray-800 flex items-center justify-center text-xs font-bold text-blue-400">#</span>
+            <span className="text-sm font-semibold text-white">{l('Simboli tradabili', 'Trading Symbols')}</span>
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-800 text-gray-400">
+              {engine?.symbols?.length || 0} ON
+            </span>
+          </div>
+          <svg className={`w-4 h-4 text-gray-500 transition-transform ${expandedSections.has('_symbols') ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {expandedSections.has('_symbols') && (
+          <div className="px-4 pb-4 space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {symbolRows.map(row => {
+                const net = row.perf?.estimated_net_pnl ?? null
+                const netColor = net === null ? 'text-gray-500' : net >= 0 ? 'text-emerald-400' : 'text-red-400'
+                const disabled = savingSymbol === row.symbol || row.open
+                return (
+                  <div key={row.symbol} className={`bg-gray-800/50 rounded-lg px-3 py-3 border ${row.active ? 'border-gray-700' : 'border-gray-800'}`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-white">{row.symbol}</div>
+                        <div className="text-[11px] text-gray-500">
+                          {row.perf ? `${row.perf.trades} trade · WR ${row.perf.win_rate.toFixed(0)}%` : l('nessuno storico', 'no history')}
+                          {row.open ? ` · ${l('posizione aperta', 'open position')}` : ''}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => setSymbolActive(row.symbol, !row.active)}
+                        className={`w-10 h-5 rounded-full transition-colors relative disabled:opacity-50 ${row.active ? 'bg-emerald-600' : 'bg-gray-700'}`}
+                        aria-pressed={row.active}
+                        title={row.open ? l('Non puoi rimuovere un simbolo con posizione aperta', 'Cannot remove a symbol with an open position') : row.active ? 'ON' : 'OFF'}
+                      >
+                        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${row.active ? 'left-5' : 'left-0.5'}`} />
+                      </button>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                      <div className="bg-gray-900/70 rounded px-2 py-1.5">
+                        <div className="text-[10px] text-gray-600">Net PnL</div>
+                        <div className={`font-mono ${netColor}`}>{net === null ? '-' : `${net >= 0 ? '+' : ''}${net.toFixed(2)}`}</div>
+                      </div>
+                      <div className="bg-gray-900/70 rounded px-2 py-1.5">
+                        <div className="text-[10px] text-gray-600">Gross PnL</div>
+                        <div className="font-mono text-gray-300">{row.perf ? `${row.perf.gross_pnl >= 0 ? '+' : ''}${row.perf.gross_pnl.toFixed(2)}` : '-'}</div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                value={newSymbol}
+                onChange={e => setNewSymbol(e.target.value.toUpperCase())}
+                placeholder={l('Aggiungi simbolo, es. ADAUSDT', 'Add symbol, e.g. ADAUSDT')}
+                className="flex-1 bg-gray-950 border border-gray-700 rounded px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
+              />
+              <button
+                type="button"
+                onClick={handleAddCustomSymbol}
+                disabled={!newSymbol.trim() || savingSymbol !== null}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-40"
+              >
+                {l('Aggiungi', 'Add')}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Strategy sections */}
       {Object.entries(draftStrats).map(([name, draft]) => {

@@ -98,11 +98,38 @@ export interface TradeItem {
   take_profit: number | null
   pnl: number | null
   pnl_pct: number | null
+  estimated_roundtrip_fee?: number | null
+  estimated_roundtrip_slippage?: number | null
+  estimated_net_pnl?: number | null
+  estimated_net_pnl_pct?: number | null
   status: string
   mode: string
   strategy: string | null
   opened_at: string | null
   closed_at: string | null
+}
+
+export interface PerformanceSummary {
+  trades: number
+  gross_pnl: number
+  estimated_roundtrip_fees: number
+  estimated_roundtrip_slippage?: number
+  estimated_roundtrip_cost?: number
+  estimated_net_pnl: number
+  wins: number
+  losses: number
+  win_rate: number
+  avg_pnl_pct: number
+}
+
+export interface PerformanceBreakdown {
+  mode: string
+  fee_pct_per_side: number
+  slippage_pct_per_side: number
+  since: string | null
+  overall: PerformanceSummary
+  by_strategy: Record<string, PerformanceSummary>
+  by_symbol: Record<string, PerformanceSummary>
 }
 
 export interface StrategyInfo {
@@ -286,6 +313,13 @@ export const api = {
     request<{ ok: boolean; closed_at_price: number }>(`/positions/${tradeId}/close`, { method: 'POST' }),
   getOrders: () => request<OrderItem[]>('/orders'),
   getTrades: () => request<TradeItem[]>('/trades'),
+  getPerformanceBreakdown: (params?: { hours?: number; since?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.hours) qs.set('hours', String(params.hours))
+    if (params?.since) qs.set('since', params.since)
+    const query = qs.toString()
+    return request<PerformanceBreakdown>(`/performance/breakdown${query ? `?${query}` : ''}`)
+  },
   getPrice: (symbol: string) => request<PriceData>(`/price/${symbol}`),
   getStrategies: () => request<StrategyInfo[]>('/strategies'),
   updateStrategy: (data: { name: string; enabled?: boolean; params?: Record<string, unknown> }) =>
