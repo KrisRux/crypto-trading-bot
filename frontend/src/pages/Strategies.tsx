@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, StrategyInfo, RiskParams, EngineStatus, PerformanceBreakdown, Position } from '../api'
+import { api, StrategyInfo, RiskParams, SymbolAnalysisItem } from '../api'
 import { usePolling } from '../hooks/usePolling'
 import { useLang } from '../hooks/useLang'
 import StatCard from '../components/StatCard'
@@ -44,7 +44,21 @@ const STRATEGY_ICONS: Record<string, string> = {
   rsi_reversal: 'R',
 }
 
-const DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'SOLUSDT', 'LTCUSDT']
+const SYMBOL_STATUS_STYLE: Record<SymbolAnalysisItem['candidate_status'], string> = {
+  active: 'bg-emerald-900/60 text-emerald-300',
+  candidate: 'bg-blue-900/60 text-blue-300',
+  watch: 'bg-yellow-900/60 text-yellow-300',
+  not_ready: 'bg-gray-800 text-gray-400',
+  unknown: 'bg-red-900/50 text-red-300',
+}
+
+const SYMBOL_STATUS_LABEL: Record<SymbolAnalysisItem['candidate_status'], string> = {
+  active: 'ON',
+  candidate: 'Candidate',
+  watch: 'Watch',
+  not_ready: 'Wait',
+  unknown: 'Unknown',
+}
 
 /* ═══════════════════════════════════════════════════════
    COMPONENT
@@ -56,14 +70,10 @@ export default function Strategies() {
   /* data */
   const fetchStrategies = useCallback(() => api.getStrategies(), [])
   const fetchRisk = useCallback(() => api.getRisk(), [])
-  const fetchEngine = useCallback(() => api.getEngineStatus(), [])
-  const fetchPerformance = useCallback(() => api.getPerformanceBreakdown(), [])
-  const fetchPositions = useCallback(() => api.getPositions(), [])
+  const fetchSymbolAnalysis = useCallback(() => api.getSymbolAnalysis(), [])
   const [strategies, loadingStrats] = usePolling<StrategyInfo[]>(fetchStrategies, 10000)
   const [risk, loadingRisk] = usePolling<RiskParams>(fetchRisk, 10000)
-  const [engine, , , refetchEngine] = usePolling<EngineStatus>(fetchEngine, 10000)
-  const [performance] = usePolling<PerformanceBreakdown>(fetchPerformance, 30000)
-  const [positions, , , refetchPositions] = usePolling<Position[]>(fetchPositions, 10000)
+  const [symbolRows, , , refetchSymbolAnalysis] = usePolling<SymbolAnalysisItem[]>(fetchSymbolAnalysis, 60000)
 
   /* draft state */
   const [draftStrats, setDraftStrats] = useState<Record<string, { enabled: boolean; params: Record<string, unknown> }>>({})
@@ -133,17 +143,10 @@ export default function Strategies() {
     return out
   }, [draftStrats, savedStrats, draftRisk, savedRisk])
 
-  const openSymbols = useMemo(() => new Set((positions || []).map(p => p.symbol)), [positions])
-  const symbolRows = useMemo(() => {
-    const active = new Set(engine?.symbols || [])
-    const perfSymbols = Object.keys(performance?.by_symbol || {})
-    return [...new Set([...DEFAULT_SYMBOLS, ...active, ...perfSymbols])].sort().map(symbol => ({
-      symbol,
-      active: active.has(symbol),
-      open: openSymbols.has(symbol),
-      perf: performance?.by_symbol?.[symbol],
-    }))
-  }, [engine, performance, openSymbols])
+  const activeSymbolCount = useMemo(
+    () => (symbolRows || []).filter(row => row.active).length,
+    [symbolRows]
+  )
 
   /* handlers */
   const toggleSection = (id: string) => {
@@ -209,7 +212,8 @@ export default function Strategies() {
   }
 
   const setSymbolActive = async (symbol: string, active: boolean) => {
-    if (!active && openSymbols.has(symbol)) return
+    const row = (symbolRows || []).find(item => item.symbol === symbol)
+    if (!active && row?.position_open) return
     setSavingSymbol(symbol)
     setError('')
     setSuccess('')
@@ -221,8 +225,7 @@ export default function Strategies() {
         await api.removeSymbol(symbol)
         setSuccess(l(`${symbol} rimosso dai simboli tradabili`, `${symbol} removed from trading symbols`))
       }
-      refetchEngine()
-      refetchPositions()
+      refetchSymbolAnalysis()
       setTimeout(() => setSuccess(''), 4000)
     } catch (e) {
       setError(String(e))
@@ -274,7 +277,7 @@ export default function Strategies() {
             <span className="w-7 h-7 rounded bg-gray-800 flex items-center justify-center text-xs font-bold text-blue-400">#</span>
             <span className="text-sm font-semibold text-white">{l('Simboli tradabili', 'Trading Symbols')}</span>
             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-800 text-gray-400">
-              {engine?.symbols?.length || 0} ON
+              {activeSymbolCount} ON
             </span>
           </div>
           <svg className={`w-4 h-4 text-gray-500 transition-transform ${expandedSections.has('_symbols') ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -285,18 +288,23 @@ export default function Strategies() {
         {expandedSections.has('_symbols') && (
           <div className="px-4 pb-4 space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {symbolRows.map(row => {
-                const net = row.perf?.estimated_net_pnl ?? null
-                const netColor = net === null ? 'text-gray-500' : net >= 0 ? 'text-emerald-400' : 'text-red-400'
-                const disabled = savingSymbol === row.symbol || row.open
+              {(symbolRows || []).map(row => {
+                const net = row.estimated_net_pnl
+                const netColor = net >= 0 ? 'text-emerald-400' : 'text-red-400'
+                const disabled = savingSymbol === row.symbol || row.position_open
                 return (
                   <div key={row.symbol} className={`bg-gray-800/50 rounded-lg px-3 py-3 border ${row.active ? 'border-gray-700' : 'border-gray-800'}`}>
                     <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-white">{row.symbol}</div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="text-sm font-semibold text-white">{row.symbol}</div>
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${SYMBOL_STATUS_STYLE[row.candidate_status]}`}>
+                            {SYMBOL_STATUS_LABEL[row.candidate_status]}
+                          </span>
+                        </div>
                         <div className="text-[11px] text-gray-500">
-                          {row.perf ? `${row.perf.trades} trade · WR ${row.perf.win_rate.toFixed(0)}%` : l('nessuno storico', 'no history')}
-                          {row.open ? ` · ${l('posizione aperta', 'open position')}` : ''}
+                          {row.trades ? `${row.trades} trade - WR ${row.win_rate.toFixed(0)}%` : l('nessuno storico', 'no history')}
+                          {row.position_open ? ` - ${l('posizione aperta', 'open position')}` : ''}
                         </div>
                       </div>
                       <button
@@ -305,20 +313,31 @@ export default function Strategies() {
                         onClick={() => setSymbolActive(row.symbol, !row.active)}
                         className={`w-10 h-5 rounded-full transition-colors relative disabled:opacity-50 ${row.active ? 'bg-emerald-600' : 'bg-gray-700'}`}
                         aria-pressed={row.active}
-                        title={row.open ? l('Non puoi rimuovere un simbolo con posizione aperta', 'Cannot remove a symbol with an open position') : row.active ? 'ON' : 'OFF'}
+                        title={row.position_open ? l('Non puoi rimuovere un simbolo con posizione aperta', 'Cannot remove a symbol with an open position') : row.candidate_reason}
                       >
                         <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${row.active ? 'left-5' : 'left-0.5'}`} />
                       </button>
                     </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <div className="mt-3 grid grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
                       <div className="bg-gray-900/70 rounded px-2 py-1.5">
                         <div className="text-[10px] text-gray-600">Net PnL</div>
-                        <div className={`font-mono ${netColor}`}>{net === null ? '-' : `${net >= 0 ? '+' : ''}${net.toFixed(2)}`}</div>
+                        <div className={`font-mono ${netColor}`}>{`${net >= 0 ? '+' : ''}${net.toFixed(2)}`}</div>
                       </div>
                       <div className="bg-gray-900/70 rounded px-2 py-1.5">
                         <div className="text-[10px] text-gray-600">Gross PnL</div>
-                        <div className="font-mono text-gray-300">{row.perf ? `${row.perf.gross_pnl >= 0 ? '+' : ''}${row.perf.gross_pnl.toFixed(2)}` : '-'}</div>
+                        <div className="font-mono text-gray-300">{`${row.gross_pnl >= 0 ? '+' : ''}${row.gross_pnl.toFixed(2)}`}</div>
                       </div>
+                      <div className="bg-gray-900/70 rounded px-2 py-1.5">
+                        <div className="text-[10px] text-gray-600">ADX</div>
+                        <div className="font-mono text-gray-300">{row.adx === null ? '-' : row.adx.toFixed(1)}</div>
+                      </div>
+                      <div className="bg-gray-900/70 rounded px-2 py-1.5">
+                        <div className="text-[10px] text-gray-600">Volume</div>
+                        <div className="font-mono text-gray-300">{row.volume_ratio === null ? '-' : `${row.volume_ratio.toFixed(2)}x`}</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 text-[11px] text-gray-500 line-clamp-2" title={row.candidate_reason}>
+                      {row.candidate_reason}
                     </div>
                   </div>
                 )

@@ -33,6 +33,7 @@ router = APIRouter(prefix="/api")
 _engine = None
 _skills_library = None
 _meta_controller = None
+DEFAULT_SYMBOL_CANDIDATES = {"BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT", "LTCUSDT"}
 
 
 def set_engine(engine, skills_library=None, meta_controller=None):
@@ -137,6 +138,28 @@ def _performance_breakdown_for_user(
             for key, group in sorted(by_symbol.items())
         },
     }
+
+
+def _symbol_candidate_status(active: bool, snap: dict | None, perf: dict | None) -> tuple[str, str]:
+    if active:
+        return "active", "Currently enabled"
+    if snap is None:
+        return "unknown", "Market analysis unavailable"
+
+    regime = str(snap.get("regime") or "unknown")
+    adx = float(snap.get("adx") or 0)
+    volume_ratio = float(snap.get("volume_ratio") or 0)
+    atr_pct = float(snap.get("atr_pct") or 0)
+    trades = int((perf or {}).get("trades") or 0)
+    est_net = (perf or {}).get("estimated_net_pnl")
+
+    market_ok = regime == "trend" and adx >= 25 and volume_ratio >= 1.0 and atr_pct < 3.0
+    reason = f"{regime} regime, ADX {adx:.1f}, volume {volume_ratio:.2f}x, ATR {atr_pct:.2f}%"
+    if market_ok:
+        if trades >= 10 and est_net is not None and float(est_net) < -3:
+            return "watch", f"{reason}; historical net PnL remains weak"
+        return "candidate", reason
+    return "not_ready", reason
 
 
 def _tuning_performance_context(db: Session, user: User) -> dict:
@@ -732,6 +755,70 @@ def engine_status(_user: dict = Depends(require_auth)):
         "last_prices": engine.last_prices,
         "strategies_count": len(engine.strategies),
     }
+
+
+@router.get("/symbols/analysis")
+async def symbols_analysis(db: Session = Depends(get_db), user_info: dict = Depends(require_admin)):
+    from app.adaptive.market_regime_service import MarketRegimeService
+
+    engine = get_engine()
+    user = _get_user_obj(user_info, db)
+    performance = _performance_breakdown_for_user(db, user)
+    perf_by_symbol = performance.get("by_symbol", {})
+    active_symbols = set(engine.symbols)
+    symbols = sorted(DEFAULT_SYMBOL_CANDIDATES | active_symbols | set(perf_by_symbol.keys()))
+
+    open_symbols = {
+        symbol
+        for (symbol,) in db.query(PaperPosition.symbol).filter(
+            PaperPosition.user_id == user.id,
+            PaperPosition.quantity > 0,
+        ).all()
+    }
+    live_snapshots: dict[str, dict] = {}
+    try:
+        live_snapshots = get_meta_controller().regime_service.global_snapshot().get("symbols", {})
+    except HTTPException:
+        live_snapshots = {}
+
+    rows = []
+    for symbol in symbols:
+        snap = live_snapshots.get(symbol)
+        last_price = engine.last_prices.get(symbol)
+        analysis_error = None
+        if snap is None:
+            try:
+                df = await engine.fetch_klines(symbol, limit=100)
+                if not df.empty:
+                    last_price = float(df["close"].iloc[-1])
+                    snap = MarketRegimeService().compute(df, symbol).to_dict()
+            except Exception as exc:
+                logger.warning("Symbol analysis unavailable for %s: %s", symbol, exc)
+                analysis_error = str(exc)
+
+        perf = perf_by_symbol.get(symbol, {})
+        status, reason = _symbol_candidate_status(symbol in active_symbols, snap, perf)
+        if analysis_error:
+            reason = f"Market analysis unavailable: {analysis_error}"
+
+        rows.append({
+            "symbol": symbol,
+            "active": symbol in active_symbols,
+            "position_open": symbol in open_symbols,
+            "last_price": round(last_price, 8) if last_price is not None else None,
+            "regime": snap.get("regime") if snap else None,
+            "adx": snap.get("adx") if snap else None,
+            "atr_pct": snap.get("atr_pct") if snap else None,
+            "bb_width_pct": snap.get("bb_width_pct") if snap else None,
+            "volume_ratio": snap.get("volume_ratio") if snap else None,
+            "trades": perf.get("trades", 0),
+            "win_rate": perf.get("win_rate", 0),
+            "gross_pnl": perf.get("gross_pnl", 0),
+            "estimated_net_pnl": perf.get("estimated_net_pnl", 0),
+            "candidate_status": status,
+            "candidate_reason": reason,
+        })
+    return rows
 
 
 @router.post("/symbols/add")

@@ -160,6 +160,24 @@ export interface EngineStatus {
   strategies_count: number
 }
 
+export interface SymbolAnalysisItem {
+  symbol: string
+  active: boolean
+  position_open: boolean
+  last_price: number | null
+  regime: string | null
+  adx: number | null
+  atr_pct: number | null
+  bb_width_pct: number | null
+  volume_ratio: number | null
+  trades: number
+  win_rate: number
+  gross_pnl: number
+  estimated_net_pnl: number
+  candidate_status: 'active' | 'candidate' | 'watch' | 'not_ready' | 'unknown'
+  candidate_reason: string
+}
+
 export interface UserItem {
   id: number
   username: string
@@ -329,6 +347,7 @@ export const api = {
     request<RiskParams>('/risk', { method: 'PUT', body: JSON.stringify(params) }),
   getSignals: () => request<SignalItem[]>('/signals'),
   getEngineStatus: () => request<EngineStatus>('/engine/status'),
+  getSymbolAnalysis: () => request<SymbolAnalysisItem[]>('/symbols/analysis'),
   resetPaperPortfolio: () => request('/paper/reset', { method: 'POST' }),
   exportTrades: () => request<string>('/paper/export'),
   getMe: () => request<{ username: string; display_name: string; role: string }>('/me'),
