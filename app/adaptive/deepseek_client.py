@@ -45,15 +45,34 @@ MAX_DELTA = {
     "base_min_score": 5,
 }
 
+ALLOWED_DYNAMIC_SCORE_PATHS = {
+    "dynamic_score.base_min_score",
+    "dynamic_score.min_score_after_3_losses",
+    "dynamic_score.min_score_after_5_losses",
+    "dynamic_score.extra_score_in_bad_regime",
+    "dynamic_score.max_score_cap",
+}
+
+
+def _is_allowed_tuning_path(path: str) -> bool:
+    if path in ALLOWED_DYNAMIC_SCORE_PATHS:
+        return True
+    if re.fullmatch(r"trade_gate\.(defensive|range|trend|volatile)\.(min_adx|min_volume_ratio|min_bb_width_pct)", path):
+        return True
+    if re.fullmatch(r"strategy\.[a-zA-Z0-9_]+\.enabled", path):
+        return True
+    return False
+
 SYSTEM_PROMPT = """You are a parameter optimization advisor for a crypto trading bot.
 You analyze bot performance metrics and suggest concrete, data-driven parameter adjustments.
 
 RULES:
-- ALWAYS suggest at least 1 change when win_rate < 35% OR block_rate > 60%, even if other metrics look stable
+- Prefer no change over weak changes when sample size is too small or recent data is inconclusive
 - NEVER suggest large changes — max adjustment is 15% of the current value per parameter
 - When risk is elevated (consecutive_losses >= 4 or drawdown >= 1.5%), ONLY suggest tightening
 - When block_rate is high (> 60%), prioritize loosening the dominant block reason threshold
-- When a strategy has at least 10 trades and negative estimated net PnL, prefer disabling it over loosening entries
+- When an enabled strategy has at least 10 trades and negative estimated net PnL, prefer disabling it over loosening entries
+- Do not suggest no-op changes where from == to
 - Consider news sentiment: bearish sentiment = no loosening of entry thresholds
 - Each change MUST cite the specific metric that justifies it
 - Respond with valid JSON only"""
@@ -78,7 +97,7 @@ Your job is to suggest concrete, data-driven parameter adjustments — even when
 ## Strategy Parameters (current values)
 {strategy_params_section}
 
-## Realized Performance Breakdown (fees/slippage adjusted estimate)
+## Realized Performance Breakdown (fee/slippage adjusted estimate)
 {performance_breakdown_section}
 
 ## Kill Switch & Guardrails State
@@ -91,14 +110,18 @@ Your job is to suggest concrete, data-driven parameter adjustments — even when
 {news_section}
 
 ## Instructions
-- If win_rate < 35%: suggest loosening entry filters OR tightening exit thresholds to improve selectivity
-- If block_rate > 60%: suggest relaxing the dominant block reason threshold by 10-15%
-- If trades_per_hour < 0.5 in a TREND regime: the bot is too conservative — suggest specific relaxations
-- If consecutive_losses >= 3: suggest tightening score thresholds or reducing position exposure
-- If a strategy has >=10 trades and negative estimated_net_pnl: suggest strategy.<name>.enabled=false
-- Always suggest at least 1 change unless all metrics are at target AND block_rate < 30%
+- Use recent windows first (24h/7d), then all-time data as supporting evidence.
+- If recent closed trades < 5: do not loosen just because trades_per_hour is low.
+- If win_rate < 35% with at least 10 recent trades: tighten selectivity via trade_gate or dynamic_score.
+- If block_rate > 60% with at least 10 blocked/passed decisions and low drawdown: relax the dominant block reason threshold by 10-15%.
+- If trades_per_hour < 0.5 in a TREND regime: only relax filters when blocked/passed sample size is meaningful.
+- If consecutive_losses >= 3: tighten score thresholds.
+- If an enabled strategy has >=10 trades and negative estimated_net_pnl: suggest strategy.<name>.enabled=false.
+- You may return an empty changes array when data is insufficient or current config is appropriate.
 - Prefer small incremental changes (10-15% of current value), never suggest changes >30% of current value
-- You may suggest changes to: trade_gate thresholds, dynamic_score thresholds, strategy score thresholds, strategy enable/disable flags
+- You may suggest ONLY these path families: trade_gate.* thresholds, dynamic_score.* thresholds, strategy.<name>.enabled flags.
+- Do not suggest direct strategy numeric thresholds such as embient_enhanced.trend_buy_threshold; they are not applyable through this endpoint.
+- Do not suggest no-op changes where from == to.
 
 Respond with exactly this JSON (changes array may contain 1-3 items):
 {{
@@ -121,9 +144,6 @@ Valid path examples:
 - trade_gate.{gate_regime}.min_bb_width_pct
 - dynamic_score.base_min_score
 - dynamic_score.extra_score_in_bad_regime
-- embient_enhanced.trend_buy_threshold
-- embient_enhanced.range_buy_threshold
-- embient_enhanced.range_sell_threshold
 - strategy.embient_enhanced.enabled
 - strategy.sma_crossover.enabled
 - strategy.rsi_reversal.enabled
@@ -213,23 +233,28 @@ async def generate_suggestions(
 
     if performance_breakdown:
         lines = []
-        overall = performance_breakdown.get("overall", {})
-        lines.append(
-            "overall: trades={trades} gross={gross_pnl} est_net={estimated_net_pnl} "
-            "win_rate={win_rate}%".format(**overall)
-        )
-        for name, row in performance_breakdown.get("by_strategy", {}).items():
+        windows = performance_breakdown.get("windows") or {"all_time": performance_breakdown}
+        for label, breakdown in windows.items():
+            overall = breakdown.get("overall", {})
             lines.append(
-                f"strategy {name}: trades={row.get('trades', 0)} "
-                f"gross={row.get('gross_pnl', 0)} est_net={row.get('estimated_net_pnl', 0)} "
-                f"win_rate={row.get('win_rate', 0)}%"
+                f"{label} overall: trades={overall.get('trades', 0)} "
+                f"gross={overall.get('gross_pnl', 0)} "
+                f"est_cost={overall.get('estimated_roundtrip_cost', overall.get('estimated_roundtrip_fees', 0))} "
+                f"est_net={overall.get('estimated_net_pnl', 0)} "
+                f"win_rate={overall.get('win_rate', 0)}%"
             )
-        for symbol, row in performance_breakdown.get("by_symbol", {}).items():
-            lines.append(
-                f"symbol {symbol}: trades={row.get('trades', 0)} "
-                f"gross={row.get('gross_pnl', 0)} est_net={row.get('estimated_net_pnl', 0)} "
-                f"win_rate={row.get('win_rate', 0)}%"
-            )
+            for name, row in breakdown.get("by_strategy", {}).items():
+                lines.append(
+                    f"{label} strategy {name}: trades={row.get('trades', 0)} "
+                    f"est_net={row.get('estimated_net_pnl', 0)} "
+                    f"win_rate={row.get('win_rate', 0)}%"
+                )
+            for symbol, row in breakdown.get("by_symbol", {}).items():
+                lines.append(
+                    f"{label} symbol {symbol}: trades={row.get('trades', 0)} "
+                    f"est_net={row.get('estimated_net_pnl', 0)} "
+                    f"win_rate={row.get('win_rate', 0)}%"
+                )
         performance_breakdown_section = "\n".join(lines)
     else:
         performance_breakdown_section = "  Not provided"
@@ -337,6 +362,9 @@ async def generate_suggestions(
         new_val = c["to"]
         old_val = c.get("from")
         field = path.split(".")[-1] if "." in path else path
+        if not _is_allowed_tuning_path(path):
+            logger.info("DEEPSEEK: dropped unsupported tuning path: %s", path)
+            continue
 
         if field in SAFETY_LIMITS:
             lo, hi = SAFETY_LIMITS[field]

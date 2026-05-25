@@ -139,6 +139,19 @@ def _performance_breakdown_for_user(
     }
 
 
+def _tuning_performance_context(db: Session, user: User) -> dict:
+    return {
+        "mode": user.trading_mode or "paper",
+        "fee_pct_per_side": settings.paper_fee_pct,
+        "slippage_pct_per_side": settings.paper_slippage_pct,
+        "windows": {
+            "recent_24h": _performance_breakdown_for_user(db, user, hours=24),
+            "recent_7d": _performance_breakdown_for_user(db, user, hours=24 * 7),
+            "all_time": _performance_breakdown_for_user(db, user),
+        },
+    }
+
+
 # ------------------------------------------------------------------ Auth
 @router.post("/login", response_model=TokenResponse)
 def login(body: LoginRequest, response: Response, db: Session = Depends(get_db)):
@@ -1040,7 +1053,7 @@ async def get_tuning_suggestions(db: Session = Depends(get_db), _admin: dict = D
     regime = mc.regime_service.global_snapshot()
     guardrails_status = engine.guardrails.status()
     admin_user = _get_user_obj(_admin, db)
-    performance_breakdown = _performance_breakdown_for_user(db, admin_user)
+    performance_breakdown = _tuning_performance_context(db, admin_user)
     strategy_params = {
         s.name: s.get_params()
         for s in getattr(engine, "strategies", [])
@@ -1248,7 +1261,7 @@ async def generate_and_save_suggestion(db: Session = Depends(get_db),
     regime = mc.regime_service.global_snapshot()
     guardrails_status = engine.guardrails.status()
     admin_user = _get_user_obj(admin, db)
-    performance_breakdown = _performance_breakdown_for_user(db, admin_user)
+    performance_breakdown = _tuning_performance_context(db, admin_user)
     strategy_params = {
         s.name: s.get_params()
         for s in getattr(engine, "strategies", [])

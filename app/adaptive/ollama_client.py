@@ -15,6 +15,7 @@ Setup on server:
 
 import json
 import logging
+import re
 
 import httpx
 
@@ -40,6 +41,24 @@ MAX_DELTA = {
     "min_bb_width_pct": 0.5,
     "base_min_score": 5,
 }
+
+ALLOWED_DYNAMIC_SCORE_PATHS = {
+    "dynamic_score.base_min_score",
+    "dynamic_score.min_score_after_3_losses",
+    "dynamic_score.min_score_after_5_losses",
+    "dynamic_score.extra_score_in_bad_regime",
+    "dynamic_score.max_score_cap",
+}
+
+
+def _is_allowed_tuning_path(path: str) -> bool:
+    if path in ALLOWED_DYNAMIC_SCORE_PATHS:
+        return True
+    if re.fullmatch(r"trade_gate\.(defensive|range|trend|volatile)\.(min_adx|min_volume_ratio|min_bb_width_pct)", path):
+        return True
+    if re.fullmatch(r"strategy\.[a-zA-Z0-9_]+\.enabled", path):
+        return True
+    return False
 
 SYSTEM_PROMPT = """You are a parameter optimization advisor for a crypto trading bot.
 You analyze bot performance metrics and suggest concrete, data-driven parameter adjustments.
@@ -271,6 +290,9 @@ async def generate_suggestions(
         path = c["path"]
         new_val = c["to"]
         old_val = c.get("from")
+        if not _is_allowed_tuning_path(path):
+            logger.info("OLLAMA: dropped unsupported tuning path: %s", path)
+            continue
 
         # Extract the field name for limit checking
         field = path.split(".")[-1] if "." in path else path

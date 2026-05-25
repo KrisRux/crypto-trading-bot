@@ -43,6 +43,8 @@ def _is_tightening(change: dict) -> bool:
     """Return True if a change tightens constraints (makes entries harder / safer)."""
     path = change.get("path", "")
     field = path.split(".")[-1] if "." in path else path
+    if path.startswith("strategy.") and field == "enabled":
+        return change.get("to") is False
     try:
         new_val = float(change.get("to", 0))
         old_val = float(change.get("from", 0)) if change.get("from") is not None else new_val
@@ -348,7 +350,14 @@ class LLMAdvisor:
         # Rule 0: disable statistically weak strategies before loosening entries.
         # Strategy changes are manual-only via the saved suggestion apply endpoint.
         if performance_breakdown:
-            for strategy, row in performance_breakdown.get("by_strategy", {}).items():
+            strategy_breakdown = performance_breakdown.get("by_strategy", {})
+            if not strategy_breakdown and performance_breakdown.get("windows"):
+                strategy_breakdown = (
+                    performance_breakdown["windows"]
+                    .get("all_time", {})
+                    .get("by_strategy", {})
+                )
+            for strategy, row in strategy_breakdown.items():
                 if strategy in ("unknown", "paper"):
                     continue
                 if strategy_params and not strategy_params.get(strategy, {}).get("enabled", True):
