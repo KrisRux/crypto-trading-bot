@@ -5,7 +5,7 @@ All routes (except /api/login) require JWT authentication.
 
 import logging
 from collections import defaultdict
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
@@ -25,7 +25,7 @@ from app.models.user import User, verify_password, hash_password
 from app.config import settings
 from app.strategy_store import save_strategy_params, save_risk_params
 from app.adaptive.guardrails_validation import validate_guardrails_values, diff_configs
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
@@ -54,18 +54,40 @@ def get_meta_controller():
     return _meta_controller
 
 
+def _paper_cost_estimate(trade: Trade) -> dict:
+    entry_notional = (trade.entry_price or 0) * (trade.quantity or 0)
+    exit_price = trade.exit_price if trade.exit_price is not None else trade.entry_price
+    exit_notional = (exit_price or 0) * (trade.quantity or 0)
+    fees = (entry_notional + exit_notional) * (settings.paper_fee_pct / 100)
+    slippage = (entry_notional + exit_notional) * (settings.paper_slippage_pct / 100)
+    gross = trade.pnl or 0
+    net = gross - fees - slippage if trade.pnl is not None else None
+    basis = entry_notional + (entry_notional * settings.paper_fee_pct / 100)
+    return {
+        "estimated_roundtrip_fee": round(fees, 6),
+        "estimated_roundtrip_slippage": round(slippage, 6),
+        "estimated_roundtrip_cost": round(fees + slippage, 6),
+        "estimated_net_pnl": round(net, 6) if net is not None else None,
+        "estimated_net_pnl_pct": round(net / basis * 100, 4) if net is not None and basis else None,
+    }
+
+
 def _summarize_trades(group: list[Trade]) -> dict:
     gross = sum(t.pnl or 0 for t in group)
     wins = sum(1 for t in group if (t.pnl or 0) > 0)
     losses = sum(1 for t in group if (t.pnl or 0) < 0)
-    notional = sum((t.entry_price or 0) * (t.quantity or 0) for t in group)
-    estimated_fees = notional * (settings.paper_fee_pct / 100) * 2
+    costs = [_paper_cost_estimate(t) for t in group]
+    estimated_fees = sum(c["estimated_roundtrip_fee"] for c in costs)
+    estimated_slippage = sum(c["estimated_roundtrip_slippage"] for c in costs)
+    estimated_cost = estimated_fees + estimated_slippage
     avg_pct = sum(t.pnl_pct or 0 for t in group) / len(group) if group else 0
     return {
         "trades": len(group),
         "gross_pnl": round(gross, 6),
         "estimated_roundtrip_fees": round(estimated_fees, 6),
-        "estimated_net_pnl": round(gross - estimated_fees, 6),
+        "estimated_roundtrip_slippage": round(estimated_slippage, 6),
+        "estimated_roundtrip_cost": round(estimated_cost, 6),
+        "estimated_net_pnl": round(gross - estimated_cost, 6),
         "wins": wins,
         "losses": losses,
         "win_rate": round(wins / len(group) * 100, 2) if group else 0,
@@ -73,13 +95,27 @@ def _summarize_trades(group: list[Trade]) -> dict:
     }
 
 
-def _performance_breakdown_for_user(db: Session, user: User) -> dict:
+def _performance_breakdown_for_user(
+    db: Session,
+    user: User,
+    *,
+    since: datetime | None = None,
+    hours: int | None = None,
+) -> dict:
     user_mode = user.trading_mode or "paper"
-    trades = db.query(Trade).filter(
+    cutoff = since
+    if hours is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    q = db.query(Trade).filter(
         Trade.user_id == user.id,
         Trade.mode == user_mode,
         Trade.status == TradeStatus.CLOSED,
-    ).all()
+    )
+    if cutoff is not None:
+        if cutoff.tzinfo is not None:
+            cutoff = cutoff.astimezone(timezone.utc).replace(tzinfo=None)
+        q = q.filter(Trade.closed_at >= cutoff)
+    trades = q.all()
     by_strategy: dict[str, list[Trade]] = defaultdict(list)
     by_symbol: dict[str, list[Trade]] = defaultdict(list)
     for trade in trades:
@@ -90,6 +126,7 @@ def _performance_breakdown_for_user(db: Session, user: User) -> dict:
         "mode": user_mode,
         "fee_pct_per_side": settings.paper_fee_pct,
         "slippage_pct_per_side": settings.paper_slippage_pct,
+        "since": cutoff.isoformat() if cutoff else None,
         "overall": _summarize_trades(trades),
         "by_strategy": {
             key: _summarize_trades(group)
@@ -533,25 +570,33 @@ def get_trades(db: Session = Depends(get_db), limit: int = 50,
         Trade.user_id == user.id,
         Trade.mode == user_mode,
     ).order_by(Trade.opened_at.desc()).limit(limit).all()
-    return [
-        TradeResponse(
+    result = []
+    for t in trades:
+        cost = _paper_cost_estimate(t)
+        result.append(TradeResponse(
             id=t.id, symbol=t.symbol, side=t.side.value,
             entry_price=t.entry_price, exit_price=t.exit_price,
             quantity=t.quantity, stop_loss=t.stop_loss,
             take_profit=t.take_profit, pnl=t.pnl, pnl_pct=t.pnl_pct,
+            estimated_roundtrip_fee=cost["estimated_roundtrip_fee"],
+            estimated_roundtrip_slippage=cost["estimated_roundtrip_slippage"],
+            estimated_net_pnl=cost["estimated_net_pnl"],
+            estimated_net_pnl_pct=cost["estimated_net_pnl_pct"],
             status=t.status.value, mode=t.mode, strategy=t.strategy,
             opened_at=t.opened_at, closed_at=t.closed_at,
-        ) for t in trades
-    ]
+        ))
+    return result
 
 
 @router.get("/performance/breakdown")
 def get_performance_breakdown(
     db: Session = Depends(get_db),
     user_info: dict = Depends(require_auth),
+    since: datetime | None = Query(default=None),
+    hours: int | None = Query(default=None, ge=1, le=24 * 90),
 ):
     user = _get_user_obj(user_info, db)
-    return _performance_breakdown_for_user(db, user)
+    return _performance_breakdown_for_user(db, user, since=since, hours=hours)
 
 
 # ------------------------------------------------------------------ Price

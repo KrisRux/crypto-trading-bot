@@ -252,7 +252,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | POST | `/api/positions/{id}/close` | Chiudi posizione manualmente |
 | GET | `/api/orders` | Storico ordini |
 | GET | `/api/trades` | Storico trade |
-| GET | `/api/performance/breakdown` | PnL e win rate aggregati per strategia e simbolo |
+| GET | `/api/performance/breakdown` | PnL e win rate aggregati per strategia e simbolo, con costi paper stimati. Supporta `?hours=24` o `?since=2026-05-24T12:58:24Z` |
 | GET | `/api/signals` | Ultimi segnali generati |
 
 ### Strategie e Rischio

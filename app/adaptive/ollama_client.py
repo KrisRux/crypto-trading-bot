@@ -292,6 +292,9 @@ async def generate_suggestions(
         if isinstance(new_val, float):
             new_val = round(new_val, 1)
 
+        if old_val == new_val:
+            continue
+
         sanitized_changes.append({
             "path": path,
             "from": old_val,

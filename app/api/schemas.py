@@ -56,6 +56,10 @@ class TradeResponse(BaseModel):
     take_profit: float | None
     pnl: float | None
     pnl_pct: float | None
+    estimated_roundtrip_fee: float | None = None
+    estimated_roundtrip_slippage: float | None = None
+    estimated_net_pnl: float | None = None
+    estimated_net_pnl_pct: float | None = None
     status: str
     mode: str
     strategy: str | None
