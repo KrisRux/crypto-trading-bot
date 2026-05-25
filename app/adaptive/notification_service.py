@@ -308,6 +308,15 @@ class NotificationService:
             level=level, chat_ids=chat_ids or [],
         )
 
+    async def notify_symbol_candidate(self, symbol: str, reason: str,
+                                      chat_ids: list = None):
+        await self.broadcast(
+            f"<b>Symbol Candidate</b>\n"
+            f"<code>{symbol}</code> is ready to review for re-enable.\n\n"
+            f"<b>Reason:</b> {reason}",
+            level="WARNING", chat_ids=chat_ids or [],
+        )
+
     async def notify_bot_paused(self, reason: str, chat_ids: list[str] = None):
         await self.broadcast(
             f"\U0001F6D1 <b>Bot Paused</b>\n\n<b>Reason:</b> {reason}",

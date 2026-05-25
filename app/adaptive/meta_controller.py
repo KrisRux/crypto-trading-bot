@@ -27,6 +27,8 @@ from app.adaptive.notification_service import NotificationService
 from app.adaptive.approval_service import ApprovalService
 from app.adaptive.llm_advisor import LLMAdvisor
 from app.adaptive.news_sentiment import NewsSentimentService
+from app.config import settings
+from app.models.trade import Trade, TradeStatus
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -44,6 +46,7 @@ class MetaController:
 
     # Regimes considered "dangerous" — entering one deserves a notification.
     _DANGEROUS_REGIMES = {"defensive", "volatile"}
+    _DEFAULT_SYMBOL_CANDIDATES = {"BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT", "LTCUSDT"}
     # Silence window for regime-change notifications to avoid oscillation spam.
     _REGIME_CHANGE_COOLDOWN = timedelta(minutes=60)
 
@@ -66,6 +69,7 @@ class MetaController:
         self._drawdown_alerted: bool = False
         self._consec_losses_alerted: bool = False
         self._api_errors_alerted: bool = False
+        self._symbol_candidate_status: dict[str, str] = {}
         self._alert_silenced_until: dict[str, datetime] = {}  # alert_key → silence_until
         self._regime_change_silenced_until: datetime | None = None
 
@@ -90,6 +94,70 @@ class MetaController:
             (u.telegram_chat_id, (u.telegram_min_level or ""))
             for u in users if u.telegram_chat_id
         ]
+
+    def _symbol_historical_summary(self, db: Session, symbol: str) -> tuple[int, float]:
+        trades = db.query(Trade).filter(
+            Trade.symbol == symbol,
+            Trade.status == TradeStatus.CLOSED,
+        ).all()
+        estimated_net = 0.0
+        for trade in trades:
+            entry_notional = (trade.entry_price or 0) * (trade.quantity or 0)
+            exit_price = trade.exit_price if trade.exit_price is not None else trade.entry_price
+            exit_notional = (exit_price or 0) * (trade.quantity or 0)
+            costs = (entry_notional + exit_notional) * (
+                (settings.paper_fee_pct + settings.paper_slippage_pct) / 100
+            )
+            estimated_net += (trade.pnl or 0) - costs
+        return len(trades), estimated_net
+
+    def _symbol_candidate_state(self, snap: dict | None, trades: int, estimated_net: float) -> tuple[str, str]:
+        if snap is None:
+            return "unknown", "market analysis unavailable"
+        regime = str(snap.get("regime") or "unknown")
+        adx = float(snap.get("adx") or 0)
+        volume_ratio = float(snap.get("volume_ratio") or 0)
+        atr_pct = float(snap.get("atr_pct") or 0)
+        reason = f"{regime} regime, ADX {adx:.1f}, volume {volume_ratio:.2f}x, ATR {atr_pct:.2f}%"
+        if regime == "trend" and adx >= 25 and volume_ratio >= 1.0 and atr_pct < 3.0:
+            if trades >= 10 and estimated_net < -3:
+                return "watch", f"{reason}; historical net PnL remains weak"
+            return "candidate", reason
+        return "not_ready", reason
+
+    async def _notify_symbol_candidates(self, db: Session, chat_ids: list[tuple[str, str]]):
+        if not chat_ids:
+            return
+
+        active_symbols = set(getattr(self._engine, "symbols", []) or [])
+        historical_symbols = {
+            symbol
+            for (symbol,) in db.query(Trade.symbol).distinct().all()
+            if symbol
+        }
+        symbols = sorted((self._DEFAULT_SYMBOL_CANDIDATES | historical_symbols) - active_symbols)
+
+        for symbol in symbols:
+            status = "unknown"
+            reason = "market analysis unavailable"
+            try:
+                trades, estimated_net = self._symbol_historical_summary(db, symbol)
+                df = await self._engine.fetch_klines(symbol, limit=100)
+                if not df.empty:
+                    snap = MarketRegimeService().compute(df, symbol).to_dict()
+                    status, reason = self._symbol_candidate_state(snap, trades, estimated_net)
+            except Exception as exc:
+                logger.debug("Candidate analysis failed for %s: %s", symbol, exc)
+
+            previous = self._symbol_candidate_status.get(symbol)
+            if status == "candidate" and previous != "candidate":
+                await self.notifier.notify_symbol_candidate(symbol, reason, chat_ids=chat_ids)
+                logger.info("SYMBOL_CANDIDATE_ALERT: %s (%s)", symbol, reason)
+            self._symbol_candidate_status[symbol] = status
+
+        for symbol in list(self._symbol_candidate_status):
+            if symbol in active_symbols:
+                self._symbol_candidate_status.pop(symbol, None)
 
     async def evaluate(self, db: Session, dataframes: dict[str, pd.DataFrame] | None = None):
         """
@@ -138,6 +206,7 @@ class MetaController:
                     )
                     self._regime_change_silenced_until = now_utc + self._REGIME_CHANGE_COOLDOWN
             self._last_global_regime = global_regime
+            await self._notify_symbol_candidates(db, chat_ids)
 
             # 2. Performance metrics — pass kill switch reset cutoff so that
             # consecutive_losses restarts fresh after a pause expires.
