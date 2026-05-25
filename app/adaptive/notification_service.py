@@ -323,6 +323,13 @@ class NotificationService:
             level="CRITICAL", chat_ids=chat_ids or [], deduplicate=False,
         )
 
+    async def notify_bot_resumed(self, reason: str = "pause expired",
+                                 chat_ids: list[str] = None):
+        await self.broadcast(
+            f"<b>Bot Resumed</b>\n\n<b>Reason:</b> {reason}",
+            level="WARNING", chat_ids=chat_ids or [], deduplicate=False,
+        )
+
     async def notify_daily_summary(self, metrics: dict, chat_ids: list[str] = None):
         await self.broadcast(
             f"\U0001F4CA <b>Daily Summary</b>\n\n"

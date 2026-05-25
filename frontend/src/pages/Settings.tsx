@@ -455,8 +455,8 @@ export default function Settings() {
           </select>
           <p className="text-[11px] text-gray-500 mt-1">
             {l(
-              'WARNING: cambi profilo, perdite consecutive, ingresso regime difensivo/volatile. CRITICAL: drawdown, errori API, pausa bot, approvazioni.',
-              'WARNING: profile switches, consecutive losses, entering defensive/volatile regime. CRITICAL: drawdown, API errors, bot paused, approvals.'
+              'INFO: include report giornaliero. WARNING: cambi profilo, perdite consecutive, candidati simboli, ingresso regime difensivo/volatile, ripresa bot. CRITICAL: drawdown, errori API, pausa bot, approvazioni.',
+              'INFO: includes daily summary. WARNING: profile switches, consecutive losses, symbol candidates, entering defensive/volatile regime, bot resumed. CRITICAL: drawdown, API errors, bot paused, approvals.'
             )}
           </p>
         </div>

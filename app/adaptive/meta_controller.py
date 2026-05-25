@@ -70,6 +70,7 @@ class MetaController:
         self._consec_losses_alerted: bool = False
         self._api_errors_alerted: bool = False
         self._symbol_candidate_status: dict[str, str] = {}
+        self._kill_switch_was_active: bool = False
         self._alert_silenced_until: dict[str, datetime] = {}  # alert_key → silence_until
         self._regime_change_silenced_until: datetime | None = None
 
@@ -159,6 +160,27 @@ class MetaController:
             if symbol in active_symbols:
                 self._symbol_candidate_status.pop(symbol, None)
 
+    async def _notify_kill_switch_state(self, chat_ids: list[tuple[str, str]]):
+        guardrails = getattr(self._engine, "guardrails", None)
+        if guardrails is None:
+            return
+
+        status = guardrails.kill_switch.status()
+        active = bool(status.get("active"))
+        if active and not self._kill_switch_was_active:
+            reason = status.get("reason") or "risk threshold"
+            value = status.get("value")
+            pause_until = status.get("pause_until")
+            details = f"{reason}={value}"
+            if pause_until:
+                details = f"{details}; pause_until={pause_until}"
+            await self.notifier.notify_bot_paused(details, chat_ids=chat_ids)
+            logger.warning("KILL_SWITCH_NOTIFY: activated (%s)", details)
+        elif not active and self._kill_switch_was_active:
+            await self.notifier.notify_bot_resumed("kill switch pause expired", chat_ids=chat_ids)
+            logger.info("KILL_SWITCH_NOTIFY: resumed")
+        self._kill_switch_was_active = active
+
     async def evaluate(self, db: Session, dataframes: dict[str, pd.DataFrame] | None = None):
         """
         Run the full adaptive evaluation cycle.
@@ -216,6 +238,7 @@ class MetaController:
             )
             perf_snap = self.perf_monitor.compute(db, consec_reset_cutoff=consec_cutoff)
             perf_dict = perf_snap.to_dict()
+            await self._notify_kill_switch_state(chat_ids)
 
             # HIGH notifications — once per episode + 30min silence to avoid oscillation spam
             now = datetime.now(timezone.utc)
