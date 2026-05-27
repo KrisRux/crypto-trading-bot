@@ -48,6 +48,16 @@ LOCAL_CONFIG_PATH = os.path.join(CONFIG_DIR, "guardrails.local.json")
 CONFIG_PATH = LOCAL_CONFIG_PATH
 
 
+def _deep_merge(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 @dataclass
 class TradeVerdict:
     """Result of a guardrail check."""
@@ -93,13 +103,21 @@ class GuardrailStats:
 
 
 def _load_config() -> dict:
-    path = LOCAL_CONFIG_PATH if os.path.exists(LOCAL_CONFIG_PATH) else DEFAULT_CONFIG_PATH
     try:
-        with open(path, "r") as f:
-            return json.load(f)
+        with open(DEFAULT_CONFIG_PATH, "r") as f:
+            default_cfg = json.load(f)
     except Exception:
         logger.warning("Failed to load guardrails config, using defaults")
         return {}
+    if not os.path.exists(LOCAL_CONFIG_PATH):
+        return default_cfg
+    try:
+        with open(LOCAL_CONFIG_PATH, "r") as f:
+            local_cfg = json.load(f)
+        return _deep_merge(default_cfg, local_cfg)
+    except Exception:
+        logger.warning("Failed to load local guardrails config, using defaults")
+        return default_cfg
 
 
 # ======================================================================

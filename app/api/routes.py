@@ -64,13 +64,27 @@ def _guardrails_config_paths() -> tuple[str, str]:
     )
 
 
+def _deep_merge_config(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_config(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def _read_guardrails_config() -> dict:
     import json as _json
     import os
     local_path, default_path = _guardrails_config_paths()
-    path = local_path if os.path.exists(local_path) else default_path
-    with open(path, "r") as f:
-        return _json.load(f)
+    with open(default_path, "r") as f:
+        default_cfg = _json.load(f)
+    if not os.path.exists(local_path):
+        return default_cfg
+    with open(local_path, "r") as f:
+        local_cfg = _json.load(f)
+    return _deep_merge_config(default_cfg, local_cfg)
 
 
 def _write_guardrails_config(config: dict):
