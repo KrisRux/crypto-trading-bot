@@ -10,7 +10,8 @@ Provides a single entry point ``can_open_new_trade()`` that checks:
   6. RiskScaler    — position size multiplier based on conditions
   7. StrategyCircuitBreaker — per-strategy pause after consecutive losses
 
-All thresholds are loaded from ``config/guardrails.json`` and can be changed
+All thresholds are loaded from ``config/guardrails.local.json`` when present,
+otherwise from ``config/guardrails.json``. The local file can be changed
 without a deploy.  Metrics are aggregated in ``GuardrailStats`` for observability.
 
 Usage in the engine:
@@ -41,7 +42,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
+CONFIG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "config")
+DEFAULT_CONFIG_PATH = os.path.join(CONFIG_DIR, "guardrails.json")
+LOCAL_CONFIG_PATH = os.path.join(CONFIG_DIR, "guardrails.local.json")
+CONFIG_PATH = LOCAL_CONFIG_PATH
 
 
 @dataclass
@@ -89,8 +93,9 @@ class GuardrailStats:
 
 
 def _load_config() -> dict:
+    path = LOCAL_CONFIG_PATH if os.path.exists(LOCAL_CONFIG_PATH) else DEFAULT_CONFIG_PATH
     try:
-        with open(CONFIG_PATH, "r") as f:
+        with open(path, "r") as f:
             return json.load(f)
     except Exception:
         logger.warning("Failed to load guardrails config, using defaults")

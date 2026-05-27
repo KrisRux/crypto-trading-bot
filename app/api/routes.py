@@ -55,6 +55,36 @@ def get_meta_controller():
     return _meta_controller
 
 
+def _guardrails_config_paths() -> tuple[str, str]:
+    import os
+    config_dir = os.path.join(os.path.dirname(__file__), "..", "..", "config")
+    return (
+        os.path.join(config_dir, "guardrails.local.json"),
+        os.path.join(config_dir, "guardrails.json"),
+    )
+
+
+def _read_guardrails_config() -> dict:
+    import json as _json
+    import os
+    local_path, default_path = _guardrails_config_paths()
+    path = local_path if os.path.exists(local_path) else default_path
+    with open(path, "r") as f:
+        return _json.load(f)
+
+
+def _write_guardrails_config(config: dict):
+    import json as _json
+    import os
+    import tempfile
+    local_path, _default_path = _guardrails_config_paths()
+    config_dir = os.path.dirname(local_path)
+    fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".json")
+    with os.fdopen(fd, "w") as f:
+        _json.dump(config, f, indent=2)
+    os.replace(tmp_path, local_path)
+
+
 def _paper_cost_estimate(trade: Trade) -> dict:
     entry_notional = (trade.entry_price or 0) * (trade.quantity or 0)
     exit_price = trade.exit_price if trade.exit_price is not None else trade.entry_price
@@ -1077,12 +1107,9 @@ def reload_guardrails(_admin: dict = Depends(require_admin)):
 
 @router.get("/adaptive/guardrails/config")
 def get_guardrails_config(_admin: dict = Depends(require_admin)):
-    """Return the current guardrails.json content (admin only)."""
-    import json as _json, os
-    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
+    """Return the current guardrails config content (admin only)."""
     try:
-        with open(config_path, "r") as f:
-            return _json.load(f)
+        return _read_guardrails_config()
     except Exception as exc:
         raise HTTPException(500, f"Failed to read config: {exc}")
 
@@ -1090,9 +1117,6 @@ def get_guardrails_config(_admin: dict = Depends(require_admin)):
 @router.put("/adaptive/guardrails/config")
 def update_guardrails_config(body: dict, admin: dict = Depends(require_admin)):
     """Save new guardrails config and hot-reload (admin only)."""
-    import json as _json, os, tempfile
-    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
-
     # Basic structure validation
     required_keys = {"kill_switch", "symbol_cooldown", "trade_gate", "dynamic_score",
                      "entry_throttle", "risk_scaling", "strategy_circuit_breaker",
@@ -1108,20 +1132,14 @@ def update_guardrails_config(body: dict, admin: dict = Depends(require_admin)):
 
     # Read current config for audit diff
     old_cfg = {}
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, "r") as f:
-                old_cfg = _json.load(f)
-        except Exception:
-            pass
+    try:
+        old_cfg = _read_guardrails_config()
+    except Exception:
+        pass
 
     # Atomic write: write to temp file, then rename
     try:
-        config_dir = os.path.dirname(config_path)
-        fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".json")
-        with os.fdopen(fd, "w") as f:
-            _json.dump(body, f, indent=2)
-        os.replace(tmp_path, config_path)
+        _write_guardrails_config(body)
     except Exception as exc:
         raise HTTPException(500, f"Failed to write config: {exc}")
 
@@ -1143,9 +1161,6 @@ def update_guardrails_config(body: dict, admin: dict = Depends(require_admin)):
 @router.post("/adaptive/guardrails/config/reset")
 def reset_guardrails_config(admin: dict = Depends(require_admin)):
     """Reset guardrails config to conservative defaults (admin only)."""
-    import json as _json, os, tempfile
-    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
-
     defaults = {
         "kill_switch": {
             "consecutive_losses_threshold": 6, "low_win_rate_threshold": 15,
@@ -1188,11 +1203,7 @@ def reset_guardrails_config(admin: dict = Depends(require_admin)):
     }
 
     try:
-        config_dir = os.path.dirname(config_path)
-        fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".json")
-        with os.fdopen(fd, "w") as f:
-            _json.dump(defaults, f, indent=2)
-        os.replace(tmp_path, config_path)
+        _write_guardrails_config(defaults)
     except Exception as exc:
         raise HTTPException(500, f"Failed to write defaults: {exc}")
 
@@ -1227,12 +1238,8 @@ async def get_tuning_suggestions(db: Session = Depends(get_db), _admin: dict = D
         if hasattr(s, "get_params")
     }
 
-    # Read current guardrails config
-    import os
-    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
     try:
-        with open(config_path, "r") as f:
-            guardrails_config = _json.load(f)
+        guardrails_config = _read_guardrails_config()
     except Exception:
         guardrails_config = {}
 
@@ -1266,7 +1273,7 @@ async def get_tuning_suggestions(db: Session = Depends(get_db), _admin: dict = D
 def apply_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
                             admin: dict = Depends(require_admin)):
     """Apply a saved tuning suggestion to guardrails config (admin only)."""
-    import json as _json, os, tempfile
+    import json as _json
     from app.models.tuning_suggestion import TuningSuggestion
 
     # Whitelist of paths the advisor is allowed to modify (path injection guard)
@@ -1293,10 +1300,8 @@ def apply_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
     if suggestion.status != "new":
         raise HTTPException(400, f"Suggestion already {suggestion.status}")
 
-    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
     try:
-        with open(config_path, "r") as f:
-            config = _json.load(f)
+        config = _read_guardrails_config()
     except Exception as exc:
         raise HTTPException(500, f"Failed to read config: {exc}")
 
@@ -1360,12 +1365,7 @@ def apply_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
         if val_errors:
             raise HTTPException(400, f"Validation errors: {'; '.join(val_errors)}")
 
-        # Atomic write
-        config_dir = os.path.dirname(config_path)
-        fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".json")
-        with os.fdopen(fd, "w") as f:
-            _json.dump(config, f, indent=2)
-        os.replace(tmp_path, config_path)
+        _write_guardrails_config(config)
         engine.guardrails.reload_config()
 
     if strategy_changes:
@@ -1414,7 +1414,7 @@ def reject_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
 async def generate_and_save_suggestion(db: Session = Depends(get_db),
                                        admin: dict = Depends(require_admin)):
     """Generate a tuning suggestion and save it to DB (admin only)."""
-    import json as _json, os
+    import json as _json
     from app.models.tuning_suggestion import TuningSuggestion
 
     mc = get_meta_controller()
@@ -1435,10 +1435,8 @@ async def generate_and_save_suggestion(db: Session = Depends(get_db),
         if hasattr(s, "get_params")
     }
 
-    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "guardrails.json")
     try:
-        with open(config_path, "r") as f:
-            guardrails_config = _json.load(f)
+        guardrails_config = _read_guardrails_config()
     except Exception:
         guardrails_config = {}
 

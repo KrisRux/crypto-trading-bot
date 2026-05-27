@@ -37,6 +37,7 @@ Thumbs.db
 
 # Runtime state (never tracked — written at runtime by the bot)
 config/profile_state.json
+config/guardrails.local.json
 risk_params.json
 strategy_params.json
 
