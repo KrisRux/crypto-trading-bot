@@ -133,6 +133,17 @@ const SECTIONS: SectionDef[] = [
       { key: 'pause_minutes', label: 'Pause Minutes', hint: 'How long to pause the strategy', min: 10, max: 480, step: 10, type: 'integer' },
     ],
   },
+  {
+    id: 'stale_position', title: 'Stale Position Exit', icon: 'H',
+    path: ['stale_position'],
+    fields: [
+      { key: 'enabled', label: 'Enabled', hint: 'Close old positions that are not working', type: 'boolean' },
+      { key: 'max_holding_hours', label: 'Max Holding Hours', hint: 'Close if older than this and losing enough', min: 1, max: 336, step: 1 },
+      { key: 'min_loss_pct', label: 'Min Loss %', hint: 'Loss threshold after max holding time', min: 0, max: 20, step: 0.1 },
+      { key: 'flat_holding_hours', label: 'Flat Holding Hours', hint: 'Close if too old and nearly flat', min: 1, max: 504, step: 1 },
+      { key: 'flat_abs_pnl_pct', label: 'Flat Abs PnL %', hint: 'Near-flat threshold for stale exit', min: 0, max: 5, step: 0.1 },
+    ],
+  },
 ]
 
 /* presets */

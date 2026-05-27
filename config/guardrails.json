@@ -69,5 +69,12 @@
   "strategy_circuit_breaker": {
     "consecutive_losses_threshold": 4,
     "pause_minutes": 120
+  },
+  "stale_position": {
+    "enabled": true,
+    "max_holding_hours": 48,
+    "min_loss_pct": 0.5,
+    "flat_holding_hours": 72,
+    "flat_abs_pnl_pct": 0.2
   }
 }

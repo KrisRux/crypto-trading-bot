@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { api, Balance, Position, TradeItem, EngineStatus, AdaptiveStatus, NewsSentiment, ApprovalRequestItem } from '../api'
+import { api, Balance, Position, TradeItem, EngineStatus, AdaptiveStatus, NewsSentiment, ApprovalRequestItem, MarkToMarketPerformance } from '../api'
 import { usePolling } from '../hooks/usePolling'
 import { useLang } from '../hooks/useLang'
 import { useAuth } from '../hooks/useAuth'
@@ -23,6 +23,7 @@ export default function Dashboard() {
   const fetchEngine = useCallback(() => api.getEngineStatus(), [])
   const fetchAdaptive = useCallback(() => api.getAdaptiveStatus(), [])
   const fetchSentiment = useCallback(() => api.getNewsSentiment(), [])
+  const fetchMarkToMarket = useCallback(() => api.getMarkToMarketPerformance({ hours: 24 * 7 }), [])
   const fetchPendingApprovals = useCallback(
     () => (isAdmin ? api.getPendingApprovals() : Promise.resolve([] as ApprovalRequestItem[])),
     [isAdmin]
@@ -34,6 +35,7 @@ export default function Dashboard() {
   const [engine] = usePolling<EngineStatus>(fetchEngine, 5000)
   const [adaptive] = usePolling<AdaptiveStatus>(fetchAdaptive, 15000)
   const [sentiment] = usePolling<NewsSentiment>(fetchSentiment, 60000)
+  const [markToMarket] = usePolling<MarkToMarketPerformance>(fetchMarkToMarket, 10000)
   const [pendingApprovals] = usePolling<ApprovalRequestItem[]>(fetchPendingApprovals, 15000)
 
   const dataMode = balance?.mode || 'paper'
@@ -206,6 +208,35 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      {markToMarket && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatCard
+            label={l('Realized Net 7d', 'Realized Net 7d')}
+            value={markToMarket.realized.estimated_net_pnl}
+            color={pnlColor(markToMarket.realized.estimated_net_pnl)}
+            sub="USDT"
+          />
+          <StatCard
+            label={l('Open Net', 'Open Net')}
+            value={markToMarket.unrealized_estimated_net_pnl}
+            color={pnlColor(markToMarket.unrealized_estimated_net_pnl)}
+            sub={`${markToMarket.open_positions} pos`}
+          />
+          <StatCard
+            label={l('Total Net 7d', 'Total Net 7d')}
+            value={markToMarket.total_estimated_net_pnl}
+            color={pnlColor(markToMarket.total_estimated_net_pnl)}
+            sub="realized + open"
+          />
+          <StatCard
+            label={l('Open Exposure', 'Open Exposure')}
+            value={markToMarket.open_exposure}
+            color="text-blue-400"
+            sub="USDT"
+          />
+        </div>
+      )}
 
       {/* Engine status + prices */}
       <div className="space-y-2">

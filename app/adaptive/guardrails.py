@@ -676,6 +676,16 @@ class Guardrails:
 
         logger.info("Guardrails config reloaded (state preserved)")
 
+    def stale_position_config(self) -> dict:
+        cfg = self._cfg.get("stale_position", {})
+        return {
+            "enabled": bool(cfg.get("enabled", True)),
+            "max_holding_hours": float(cfg.get("max_holding_hours", 48)),
+            "min_loss_pct": float(cfg.get("min_loss_pct", 0.5)),
+            "flat_holding_hours": float(cfg.get("flat_holding_hours", 72)),
+            "flat_abs_pnl_pct": float(cfg.get("flat_abs_pnl_pct", 0.2)),
+        }
+
     def apply_tuning_change(self, change: dict) -> bool:
         """
         Apply a single tuning change (from LLM advisor) to the in-memory config
@@ -832,6 +842,7 @@ class Guardrails:
             "symbol_cooldowns": self.symbol_cooldown.status(),
             "stats": self.stats.to_dict(),
             "risk_multiplier": self.get_risk_multiplier(),
+            "stale_position": self.stale_position_config(),
             "dynamic_score_min": self.dynamic_score.get_min_score(
                 self._perf.get("consecutive_losses", 0),
                 self._perf.get("global_regime", "unknown"),

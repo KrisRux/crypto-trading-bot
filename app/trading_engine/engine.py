@@ -18,6 +18,7 @@ from app.binance_client.rest_client import BinanceRestClient
 from app.binance_client.ws_client import BinanceWebSocket
 from app.config import settings
 from app.database import SessionLocal, load_symbols_from_db
+from app.models.portfolio import PaperPosition
 from app.models.trade import Trade, TradeStatus, OrderSide, OrderStatus
 from app.models.user import User
 from app.paper_trading.portfolio import PaperPortfolioManager
@@ -125,6 +126,23 @@ class TradingEngine:
             except Exception:
                 logger.exception("Strategy %s error on %s", strat.name, symbol)
         return all_signals
+
+    def _stale_position_reason(self, trade: Trade, current_price: float) -> str | None:
+        cfg = self.guardrails.stale_position_config()
+        if not cfg.get("enabled", True) or not trade.opened_at or not trade.entry_price:
+            return None
+
+        opened_at = trade.opened_at
+        if opened_at.tzinfo is None:
+            opened_at = opened_at.replace(tzinfo=timezone.utc)
+        age_hours = (datetime.now(timezone.utc) - opened_at).total_seconds() / 3600
+        pnl_pct = ((current_price - trade.entry_price) / trade.entry_price) * 100
+
+        if age_hours >= cfg["max_holding_hours"] and pnl_pct <= -cfg["min_loss_pct"]:
+            return f"stale_position_loss age={age_hours:.1f}h pnl={pnl_pct:.2f}%"
+        if age_hours >= cfg["flat_holding_hours"] and abs(pnl_pct) <= cfg["flat_abs_pnl_pct"]:
+            return f"stale_position_flat age={age_hours:.1f}h pnl={pnl_pct:.2f}%"
+        return None
 
     # ------------------------------------------------------------------
     # Per-user execution
@@ -555,6 +573,8 @@ class TradingEngine:
                 trade.entry_price, current_price, trade.stop_loss, trade.take_profit,
                 candle_high=candle_high, candle_low=candle_low,
             )
+            if not result:
+                result = self._stale_position_reason(trade, current_price)
             if result:
                 await self._close_trade(db, user, trade, current_price, result, client, order_mgr)
 
@@ -687,6 +707,26 @@ class TradingEngine:
                 symbol, strat_name, is_win, was_stoploss=was_sl,
             )
 
+        stale_trades = db.query(Trade).filter(
+            Trade.user_id == user.id,
+            Trade.status == TradeStatus.OPEN,
+            Trade.mode == "paper",
+            Trade.symbol == symbol,
+        ).all()
+        for trade in stale_trades:
+            reason = self._stale_position_reason(trade, current_price)
+            if not reason:
+                continue
+            position = db.query(PaperPosition).filter(
+                PaperPosition.user_id == user.id,
+                PaperPosition.symbol == symbol,
+            ).first()
+            if position:
+                self.paper_portfolio.close_position(db, position, current_price, reason)
+                db.refresh(trade)
+                if trade.status == TradeStatus.CLOSED:
+                    self._record_trade_close(trade, reason)
+
         if not within_hours:
             return
 
@@ -789,6 +829,8 @@ class TradingEngine:
                 trade.stop_loss, trade.take_profit,
                 candle_high=candle_high, candle_low=candle_low,
             )
+            if not result:
+                result = self._stale_position_reason(trade, current_price)
             if result:
                 await self._close_trade(db, user, trade, current_price, result, client, order_mgr)
 

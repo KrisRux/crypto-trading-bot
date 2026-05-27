@@ -132,6 +132,34 @@ export interface PerformanceBreakdown {
   by_symbol: Record<string, PerformanceSummary>
 }
 
+export interface MarkToMarketPosition {
+  id: number
+  symbol: string
+  strategy: string | null
+  entry_price: number
+  current_price: number
+  quantity: number
+  age_hours: number
+  gross_pnl: number
+  estimated_roundtrip_cost: number
+  estimated_net_pnl: number
+  pnl_pct: number
+  opened_at: string | null
+}
+
+export interface MarkToMarketPerformance {
+  mode: string
+  since: string | null
+  realized: PerformanceSummary
+  open_positions: number
+  open_exposure: number
+  unrealized_gross_pnl: number
+  unrealized_estimated_cost: number
+  unrealized_estimated_net_pnl: number
+  total_estimated_net_pnl: number
+  positions: MarkToMarketPosition[]
+}
+
 export interface StrategyInfo {
   name: string
   enabled: boolean
@@ -337,6 +365,12 @@ export const api = {
     if (params?.since) qs.set('since', params.since)
     const query = qs.toString()
     return request<PerformanceBreakdown>(`/performance/breakdown${query ? `?${query}` : ''}`)
+  },
+  getMarkToMarketPerformance: (params?: { hours?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.hours) qs.set('hours', String(params.hours))
+    const query = qs.toString()
+    return request<MarkToMarketPerformance>(`/performance/mark-to-market${query ? `?${query}` : ''}`)
   },
   getPrice: (symbol: string) => request<PriceData>(`/price/${symbol}`),
   getStrategies: () => request<StrategyInfo[]>('/strategies'),

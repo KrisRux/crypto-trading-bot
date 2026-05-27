@@ -47,6 +47,13 @@ def validate_guardrails_values(cfg: dict) -> list[str]:
     _check("risk_scaling.consecutive_losses_3_multiplier", rs.get("consecutive_losses_3_multiplier", 0.75), 0.1, 1.0, (int, float))
     _check("risk_scaling.consecutive_losses_5_multiplier", rs.get("consecutive_losses_5_multiplier", 0.50), 0.1, 1.0, (int, float))
 
+    # Stale position exit
+    sp = cfg.get("stale_position", {})
+    _check("stale_position.max_holding_hours", sp.get("max_holding_hours", 48), 1, 24 * 14, (int, float))
+    _check("stale_position.min_loss_pct", sp.get("min_loss_pct", 0.5), 0, 20, (int, float))
+    _check("stale_position.flat_holding_hours", sp.get("flat_holding_hours", 72), 1, 24 * 21, (int, float))
+    _check("stale_position.flat_abs_pnl_pct", sp.get("flat_abs_pnl_pct", 0.2), 0, 5, (int, float))
+
     return errors
 
 

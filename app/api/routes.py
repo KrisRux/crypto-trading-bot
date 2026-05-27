@@ -162,6 +162,70 @@ def _symbol_candidate_status(active: bool, snap: dict | None, perf: dict | None)
     return "not_ready", reason
 
 
+def _mark_to_market_for_user(db: Session, user: User, hours: int | None = None) -> dict:
+    engine = get_engine()
+    user_mode = user.trading_mode or "paper"
+    realized = _performance_breakdown_for_user(db, user, hours=hours)
+    open_trades = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.mode == user_mode,
+        Trade.status == TradeStatus.OPEN,
+    ).all()
+
+    positions = []
+    unrealized_gross = 0.0
+    unrealized_cost = 0.0
+    exposure = 0.0
+    now = datetime.now(timezone.utc)
+    for trade in open_trades:
+        current_price = engine.last_prices.get(trade.symbol) or trade.entry_price or 0
+        entry_notional = (trade.entry_price or 0) * (trade.quantity or 0)
+        exit_notional = current_price * (trade.quantity or 0)
+        gross = (current_price - (trade.entry_price or current_price)) * (trade.quantity or 0)
+        fees = (entry_notional + exit_notional) * (settings.paper_fee_pct / 100)
+        slippage = (entry_notional + exit_notional) * (settings.paper_slippage_pct / 100)
+        cost = fees + slippage
+        net = gross - cost
+        age_hours = 0.0
+        if trade.opened_at:
+            opened = trade.opened_at
+            if opened.tzinfo is None:
+                opened = opened.replace(tzinfo=timezone.utc)
+            age_hours = max(0.0, (now - opened).total_seconds() / 3600)
+        unrealized_gross += gross
+        unrealized_cost += cost
+        exposure += exit_notional
+        positions.append({
+            "id": trade.id,
+            "symbol": trade.symbol,
+            "strategy": trade.strategy,
+            "entry_price": trade.entry_price,
+            "current_price": current_price,
+            "quantity": trade.quantity,
+            "age_hours": round(age_hours, 2),
+            "gross_pnl": round(gross, 6),
+            "estimated_roundtrip_cost": round(cost, 6),
+            "estimated_net_pnl": round(net, 6),
+            "pnl_pct": round((gross / entry_notional * 100), 4) if entry_notional else 0,
+            "opened_at": trade.opened_at,
+        })
+
+    realized_net = realized["overall"]["estimated_net_pnl"]
+    unrealized_net = unrealized_gross - unrealized_cost
+    return {
+        "mode": user_mode,
+        "since": realized.get("since"),
+        "realized": realized["overall"],
+        "open_positions": len(open_trades),
+        "open_exposure": round(exposure, 6),
+        "unrealized_gross_pnl": round(unrealized_gross, 6),
+        "unrealized_estimated_cost": round(unrealized_cost, 6),
+        "unrealized_estimated_net_pnl": round(unrealized_net, 6),
+        "total_estimated_net_pnl": round(realized_net + unrealized_net, 6),
+        "positions": positions,
+    }
+
+
 def _tuning_performance_context(db: Session, user: User) -> dict:
     return {
         "mode": user.trading_mode or "paper",
@@ -635,6 +699,16 @@ def get_performance_breakdown(
     return _performance_breakdown_for_user(db, user, since=since, hours=hours)
 
 
+@router.get("/performance/mark-to-market")
+def get_mark_to_market_performance(
+    db: Session = Depends(get_db),
+    user_info: dict = Depends(require_auth),
+    hours: int | None = Query(default=None, ge=1, le=24 * 90),
+):
+    user = _get_user_obj(user_info, db)
+    return _mark_to_market_for_user(db, user, hours=hours)
+
+
 # ------------------------------------------------------------------ Price
 @router.get("/price/{symbol}", response_model=PriceResponse)
 async def get_price(symbol: str, _user: dict = Depends(require_auth)):
@@ -1021,7 +1095,8 @@ def update_guardrails_config(body: dict, admin: dict = Depends(require_admin)):
 
     # Basic structure validation
     required_keys = {"kill_switch", "symbol_cooldown", "trade_gate", "dynamic_score",
-                     "entry_throttle", "risk_scaling", "strategy_circuit_breaker"}
+                     "entry_throttle", "risk_scaling", "strategy_circuit_breaker",
+                     "stale_position"}
     missing = required_keys - set(body.keys())
     if missing:
         raise HTTPException(400, f"Missing required sections: {', '.join(missing)}")
@@ -1105,6 +1180,10 @@ def reset_guardrails_config(admin: dict = Depends(require_admin)):
         },
         "strategy_circuit_breaker": {
             "consecutive_losses_threshold": 4, "pause_minutes": 120,
+        },
+        "stale_position": {
+            "enabled": True, "max_holding_hours": 48, "min_loss_pct": 0.5,
+            "flat_holding_hours": 72, "flat_abs_pnl_pct": 0.2,
         },
     }
 
