@@ -770,10 +770,11 @@ async def symbols_analysis(db: Session = Depends(get_db), user_info: dict = Depe
 
     open_symbols = {
         symbol
-        for (symbol,) in db.query(PaperPosition.symbol).filter(
-            PaperPosition.user_id == user.id,
-            PaperPosition.quantity > 0,
-        ).all()
+        for (symbol,) in db.query(Trade.symbol).filter(
+            Trade.user_id == user.id,
+            Trade.mode == (user.trading_mode or "paper"),
+            Trade.status == TradeStatus.OPEN,
+        ).distinct().all()
     }
     live_snapshots: dict[str, dict] = {}
     try:
