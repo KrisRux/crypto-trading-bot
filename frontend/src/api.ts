@@ -206,6 +206,38 @@ export interface SymbolAnalysisItem {
   candidate_reason: string
 }
 
+export interface OpportunityItem {
+  symbol: string
+  side: string
+  score: number
+  action: 'ATTACK' | 'WATCH_BREAKOUT' | 'WATCH_REVERSAL' | 'HOLD_MANAGE' | 'AVOID'
+  setup: string
+  active: boolean
+  position_open: boolean
+  last_price: number
+  regime: string
+  adx: number
+  volume_ratio: number
+  atr_pct: number
+  bb_width_pct: number
+  recent_net_pnl: number
+  recent_win_rate: number
+  all_time_net_pnl: number
+  reasons: string[]
+  blockers: string[]
+}
+
+export interface OpportunitiesResponse {
+  mode: string
+  global_regime: string
+  posture: 'ATTACK' | 'STALK' | 'WAIT' | 'PAUSED'
+  summary: string
+  top_symbol: string | null
+  generated_at: string
+  news: NewsSentiment | null
+  opportunities: OpportunityItem[]
+}
+
 export interface UserItem {
   id: number
   username: string
@@ -382,6 +414,7 @@ export const api = {
   getSignals: () => request<SignalItem[]>('/signals'),
   getEngineStatus: () => request<EngineStatus>('/engine/status'),
   getSymbolAnalysis: () => request<SymbolAnalysisItem[]>('/symbols/analysis'),
+  getOpportunities: () => request<OpportunitiesResponse>('/opportunities'),
   resetPaperPortfolio: () => request('/paper/reset', { method: 'POST' }),
   exportTrades: () => request<string>('/paper/export'),
   getMe: () => request<{ username: string; display_name: string; role: string }>('/me'),

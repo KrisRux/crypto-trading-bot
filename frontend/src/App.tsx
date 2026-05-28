@@ -14,6 +14,7 @@ import Settings from './pages/Settings'
 import Diagnostics from './pages/Diagnostics'
 import GuardrailsConfig from './pages/GuardrailsConfig'
 import Approvals from './pages/Approvals'
+import Opportunities from './pages/Opportunities'
 import Login from './pages/Login'
 import { api } from './api'
 import { Lang } from './i18n'
@@ -153,6 +154,7 @@ function AppContent() {
       label: l('Strategia', 'Strategy'),
       adminOnly: true,
       items: [
+        { to: '/opportunities', label: l('Opportunita', 'Opportunities'), adminOnly: true },
         { to: '/strategies', label: t('nav_strategies'), adminOnly: true },
         { to: '/skills',     label: t('nav_skills'),     adminOnly: true },
       ],
@@ -307,6 +309,7 @@ function AppContent() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/wallet" element={<Assets />} />
+            {isAdmin && <Route path="/opportunities" element={<Opportunities />} />}
             {isAdmin && <Route path="/strategies" element={<Strategies />} />}
             <Route path="/logs" element={<Logs />} />
             {isAdmin && <Route path="/skills" element={<Skills />} />}

@@ -206,6 +206,160 @@ def _symbol_candidate_status(active: bool, snap: dict | None, perf: dict | None)
     return "not_ready", reason
 
 
+def _score_long_opportunity(
+    *,
+    symbol: str,
+    active: bool,
+    position_open: bool,
+    snap: dict | None,
+    perf_24h: dict | None,
+    perf_7d: dict | None,
+    perf_all_time: dict | None,
+    news: dict | None,
+) -> dict:
+    score = 0.0
+    reasons: list[str] = []
+    blockers: list[str] = []
+
+    regime = str((snap or {}).get("regime") or "unknown")
+    adx = float((snap or {}).get("adx") or 0)
+    volume_ratio = float((snap or {}).get("volume_ratio") or 0)
+    atr_pct = float((snap or {}).get("atr_pct") or 0)
+    bb_width_pct = float((snap or {}).get("bb_width_pct") or 0)
+
+    if active:
+        score += 8
+    else:
+        blockers.append("symbol_not_enabled")
+    if position_open:
+        blockers.append("position_already_open")
+
+    if regime == "trend":
+        score += 24
+        reasons.append("trend regime")
+    elif regime == "range":
+        score += 8
+        reasons.append("range regime: reversal only")
+    elif regime == "defensive":
+        score -= 10
+        blockers.append("defensive_symbol_regime")
+    else:
+        blockers.append("regime_unknown")
+
+    if adx >= 50:
+        score += 20
+        reasons.append(f"strong ADX {adx:.1f}")
+    elif adx >= 30:
+        score += 14
+        reasons.append(f"valid ADX {adx:.1f}")
+    elif adx >= 20:
+        score += 5
+    else:
+        blockers.append(f"weak_adx {adx:.1f}")
+
+    if volume_ratio >= 1.5:
+        score += 18
+        reasons.append(f"volume expansion {volume_ratio:.2f}x")
+    elif volume_ratio >= 1.0:
+        score += 10
+        reasons.append(f"healthy volume {volume_ratio:.2f}x")
+    elif volume_ratio >= 0.75:
+        score += 2
+        reasons.append(f"volume still below breakout level {volume_ratio:.2f}x")
+    else:
+        score -= 10
+        blockers.append(f"low_volume {volume_ratio:.2f}x")
+
+    if 0.25 <= atr_pct <= 1.8:
+        score += 8
+        reasons.append(f"tradable ATR {atr_pct:.2f}%")
+    elif atr_pct > 2.5:
+        score -= 6
+        blockers.append(f"excessive_atr {atr_pct:.2f}%")
+
+    if bb_width_pct >= 3:
+        score += 8
+        reasons.append(f"wide bands {bb_width_pct:.2f}%")
+    elif bb_width_pct < 0.8:
+        score -= 5
+        blockers.append(f"compressed_bands {bb_width_pct:.2f}%")
+
+    recent = perf_7d or {}
+    recent_trades = int(recent.get("trades") or 0)
+    recent_net = float(recent.get("estimated_net_pnl") or 0)
+    recent_wr = float(recent.get("win_rate") or 0)
+    if recent_trades >= 2:
+        if recent_net > 0:
+            score += min(14, 6 + recent_net)
+            reasons.append(f"7d net positive {recent_net:.2f}")
+        elif recent_net <= -3:
+            score -= 14
+            blockers.append(f"7d net weak {recent_net:.2f}")
+        if recent_wr >= 50:
+            score += 6
+    else:
+        reasons.append("limited recent symbol history")
+
+    all_time = perf_all_time or {}
+    all_trades = int(all_time.get("trades") or 0)
+    all_net = float(all_time.get("estimated_net_pnl") or 0)
+    if all_trades >= 10 and all_net <= -10:
+        score -= 14
+        blockers.append(f"all_time_net_weak {all_net:.2f}")
+    elif all_trades >= 10 and all_net > 0:
+        score += 5
+
+    fear_greed = int((news or {}).get("fear_greed_value") or 50)
+    news_score = float((news or {}).get("score") or 0)
+    news_label = str((news or {}).get("label") or "unknown")
+    if news_score > 0.15 and fear_greed >= 35:
+        score += 10
+        reasons.append("supportive news sentiment")
+    elif news_score < -0.1 and fear_greed < 30:
+        score -= 10
+        blockers.append(f"macro_fear {news_label} F&G={fear_greed}")
+        if regime == "trend" and adx >= 45 and volume_ratio >= 1.2:
+            score += 8
+            reasons.append("fear-market momentum candidate")
+
+    score = max(0, min(100, round(score, 1)))
+    if position_open:
+        action = "HOLD_MANAGE"
+        setup = "manage_open_position"
+    elif score >= 75 and not blockers:
+        action = "ATTACK"
+        setup = "momentum_breakout_long"
+    elif score >= 62 and len(blockers) <= 1:
+        action = "WATCH_BREAKOUT"
+        setup = "breakout_watch"
+    elif score >= 48:
+        action = "WATCH_REVERSAL"
+        setup = "reversal_watch"
+    else:
+        action = "AVOID"
+        setup = "no_edge"
+
+    return {
+        "symbol": symbol,
+        "side": "LONG",
+        "score": score,
+        "action": action,
+        "setup": setup,
+        "active": active,
+        "position_open": position_open,
+        "regime": regime,
+        "adx": round(adx, 2),
+        "volume_ratio": round(volume_ratio, 2),
+        "atr_pct": round(atr_pct, 3),
+        "bb_width_pct": round(bb_width_pct, 3),
+        "recent_net_pnl": round(recent_net, 6),
+        "recent_win_rate": round(recent_wr, 2),
+        "all_time_net_pnl": round(all_net, 6),
+        "reasons": reasons[:5],
+        "blockers": blockers[:5],
+    }
+
+
 def _mark_to_market_for_user(db: Session, user: User, hours: int | None = None) -> dict:
     engine = get_engine()
     user_mode = user.trading_mode or "paper"
@@ -938,6 +1092,106 @@ async def symbols_analysis(db: Session = Depends(get_db), user_info: dict = Depe
             "candidate_reason": reason,
         })
     return rows
+
+
+@router.get("/opportunities")
+async def opportunities(db: Session = Depends(get_db), user_info: dict = Depends(require_admin)):
+    from app.adaptive.market_regime_service import MarketRegimeService
+
+    engine = get_engine()
+    user = _get_user_obj(user_info, db)
+    user_mode = user.trading_mode or "paper"
+
+    perf_24h = _performance_breakdown_for_user(db, user, hours=24)
+    perf_7d = _performance_breakdown_for_user(db, user, hours=24 * 7)
+    perf_all = _performance_breakdown_for_user(db, user)
+    active_symbols = set(engine.symbols)
+    symbols = sorted(
+        DEFAULT_SYMBOL_CANDIDATES
+        | active_symbols
+        | set(perf_all.get("by_symbol", {}).keys())
+    )
+    open_symbols = {
+        symbol
+        for (symbol,) in db.query(Trade.symbol).filter(
+            Trade.user_id == user.id,
+            Trade.mode == user_mode,
+            Trade.status == TradeStatus.OPEN,
+        ).distinct().all()
+    }
+
+    live_snapshots: dict[str, dict] = {}
+    global_regime = "unknown"
+    news_snapshot: dict | None = None
+    try:
+        mc = get_meta_controller()
+        regime_snapshot = mc.regime_service.global_snapshot()
+        live_snapshots = regime_snapshot.get("symbols", {})
+        global_regime = regime_snapshot.get("global_regime", "unknown")
+        snap_obj = getattr(mc.news_sentiment, "snapshot", None)
+        if snap_obj is not None:
+            news_snapshot = snap_obj.to_dict()
+    except HTTPException:
+        pass
+
+    opportunities = []
+    for symbol in symbols:
+        snap = live_snapshots.get(symbol)
+        if snap is None:
+            try:
+                df = await engine.fetch_klines(symbol, interval="15m", limit=150)
+                if not df.empty:
+                    engine.last_prices[symbol] = float(df["close"].iloc[-1])
+                    snap = MarketRegimeService().compute(df, symbol).to_dict()
+            except Exception as exc:
+                logger.warning("Opportunity scan unavailable for %s: %s", symbol, exc)
+
+        row = _score_long_opportunity(
+            symbol=symbol,
+            active=symbol in active_symbols,
+            position_open=symbol in open_symbols,
+            snap=snap,
+            perf_24h=perf_24h.get("by_symbol", {}).get(symbol),
+            perf_7d=perf_7d.get("by_symbol", {}).get(symbol),
+            perf_all_time=perf_all.get("by_symbol", {}).get(symbol),
+            news=news_snapshot,
+        )
+        row["last_price"] = round(engine.last_prices.get(symbol) or 0, 8)
+        opportunities.append(row)
+
+    opportunities.sort(key=lambda x: (x["score"], x["active"]), reverse=True)
+    top = opportunities[0] if opportunities else None
+    attack_count = sum(1 for row in opportunities if row["action"] == "ATTACK")
+    watch_count = sum(1 for row in opportunities if row["action"].startswith("WATCH"))
+    kill_switch = {}
+    try:
+        kill_switch = engine.guardrails.status().get("kill_switch", {})
+    except Exception:
+        kill_switch = {}
+
+    if kill_switch.get("active"):
+        posture = "PAUSED"
+        summary = "Kill switch is active: scan only, no new entries until it expires."
+    elif attack_count:
+        posture = "ATTACK"
+        summary = f"{attack_count} immediate long opportunity detected."
+    elif watch_count:
+        posture = "STALK"
+        summary = f"{watch_count} symbols are worth stalking for breakout or reversal confirmation."
+    else:
+        posture = "WAIT"
+        summary = "No clean long edge right now."
+
+    return {
+        "mode": user_mode,
+        "global_regime": global_regime,
+        "posture": posture,
+        "summary": summary,
+        "top_symbol": top["symbol"] if top else None,
+        "news": news_snapshot,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "opportunities": opportunities,
+    }
 
 
 @router.post("/symbols/add")
