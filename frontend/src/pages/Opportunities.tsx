@@ -32,7 +32,7 @@ function pnlColor(value: number) {
 }
 
 function SetupLabel({ item }: { item: OpportunityItem }) {
-  const label = item.setup.replaceAll('_', ' ')
+  const label = item.setup.replace(/_/g, ' ')
   return <span className="text-xs text-gray-400 capitalize">{label}</span>
 }
 
