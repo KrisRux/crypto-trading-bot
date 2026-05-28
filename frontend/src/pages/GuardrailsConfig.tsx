@@ -112,6 +112,7 @@ const SECTIONS: SectionDef[] = [
     path: ['entry_throttle'],
     fields: [
       { key: 'max_entries_per_symbol_per_candle', label: 'Max per symbol/candle', hint: 'Entries per symbol per 15m candle', min: 1, max: 5, step: 1, type: 'integer' },
+      { key: 'max_open_positions', label: 'Max Open Positions', hint: 'Maximum simultaneous open positions per user', min: 1, max: 20, step: 1, type: 'integer' },
       { key: 'default_max_entries_per_hour', label: 'Default max/hour', hint: 'Hourly entry limit (fallback)', min: 1, max: 20, step: 1, type: 'integer' },
     ],
   },
@@ -142,6 +143,20 @@ const SECTIONS: SectionDef[] = [
       { key: 'min_loss_pct', label: 'Min Loss %', hint: 'Loss threshold after max holding time', min: 0, max: 20, step: 0.1 },
       { key: 'flat_holding_hours', label: 'Flat Holding Hours', hint: 'Close if too old and nearly flat', min: 1, max: 504, step: 1 },
       { key: 'flat_abs_pnl_pct', label: 'Flat Abs PnL %', hint: 'Near-flat threshold for stale exit', min: 0, max: 5, step: 0.1 },
+    ],
+  },
+  {
+    id: 'performance_gate', title: 'Performance Gate', icon: 'P',
+    path: ['performance_gate'],
+    fields: [
+      { key: 'enabled', label: 'Enabled', hint: 'Block new BUYs after weak recent or historical performance', type: 'boolean' },
+      { key: 'recent_hours', label: 'Recent Window Hours', hint: 'Lookback window for recent performance', min: 1, max: 720, step: 1, type: 'integer' },
+      { key: 'symbol_min_recent_trades', label: 'Symbol Recent Trades', hint: 'Minimum recent trades before symbol block can trigger', min: 1, max: 100, step: 1, type: 'integer' },
+      { key: 'symbol_max_recent_net_loss', label: 'Symbol Recent Net Loss', hint: 'Block symbol when recent net PnL is at or below this', min: -500, max: 0, step: 0.5 },
+      { key: 'symbol_min_all_time_trades', label: 'Symbol All-Time Trades', hint: 'Minimum all-time trades before historical block can trigger', min: 1, max: 1000, step: 1, type: 'integer' },
+      { key: 'symbol_max_all_time_net_loss', label: 'Symbol All-Time Net Loss', hint: 'Block symbol when all-time net PnL is at or below this', min: -1000, max: 0, step: 0.5 },
+      { key: 'strategy_min_recent_trades', label: 'Strategy Recent Trades', hint: 'Minimum recent trades before strategy block can trigger', min: 1, max: 100, step: 1, type: 'integer' },
+      { key: 'strategy_max_recent_net_loss', label: 'Strategy Recent Net Loss', hint: 'Block strategy when recent net PnL is at or below this', min: -500, max: 0, step: 0.5 },
     ],
   },
 ]

@@ -51,6 +51,10 @@ ALLOWED_DYNAMIC_SCORE_PATHS = {
     "dynamic_score.min_score_after_5_losses",
     "dynamic_score.extra_score_in_bad_regime",
     "dynamic_score.max_score_cap",
+    "entry_throttle.max_open_positions",
+    "performance_gate.symbol_max_recent_net_loss",
+    "performance_gate.symbol_max_all_time_net_loss",
+    "performance_gate.strategy_max_recent_net_loss",
 }
 
 
@@ -119,7 +123,7 @@ Your job is to suggest concrete, data-driven parameter adjustments — even when
 - If an enabled strategy has >=10 trades and negative estimated_net_pnl: suggest strategy.<name>.enabled=false.
 - You may return an empty changes array when data is insufficient or current config is appropriate.
 - Prefer small incremental changes (10-15% of current value), never suggest changes >30% of current value
-- You may suggest ONLY these path families: trade_gate.* thresholds, dynamic_score.* thresholds, strategy.<name>.enabled flags.
+- You may suggest ONLY these path families: trade_gate.* thresholds, dynamic_score.* thresholds, performance_gate loss thresholds, entry_throttle.max_open_positions, strategy.<name>.enabled flags.
 - Do not suggest direct strategy numeric thresholds such as embient_enhanced.trend_buy_threshold; they are not applyable through this endpoint.
 - Do not suggest no-op changes where from == to.
 
@@ -144,6 +148,9 @@ Valid path examples:
 - trade_gate.{gate_regime}.min_bb_width_pct
 - dynamic_score.base_min_score
 - dynamic_score.extra_score_in_bad_regime
+- entry_throttle.max_open_positions
+- performance_gate.strategy_max_recent_net_loss
+- performance_gate.symbol_max_recent_net_loss
 - strategy.embient_enhanced.enabled
 - strategy.sma_crossover.enabled
 - strategy.rsi_reversal.enabled

@@ -48,6 +48,10 @@ ALLOWED_DYNAMIC_SCORE_PATHS = {
     "dynamic_score.min_score_after_5_losses",
     "dynamic_score.extra_score_in_bad_regime",
     "dynamic_score.max_score_cap",
+    "entry_throttle.max_open_positions",
+    "performance_gate.symbol_max_recent_net_loss",
+    "performance_gate.symbol_max_all_time_net_loss",
+    "performance_gate.strategy_max_recent_net_loss",
 }
 
 

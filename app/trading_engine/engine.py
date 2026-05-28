@@ -144,6 +144,104 @@ class TradingEngine:
             return f"stale_position_flat age={age_hours:.1f}h pnl={pnl_pct:.2f}%"
         return None
 
+    def _estimated_trade_net_pnl(self, trade: Trade) -> float:
+        entry_notional = (trade.entry_price or 0) * (trade.quantity or 0)
+        exit_price = trade.exit_price if trade.exit_price is not None else trade.entry_price
+        exit_notional = (exit_price or 0) * (trade.quantity or 0)
+        fees = (entry_notional + exit_notional) * (settings.paper_fee_pct / 100)
+        slippage = (entry_notional + exit_notional) * (settings.paper_slippage_pct / 100)
+        return (trade.pnl or 0) - fees - slippage
+
+    def _closed_trade_summary(
+        self,
+        db: Session,
+        user: User,
+        user_mode: str,
+        *,
+        symbol: str | None = None,
+        strategy: str | None = None,
+        since: datetime | None = None,
+    ) -> tuple[int, float]:
+        q = db.query(Trade).filter(
+            Trade.user_id == user.id,
+            Trade.mode == user_mode,
+            Trade.status == TradeStatus.CLOSED,
+        )
+        if symbol:
+            q = q.filter(Trade.symbol == symbol)
+        if strategy:
+            q = q.filter(Trade.strategy == strategy)
+        if since is not None:
+            cutoff = since
+            if cutoff.tzinfo is not None:
+                cutoff = cutoff.astimezone(timezone.utc).replace(tzinfo=None)
+            q = q.filter(Trade.closed_at >= cutoff)
+        trades = q.all()
+        return len(trades), sum(self._estimated_trade_net_pnl(t) for t in trades)
+
+    def _pre_buy_user_guard_reason(
+        self,
+        db: Session,
+        user: User,
+        user_mode: str,
+        symbol: str,
+        strategy_name: str,
+    ) -> str | None:
+        limit_cfg = self.guardrails.entry_limit_config()
+        max_open = int(limit_cfg.get("max_open_positions") or 0)
+        if max_open > 0:
+            open_count = db.query(Trade).filter(
+                Trade.user_id == user.id,
+                Trade.mode == user_mode,
+                Trade.status == TradeStatus.OPEN,
+            ).count()
+            if open_count >= max_open:
+                return f"max_open_positions {open_count}/{max_open}"
+
+        perf_cfg = self.guardrails.performance_gate_config()
+        if not perf_cfg.get("enabled", True):
+            return None
+
+        since = datetime.now(timezone.utc) - timedelta(hours=perf_cfg["recent_hours"])
+        recent_trades, recent_net = self._closed_trade_summary(
+            db, user, user_mode, symbol=symbol, since=since,
+        )
+        if (
+            recent_trades >= perf_cfg["symbol_min_recent_trades"]
+            and recent_net <= perf_cfg["symbol_max_recent_net_loss"]
+        ):
+            return (
+                f"performance_gate_symbol_recent "
+                f"trades={recent_trades} net={recent_net:.2f}"
+            )
+
+        all_trades, all_net = self._closed_trade_summary(
+            db, user, user_mode, symbol=symbol,
+        )
+        if (
+            all_trades >= perf_cfg["symbol_min_all_time_trades"]
+            and all_net <= perf_cfg["symbol_max_all_time_net_loss"]
+        ):
+            return (
+                f"performance_gate_symbol_all_time "
+                f"trades={all_trades} net={all_net:.2f}"
+            )
+
+        if strategy_name:
+            strat_trades, strat_net = self._closed_trade_summary(
+                db, user, user_mode, strategy=strategy_name, since=since,
+            )
+            if (
+                strat_trades >= perf_cfg["strategy_min_recent_trades"]
+                and strat_net <= perf_cfg["strategy_max_recent_net_loss"]
+            ):
+                return (
+                    f"performance_gate_strategy_recent "
+                    f"strategy={strategy_name} trades={strat_trades} net={strat_net:.2f}"
+                )
+
+        return None
+
     # ------------------------------------------------------------------
     # Per-user execution
     # ------------------------------------------------------------------
@@ -618,6 +716,17 @@ class TradingEngine:
                         )
                         return
 
+                user_guard_reason = self._pre_buy_user_guard_reason(
+                    db, user, "paper", symbol, buy_signals[0].strategy_name,
+                )
+                if user_guard_reason:
+                    self.guardrails.record_user_guard_block(user_guard_reason)
+                    logger.info(
+                        "USER_GUARD: skipped BUY %s | %s [user=%d paper/testnet]",
+                        symbol, user_guard_reason, user.id,
+                    )
+                    return
+
                 account = await client.get_account()
                 usdt = next(
                     (b for b in account.get("balances", []) if b["asset"] == "USDT"),
@@ -765,6 +874,17 @@ class TradingEngine:
                         user.id,
                     )
                     return
+
+            user_guard_reason = self._pre_buy_user_guard_reason(
+                db, user, "paper", symbol, buy_signals[0].strategy_name,
+            )
+            if user_guard_reason:
+                self.guardrails.record_user_guard_block(user_guard_reason)
+                logger.info(
+                    "USER_GUARD: skipped BUY %s | %s [user=%d paper/sim]",
+                    symbol, user_guard_reason, user.id,
+                )
+                return
 
             portfolio = self.paper_portfolio.get_or_create(
                 db, user.id, user.paper_initial_capital
@@ -970,6 +1090,17 @@ class TradingEngine:
                             user.id,
                         )
                         return
+
+                user_guard_reason = self._pre_buy_user_guard_reason(
+                    db, user, "live", signal.symbol, signal.strategy_name,
+                )
+                if user_guard_reason:
+                    self.guardrails.record_user_guard_block(user_guard_reason)
+                    logger.info(
+                        "USER_GUARD: skipped BUY %s | %s [user=%d live]",
+                        signal.symbol, user_guard_reason, user.id,
+                    )
+                    return
 
                 account = await client.get_account()
                 usdt = next(

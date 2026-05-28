@@ -52,6 +52,7 @@
   },
   "entry_throttle": {
     "max_entries_per_symbol_per_candle": 1,
+    "max_open_positions": 1,
     "max_entries_per_hour": {
       "defensive": 2,
       "range": 3,
@@ -76,5 +77,15 @@
     "min_loss_pct": 0.5,
     "flat_holding_hours": 72,
     "flat_abs_pnl_pct": 0.2
+  },
+  "performance_gate": {
+    "enabled": true,
+    "recent_hours": 168,
+    "symbol_min_recent_trades": 2,
+    "symbol_max_recent_net_loss": -3.0,
+    "symbol_min_all_time_trades": 10,
+    "symbol_max_all_time_net_loss": -10.0,
+    "strategy_min_recent_trades": 4,
+    "strategy_max_recent_net_loss": -6.0
   }
 }

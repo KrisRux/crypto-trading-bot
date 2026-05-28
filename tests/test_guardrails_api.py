@@ -49,6 +49,7 @@ class TestValidation:
             },
             "entry_throttle": {
                 "max_entries_per_symbol_per_candle": 1,
+                "max_open_positions": 1,
                 "max_entries_per_hour": {"defensive": 2, "range": 3, "trend": 5, "volatile": 3},
                 "default_max_entries_per_hour": 3,
             },
@@ -58,6 +59,12 @@ class TestValidation:
             },
             "strategy_circuit_breaker": {
                 "consecutive_losses_threshold": 4, "pause_minutes": 120,
+            },
+            "performance_gate": {
+                "enabled": True, "recent_hours": 168,
+                "symbol_min_recent_trades": 2, "symbol_max_recent_net_loss": -3.0,
+                "symbol_min_all_time_trades": 10, "symbol_max_all_time_net_loss": -10.0,
+                "strategy_min_recent_trades": 4, "strategy_max_recent_net_loss": -6.0,
             },
         }
         # Apply overrides using dot-path
@@ -103,6 +110,14 @@ class TestValidation:
     def test_string_instead_of_number_rejected(self):
         errs = _validate(self._base_cfg(**{"kill_switch.consecutive_losses_threshold": "six"}))
         assert any("expected" in e for e in errs)
+
+    def test_open_position_limit_rejected(self):
+        errs = _validate(self._base_cfg(**{"entry_throttle.max_open_positions": 0}))
+        assert any("max_open_positions" in e for e in errs)
+
+    def test_performance_gate_loss_threshold_rejected(self):
+        errs = _validate(self._base_cfg(**{"performance_gate.strategy_max_recent_net_loss": 2}))
+        assert any("strategy_max_recent_net_loss" in e for e in errs)
 
 
 # ================================================================

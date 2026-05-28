@@ -1134,7 +1134,7 @@ def update_guardrails_config(body: dict, admin: dict = Depends(require_admin)):
     # Basic structure validation
     required_keys = {"kill_switch", "symbol_cooldown", "trade_gate", "dynamic_score",
                      "entry_throttle", "risk_scaling", "strategy_circuit_breaker",
-                     "stale_position"}
+                     "stale_position", "performance_gate"}
     missing = required_keys - set(body.keys())
     if missing:
         raise HTTPException(400, f"Missing required sections: {', '.join(missing)}")
@@ -1200,6 +1200,7 @@ def reset_guardrails_config(admin: dict = Depends(require_admin)):
         },
         "entry_throttle": {
             "max_entries_per_symbol_per_candle": 1,
+            "max_open_positions": 1,
             "max_entries_per_hour": {"defensive": 2, "range": 3, "trend": 5, "volatile": 3},
             "default_max_entries_per_hour": 3,
         },
@@ -1213,6 +1214,12 @@ def reset_guardrails_config(admin: dict = Depends(require_admin)):
         "stale_position": {
             "enabled": True, "max_holding_hours": 48, "min_loss_pct": 0.5,
             "flat_holding_hours": 72, "flat_abs_pnl_pct": 0.2,
+        },
+        "performance_gate": {
+            "enabled": True, "recent_hours": 168,
+            "symbol_min_recent_trades": 2, "symbol_max_recent_net_loss": -3.0,
+            "symbol_min_all_time_trades": 10, "symbol_max_all_time_net_loss": -10.0,
+            "strategy_min_recent_trades": 4, "strategy_max_recent_net_loss": -6.0,
         },
     }
 
@@ -1301,6 +1308,10 @@ def apply_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
         "dynamic_score.min_score_after_5_losses",
         "dynamic_score.extra_score_in_bad_regime",
         "dynamic_score.max_score_cap",
+        "entry_throttle.max_open_positions",
+        "performance_gate.symbol_max_recent_net_loss",
+        "performance_gate.symbol_max_all_time_net_loss",
+        "performance_gate.strategy_max_recent_net_loss",
     }
     engine = get_engine()
     allowed_strategy_paths = {

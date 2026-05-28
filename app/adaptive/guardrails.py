@@ -75,6 +75,8 @@ class GuardrailStats:
     blocked_dynamic_score: int = 0
     blocked_entry_throttle: int = 0
     blocked_strategy_breaker: int = 0
+    blocked_open_position_limit: int = 0
+    blocked_performance_gate: int = 0
     total_blocked: int = 0
     total_passed: int = 0
 
@@ -86,6 +88,8 @@ class GuardrailStats:
             "blocked_dynamic_score": self.blocked_dynamic_score,
             "blocked_entry_throttle": self.blocked_entry_throttle,
             "blocked_strategy_breaker": self.blocked_strategy_breaker,
+            "blocked_open_position_limit": self.blocked_open_position_limit,
+            "blocked_performance_gate": self.blocked_performance_gate,
             "total_blocked": self.total_blocked,
             "total_passed": self.total_passed,
         }
@@ -98,6 +102,8 @@ class GuardrailStats:
         self.blocked_dynamic_score = 0
         self.blocked_entry_throttle = 0
         self.blocked_strategy_breaker = 0
+        self.blocked_open_position_limit = 0
+        self.blocked_performance_gate = 0
         self.total_blocked = 0
         self.total_passed = 0
 
@@ -709,6 +715,33 @@ class Guardrails:
             "flat_abs_pnl_pct": float(cfg.get("flat_abs_pnl_pct", 0.2)),
         }
 
+    def entry_limit_config(self) -> dict:
+        cfg = self._cfg.get("entry_throttle", {})
+        return {
+            "max_open_positions": int(cfg.get("max_open_positions", 1)),
+        }
+
+    def performance_gate_config(self) -> dict:
+        cfg = self._cfg.get("performance_gate", {})
+        return {
+            "enabled": bool(cfg.get("enabled", True)),
+            "recent_hours": int(cfg.get("recent_hours", 168)),
+            "symbol_min_recent_trades": int(cfg.get("symbol_min_recent_trades", 2)),
+            "symbol_max_recent_net_loss": float(cfg.get("symbol_max_recent_net_loss", -3.0)),
+            "symbol_min_all_time_trades": int(cfg.get("symbol_min_all_time_trades", 10)),
+            "symbol_max_all_time_net_loss": float(cfg.get("symbol_max_all_time_net_loss", -10.0)),
+            "strategy_min_recent_trades": int(cfg.get("strategy_min_recent_trades", 4)),
+            "strategy_max_recent_net_loss": float(cfg.get("strategy_max_recent_net_loss", -6.0)),
+        }
+
+    def record_user_guard_block(self, reason: str):
+        """Track user-level pre-BUY blocks implemented inside the execution layer."""
+        if reason.startswith("max_open_positions"):
+            self.stats.blocked_open_position_limit += 1
+        elif reason.startswith("performance_gate"):
+            self.stats.blocked_performance_gate += 1
+        self.stats.total_blocked += 1
+
     def apply_tuning_change(self, change: dict) -> bool:
         """
         Apply a single tuning change (from LLM advisor) to the in-memory config
@@ -866,6 +899,8 @@ class Guardrails:
             "stats": self.stats.to_dict(),
             "risk_multiplier": self.get_risk_multiplier(),
             "stale_position": self.stale_position_config(),
+            "entry_limits": self.entry_limit_config(),
+            "performance_gate": self.performance_gate_config(),
             "dynamic_score_min": self.dynamic_score.get_min_score(
                 self._perf.get("consecutive_losses", 0),
                 self._perf.get("global_regime", "unknown"),

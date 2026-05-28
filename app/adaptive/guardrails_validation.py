@@ -47,12 +47,26 @@ def validate_guardrails_values(cfg: dict) -> list[str]:
     _check("risk_scaling.consecutive_losses_3_multiplier", rs.get("consecutive_losses_3_multiplier", 0.75), 0.1, 1.0, (int, float))
     _check("risk_scaling.consecutive_losses_5_multiplier", rs.get("consecutive_losses_5_multiplier", 0.50), 0.1, 1.0, (int, float))
 
+    # Entry limits
+    et = cfg.get("entry_throttle", {})
+    _check("entry_throttle.max_open_positions", et.get("max_open_positions", 1), 1, 20, (int,))
+
     # Stale position exit
     sp = cfg.get("stale_position", {})
     _check("stale_position.max_holding_hours", sp.get("max_holding_hours", 48), 1, 24 * 14, (int, float))
     _check("stale_position.min_loss_pct", sp.get("min_loss_pct", 0.5), 0, 20, (int, float))
     _check("stale_position.flat_holding_hours", sp.get("flat_holding_hours", 72), 1, 24 * 21, (int, float))
     _check("stale_position.flat_abs_pnl_pct", sp.get("flat_abs_pnl_pct", 0.2), 0, 5, (int, float))
+
+    # Performance gate
+    pg = cfg.get("performance_gate", {})
+    _check("performance_gate.recent_hours", pg.get("recent_hours", 168), 1, 24 * 30, (int,))
+    _check("performance_gate.symbol_min_recent_trades", pg.get("symbol_min_recent_trades", 2), 1, 100, (int,))
+    _check("performance_gate.symbol_max_recent_net_loss", pg.get("symbol_max_recent_net_loss", -3.0), -500, 0, (int, float))
+    _check("performance_gate.symbol_min_all_time_trades", pg.get("symbol_min_all_time_trades", 10), 1, 1000, (int,))
+    _check("performance_gate.symbol_max_all_time_net_loss", pg.get("symbol_max_all_time_net_loss", -10.0), -1000, 0, (int, float))
+    _check("performance_gate.strategy_min_recent_trades", pg.get("strategy_min_recent_trades", 4), 1, 100, (int,))
+    _check("performance_gate.strategy_max_recent_net_loss", pg.get("strategy_max_recent_net_loss", -6.0), -500, 0, (int, float))
 
     return errors
 
