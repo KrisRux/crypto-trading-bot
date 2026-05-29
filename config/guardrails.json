@@ -87,5 +87,11 @@
     "symbol_max_all_time_net_loss": -10.0,
     "strategy_min_recent_trades": 4,
     "strategy_max_recent_net_loss": -6.0
+  },
+  "paper_short": {
+    "enabled": true,
+    "min_sell_score": 85,
+    "require_bearish_news": false,
+    "max_open_shorts": 1
   }
 }

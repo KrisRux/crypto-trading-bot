@@ -144,6 +144,99 @@ class TradingEngine:
             return f"stale_position_flat age={age_hours:.1f}h pnl={pnl_pct:.2f}%"
         return None
 
+    def _short_close_reason(
+        self,
+        trade: Trade,
+        current_price: float,
+        candle_high: float | None = None,
+        candle_low: float | None = None,
+    ) -> str | None:
+        high = candle_high if candle_high is not None else current_price
+        low = candle_low if candle_low is not None else current_price
+        if trade.take_profit and (low <= trade.take_profit or current_price <= trade.take_profit):
+            return "tp"
+        if trade.stop_loss and (high >= trade.stop_loss or current_price >= trade.stop_loss):
+            return "sl"
+        return None
+
+    def _sell_signal_score(self, signal: Signal) -> float:
+        meta = signal.metadata or {}
+        if "sell_score" in meta:
+            return float(meta["sell_score"])
+        return float(signal.confidence or 0) * 100
+
+    def _paper_short_allowed(self, db: Session, user: User, signal: Signal) -> tuple[bool, str]:
+        cfg = self.guardrails.paper_short_config()
+        if not cfg.get("enabled", True):
+            return False, "paper_short_disabled"
+        score = self._sell_signal_score(signal)
+        if score < cfg["min_sell_score"]:
+            return False, f"sell_score {score:.0f} < {cfg['min_sell_score']:.0f}"
+        if cfg.get("require_bearish_news", False):
+            blocked, reason = self._is_deeply_bearish_market()
+            if not blocked:
+                return False, f"bearish_news_required {reason}".strip()
+        open_shorts = db.query(Trade).filter(
+            Trade.user_id == user.id,
+            Trade.mode == "paper",
+            Trade.status == TradeStatus.OPEN,
+            Trade.side == OrderSide.SELL,
+        ).count()
+        if open_shorts >= cfg["max_open_shorts"]:
+            return False, f"max_open_shorts {open_shorts}/{cfg['max_open_shorts']}"
+        reason = self._pre_buy_user_guard_reason(db, user, "paper", signal.symbol, signal.strategy_name)
+        if reason and reason.startswith("max_open_positions"):
+            return False, reason
+        return True, f"sell_score={score:.0f}"
+
+    def _try_open_paper_short(
+        self,
+        db: Session,
+        user: User,
+        signal: Signal,
+        current_price: float,
+        context: str,
+    ) -> bool:
+        allowed, reason = self._paper_short_allowed(db, user, signal)
+        if not allowed:
+            logger.info(
+                "PAPER_SHORT: skipped %s | %s [user=%d %s]",
+                signal.symbol, reason, user.id, context,
+            )
+            return False
+
+        portfolio = self.paper_portfolio.get_or_create(
+            db, user.id, user.paper_initial_capital
+        )
+        base_qty = self.risk_manager.calculate_position_size(portfolio.cash_balance, current_price)
+        risk_mult = self.guardrails.get_risk_multiplier()
+        qty = self._round_qty(signal.symbol, base_qty * risk_mult)
+        if qty <= 0:
+            return False
+        valid, qty_reason = self._validate_qty(signal.symbol, qty, current_price)
+        if not valid:
+            logger.info(
+                "PAPER_SHORT: skipped %s | %s [user=%d %s]",
+                signal.symbol, qty_reason, user.id, context,
+            )
+            return False
+
+        sl = self._round_price(signal.symbol, current_price * (1 + self.risk_manager.default_sl_pct / 100))
+        tp = self._round_price(signal.symbol, current_price * (1 - self.risk_manager.default_tp_pct / 100))
+        opened = self.paper_portfolio.open_position(
+            db, user.id, signal.symbol, qty, current_price, sl, tp,
+            side=OrderSide.SELL, strategy=signal.strategy_name,
+        )
+        if not opened:
+            return False
+        self._last_trade_time[(user.id, signal.symbol)] = datetime.now(timezone.utc)
+        self.guardrails.entry_throttle.record_entry(signal.symbol, user_id=user.id)
+        logger.info(
+            "User %d [paper/short]: SELL %s qty=%.6f @ %.2f SL=%.2f TP=%.2f (%s)",
+            user.id, signal.symbol, qty, current_price, sl, tp, reason,
+        )
+        return True
+
     def _estimated_trade_net_pnl(self, trade: Trade) -> float:
         entry_notional = (trade.entry_price or 0) * (trade.quantity or 0)
         exit_price = trade.exit_price if trade.exit_price is not None else trade.entry_price
@@ -667,6 +760,25 @@ class TradingEngine:
             Trade.symbol == symbol,
         ).all()
         for trade in open_trades:
+            if trade.side == OrderSide.SELL:
+                result = self._short_close_reason(
+                    trade, current_price, candle_high=candle_high, candle_low=candle_low
+                )
+                if not result:
+                    result = self._stale_position_reason(trade, current_price)
+                if result:
+                    position = db.query(PaperPosition).filter(
+                        PaperPosition.user_id == user.id,
+                        PaperPosition.symbol == symbol,
+                        PaperPosition.side == "SELL",
+                    ).first()
+                    if position:
+                        self.paper_portfolio.close_position(db, position, current_price, result)
+                        db.refresh(trade)
+                        if trade.status == TradeStatus.CLOSED:
+                            self._record_trade_close(trade, result)
+                continue
+
             result = self.risk_manager.should_close_position(
                 trade.entry_price, current_price, trade.stop_loss, trade.take_profit,
                 candle_high=candle_high, candle_low=candle_low,
@@ -701,6 +813,17 @@ class TradingEngine:
                     Trade.symbol == symbol,
                 ).first()
                 if existing:
+                    if existing.side == OrderSide.SELL:
+                        position = db.query(PaperPosition).filter(
+                            PaperPosition.user_id == user.id,
+                            PaperPosition.symbol == symbol,
+                            PaperPosition.side == "SELL",
+                        ).first()
+                        if position:
+                            self.paper_portfolio.close_position(db, position, current_price, "signal_buy")
+                            db.refresh(existing)
+                            if existing.status == TradeStatus.CLOSED:
+                                self._record_trade_close(existing, "signal_buy")
                     return
 
                 cooldown_key = (user.id, symbol)
@@ -779,8 +902,13 @@ class TradingEngine:
                     Trade.symbol == symbol,
                 ).all()
                 if not open_trades:
-                    logger.info("User %d [paper/testnet]: SELL %s — no open positions", user.id, symbol)
+                    self._try_open_paper_short(
+                        db, user, sell_signals[0], current_price, "paper/testnet-sim-short"
+                    )
+                    return
                 for trade in open_trades:
+                    if trade.side == OrderSide.SELL:
+                        continue
                     await self._close_trade(db, user, trade, current_price, "signal_sell",
                                             client, order_mgr)
         except Exception:
@@ -860,6 +988,17 @@ class TradingEngine:
         if buy_signals:
             existing = next(iter(open_trades_sim), None)
             if existing:
+                if existing.side == OrderSide.SELL:
+                    position = db.query(PaperPosition).filter(
+                        PaperPosition.user_id == user.id,
+                        PaperPosition.symbol == symbol,
+                        PaperPosition.side == "SELL",
+                    ).first()
+                    if position:
+                        self.paper_portfolio.close_position(db, position, current_price, "signal_buy")
+                        db.refresh(existing)
+                        if existing.status == TradeStatus.CLOSED:
+                            self._record_trade_close(existing, "signal_buy")
                 return
 
             cooldown_key = (user.id, symbol)
@@ -916,9 +1055,23 @@ class TradingEngine:
                 Trade.mode == "paper",
                 Trade.symbol == symbol,
             ).all()
-            self.paper_portfolio.close_all_positions(db, user.id, symbol, current_price)
+            if not open_before_close:
+                self._try_open_paper_short(
+                    db, user, sell_signals[0], current_price, "paper/sim-short"
+                )
+                return
+
+            long_positions = db.query(PaperPosition).filter(
+                PaperPosition.user_id == user.id,
+                PaperPosition.symbol == symbol,
+                PaperPosition.side == "BUY",
+            ).all()
+            for position in long_positions:
+                self.paper_portfolio.close_position(db, position, current_price, "signal_sell")
             # Record results in guardrails
             for t in open_before_close:
+                if t.side == OrderSide.SELL:
+                    continue
                 db.refresh(t)  # re-read after close_all_positions committed
                 if t.status == TradeStatus.CLOSED:
                     self._record_trade_close(t, "signal_sell")

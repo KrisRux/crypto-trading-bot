@@ -12,6 +12,8 @@ const postureClass: Record<string, string> = {
 
 const actionClass: Record<string, string> = {
   ATTACK: 'bg-emerald-900/60 text-emerald-300',
+  SHORT_ATTACK: 'bg-red-900/60 text-red-300',
+  SHORT_WATCH: 'bg-orange-900/60 text-orange-300',
   WATCH_BREAKOUT: 'bg-blue-900/60 text-blue-300',
   WATCH_REVERSAL: 'bg-yellow-900/60 text-yellow-300',
   HOLD_MANAGE: 'bg-purple-900/60 text-purple-300',
@@ -42,6 +44,7 @@ function OpportunityRow({ item }: { item: OpportunityItem }) {
       <td className="py-3 px-3">
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm font-semibold text-white">{item.symbol}</span>
+          <span className={`text-[10px] px-1.5 py-0.5 rounded ${item.side === 'SHORT' ? 'bg-red-950 text-red-300' : 'bg-emerald-950 text-emerald-300'}`}>{item.side}</span>
           {!item.active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">off</span>}
         </div>
         <SetupLabel item={item} />
@@ -51,7 +54,7 @@ function OpportunityRow({ item }: { item: OpportunityItem }) {
       </td>
       <td className="py-3 px-3">
         <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${actionClass[item.action] || actionClass.AVOID}`}>
-          {item.action.replace('WATCH_', 'WATCH ')}
+          {item.action.replace(/_/g, ' ')}
         </span>
       </td>
       <td className="py-3 px-3 text-xs text-gray-300">
@@ -97,7 +100,7 @@ export default function Opportunities() {
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-white">Opportunity Scanner</h2>
-          <p className="text-sm text-gray-500">{l('Ranking operativo delle occasioni long spot', 'Operational ranking of spot-long opportunities')}</p>
+          <p className="text-sm text-gray-500">{l('Ranking operativo delle occasioni long e short paper', 'Operational ranking of long and paper-short opportunities')}</p>
         </div>
         {data && (
           <div className={`inline-flex items-center gap-2 border rounded-lg px-3 py-2 ${postureClass[data.posture] || postureClass.WAIT}`}>
@@ -116,7 +119,7 @@ export default function Opportunities() {
           <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
             <div className="text-xs text-gray-500 mb-1">Top Symbol</div>
             <div className="text-xl font-mono font-semibold text-white">{data.top_symbol || '-'}</div>
-            {top && <div className="text-xs text-gray-500">{top.action.replace('_', ' ')}</div>}
+            {top && <div className="text-xs text-gray-500">{top.action.replace(/_/g, ' ')}</div>}
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
             <div className="text-xs text-gray-500 mb-1">News</div>

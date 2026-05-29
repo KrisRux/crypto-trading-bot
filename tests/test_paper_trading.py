@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
-from app.models.trade import Trade, Order
+from app.models.trade import Trade, Order, OrderSide
 from app.models.portfolio import PaperPortfolio, PaperPosition
 from app.models.user import User, hash_password
 from app.paper_trading.portfolio import PaperPortfolioManager
@@ -113,6 +113,43 @@ def test_close_position_loss(db_session, manager):
     assert portfolio.total_pnl == pytest.approx(expected_pnl)
     assert portfolio.winning_trades == 0
     assert portfolio.losing_trades == 1
+
+
+def test_close_short_position_profit(db_session, manager):
+    manager.get_or_create(db_session, TEST_USER_ID)
+    pos = manager.open_position(
+        db_session, TEST_USER_ID, "BTCUSDT", 0.1, 50000, 51500, 47500,
+        side=OrderSide.SELL,
+    )
+    assert pos is not None
+
+    manager.close_position(db_session, pos, 48000, "take_profit")
+
+    portfolio = manager.get_or_create(db_session, TEST_USER_ID)
+    expected_pnl = (50000 - 48000) * 0.1
+    assert portfolio.total_pnl == pytest.approx(expected_pnl)
+    assert portfolio.winning_trades == 1
+    assert portfolio.losing_trades == 0
+
+
+def test_short_position_tp_sl_are_inverted(db_session, manager):
+    manager.get_or_create(db_session, TEST_USER_ID)
+    manager.open_position(
+        db_session, TEST_USER_ID, "BTCUSDT", 0.1, 50000, 51500, 47500,
+        side=OrderSide.SELL,
+    )
+
+    closed = manager.check_tp_sl_symbol(db_session, TEST_USER_ID, "BTCUSDT", 47400)
+    assert len(closed) == 1
+    assert closed[0][1] == "take_profit"
+
+    manager.open_position(
+        db_session, TEST_USER_ID, "ETHUSDT", 1, 3000, 3090, 2850,
+        side=OrderSide.SELL,
+    )
+    closed = manager.check_tp_sl_symbol(db_session, TEST_USER_ID, "ETHUSDT", 3100)
+    assert len(closed) == 1
+    assert closed[0][1] == "stop_loss"
 
 
 def test_paper_trading_deducts_fee_and_slippage(db_session):

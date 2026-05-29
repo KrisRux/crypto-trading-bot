@@ -68,6 +68,11 @@ def validate_guardrails_values(cfg: dict) -> list[str]:
     _check("performance_gate.strategy_min_recent_trades", pg.get("strategy_min_recent_trades", 4), 1, 100, (int,))
     _check("performance_gate.strategy_max_recent_net_loss", pg.get("strategy_max_recent_net_loss", -6.0), -500, 0, (int, float))
 
+    # Paper short simulation
+    ps = cfg.get("paper_short", {})
+    _check("paper_short.min_sell_score", ps.get("min_sell_score", 85), 50, 100, (int, float))
+    _check("paper_short.max_open_shorts", ps.get("max_open_shorts", 1), 1, 20, (int,))
+
     return errors
 
 

@@ -210,7 +210,7 @@ export interface OpportunityItem {
   symbol: string
   side: string
   score: number
-  action: 'ATTACK' | 'WATCH_BREAKOUT' | 'WATCH_REVERSAL' | 'HOLD_MANAGE' | 'AVOID'
+  action: 'ATTACK' | 'SHORT_ATTACK' | 'SHORT_WATCH' | 'WATCH_BREAKOUT' | 'WATCH_REVERSAL' | 'HOLD_MANAGE' | 'AVOID'
   setup: string
   active: boolean
   position_open: boolean

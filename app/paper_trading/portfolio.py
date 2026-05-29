@@ -51,9 +51,11 @@ class PaperPortfolioManager:
 
     def open_position(self, db: Session, user_id: int, symbol: str,
                       quantity: float, price: float,
-                      stop_loss: float, take_profit: float):
+                      stop_loss: float, take_profit: float,
+                      side: OrderSide = OrderSide.BUY,
+                      strategy: str = "paper"):
         portfolio = self.get_or_create(db, user_id)
-        fill_price = self._apply_slippage(price, OrderSide.BUY)
+        fill_price = self._apply_slippage(price, side)
         cost = quantity * fill_price
         fee = self._fee(cost)
         total_cost = cost + fee
@@ -64,7 +66,7 @@ class PaperPortfolioManager:
             return None
 
         order = Order(
-            user_id=user_id, symbol=symbol, side=OrderSide.BUY,
+            user_id=user_id, symbol=symbol, side=side,
             order_type=OrderType.MARKET, quantity=quantity,
             filled_price=fill_price, status=OrderStatus.FILLED, mode="paper",
         )
@@ -73,16 +75,16 @@ class PaperPortfolioManager:
 
         position = PaperPosition(
             portfolio_id=portfolio.id, user_id=user_id, symbol=symbol,
-            side="BUY", quantity=quantity, entry_price=fill_price,
+            side=side.value, quantity=quantity, entry_price=fill_price,
             current_price=fill_price, stop_loss=stop_loss, take_profit=take_profit,
         )
         db.add(position)
 
         trade = Trade(
-            user_id=user_id, symbol=symbol, side=OrderSide.BUY,
+            user_id=user_id, symbol=symbol, side=side,
             entry_price=fill_price, quantity=quantity, stop_loss=stop_loss,
             take_profit=take_profit, status=TradeStatus.OPEN,
-            mode="paper", strategy="paper", entry_order_id=order.id,
+            mode="paper", strategy=strategy, entry_order_id=order.id,
         )
         db.add(trade)
 
@@ -91,8 +93,8 @@ class PaperPortfolioManager:
         portfolio.total_trades += 1
         db.commit()
 
-        logger.info("User %d: Paper BUY %s qty=%.6f @ %.2f fee=%.4f",
-                     user_id, symbol, quantity, fill_price, fee)
+        logger.info("User %d: Paper %s %s qty=%.6f @ %.2f fee=%.4f",
+                     user_id, side.value, symbol, quantity, fill_price, fee)
         return position
 
     def close_position(self, db: Session, position: PaperPosition,
@@ -103,18 +105,25 @@ class PaperPortfolioManager:
         if not portfolio:
             return
 
-        fill_price = self._apply_slippage(exit_price, OrderSide.SELL)
+        entry_side = OrderSide.SELL if position.side == "SELL" else OrderSide.BUY
+        exit_side = OrderSide.BUY if entry_side == OrderSide.SELL else OrderSide.SELL
+        fill_price = self._apply_slippage(exit_price, exit_side)
         proceeds = position.quantity * fill_price
         exit_fee = self._fee(proceeds)
-        net_proceeds = proceeds - exit_fee
         cost = position.quantity * position.entry_price
         entry_fee = self._fee(cost)
-        pnl = net_proceeds - cost - entry_fee
+        if entry_side == OrderSide.SELL:
+            pnl = cost - proceeds - entry_fee - exit_fee
+            cash_delta = cost + entry_fee + pnl
+        else:
+            net_proceeds = proceeds - exit_fee
+            pnl = net_proceeds - cost - entry_fee
+            cash_delta = net_proceeds
         pnl_pct = (pnl / (cost + entry_fee)) * 100 if cost > 0 else 0
 
         order = Order(
             user_id=position.user_id, symbol=position.symbol,
-            side=OrderSide.SELL, order_type=OrderType.MARKET,
+            side=exit_side, order_type=OrderType.MARKET,
             quantity=position.quantity, filled_price=fill_price,
             status=OrderStatus.FILLED, mode="paper",
         )
@@ -126,6 +135,7 @@ class PaperPortfolioManager:
             Trade.symbol == position.symbol,
             Trade.status == TradeStatus.OPEN,
             Trade.mode == "paper",
+            Trade.side == entry_side,
         ).first()
         if open_trade:
             open_trade.exit_price = fill_price
@@ -135,7 +145,7 @@ class PaperPortfolioManager:
             open_trade.exit_order_id = order.id
             open_trade.closed_at = datetime.now(timezone.utc)
 
-        portfolio.cash_balance += net_proceeds
+        portfolio.cash_balance += cash_delta
         portfolio.total_pnl += pnl
         if pnl > 0:
             portfolio.winning_trades += 1
@@ -145,8 +155,8 @@ class PaperPortfolioManager:
         db.delete(position)
         db.commit()
 
-        logger.info("User %d: Paper SELL (%s) %s qty=%.6f @ %.2f fee=%.4f PnL=%.2f",
-                     position.user_id, reason, position.symbol,
+        logger.info("User %d: Paper close %s (%s) %s qty=%.6f @ %.2f fee=%.4f PnL=%.2f",
+                     position.user_id, position.side, reason, position.symbol,
                      position.quantity, fill_price, exit_fee, pnl)
 
     def close_all_positions(self, db: Session, user_id: int,
@@ -174,14 +184,22 @@ class PaperPortfolioManager:
         closed = []
         for pos in positions:
             pos.current_price = current_price
-            pos.unrealized_pnl = (current_price - pos.entry_price) * pos.quantity
-
-            if pos.take_profit and (high >= pos.take_profit or current_price >= pos.take_profit):
-                self.close_position(db, pos, current_price, "take_profit")
-                closed.append((pos, "take_profit"))
-            elif pos.stop_loss and (low <= pos.stop_loss or current_price <= pos.stop_loss):
-                self.close_position(db, pos, current_price, "stop_loss")
-                closed.append((pos, "stop_loss"))
+            if pos.side == "SELL":
+                pos.unrealized_pnl = (pos.entry_price - current_price) * pos.quantity
+                if pos.take_profit and (low <= pos.take_profit or current_price <= pos.take_profit):
+                    self.close_position(db, pos, current_price, "take_profit")
+                    closed.append((pos, "take_profit"))
+                elif pos.stop_loss and (high >= pos.stop_loss or current_price >= pos.stop_loss):
+                    self.close_position(db, pos, current_price, "stop_loss")
+                    closed.append((pos, "stop_loss"))
+            else:
+                pos.unrealized_pnl = (current_price - pos.entry_price) * pos.quantity
+                if pos.take_profit and (high >= pos.take_profit or current_price >= pos.take_profit):
+                    self.close_position(db, pos, current_price, "take_profit")
+                    closed.append((pos, "take_profit"))
+                elif pos.stop_loss and (low <= pos.stop_loss or current_price <= pos.stop_loss):
+                    self.close_position(db, pos, current_price, "stop_loss")
+                    closed.append((pos, "stop_loss"))
 
         if not closed:
             db.commit()

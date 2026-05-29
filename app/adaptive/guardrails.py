@@ -734,6 +734,15 @@ class Guardrails:
             "strategy_max_recent_net_loss": float(cfg.get("strategy_max_recent_net_loss", -6.0)),
         }
 
+    def paper_short_config(self) -> dict:
+        cfg = self._cfg.get("paper_short", {})
+        return {
+            "enabled": bool(cfg.get("enabled", True)),
+            "min_sell_score": float(cfg.get("min_sell_score", 85)),
+            "require_bearish_news": bool(cfg.get("require_bearish_news", False)),
+            "max_open_shorts": int(cfg.get("max_open_shorts", 1)),
+        }
+
     def record_user_guard_block(self, reason: str):
         """Track user-level pre-BUY blocks implemented inside the execution layer."""
         if reason.startswith("max_open_positions"):
@@ -901,6 +910,7 @@ class Guardrails:
             "stale_position": self.stale_position_config(),
             "entry_limits": self.entry_limit_config(),
             "performance_gate": self.performance_gate_config(),
+            "paper_short": self.paper_short_config(),
             "dynamic_score_min": self.dynamic_score.get_min_score(
                 self._perf.get("consecutive_losses", 0),
                 self._perf.get("global_regime", "unknown"),

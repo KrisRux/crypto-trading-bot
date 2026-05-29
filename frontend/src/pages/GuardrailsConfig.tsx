@@ -159,6 +159,16 @@ const SECTIONS: SectionDef[] = [
       { key: 'strategy_max_recent_net_loss', label: 'Strategy Recent Net Loss', hint: 'Block strategy when recent net PnL is at or below this', min: -500, max: 0, step: 0.5 },
     ],
   },
+  {
+    id: 'paper_short', title: 'Paper Short Simulation', icon: 'S',
+    path: ['paper_short'],
+    fields: [
+      { key: 'enabled', label: 'Enabled', hint: 'Open simulated paper shorts from strong SELL signals', type: 'boolean' },
+      { key: 'min_sell_score', label: 'Min SELL Score', hint: 'Minimum SELL score required to open a simulated short', min: 50, max: 100, step: 1 },
+      { key: 'require_bearish_news', label: 'Require Bearish News', hint: 'Only short when news sentiment is bearish', type: 'boolean' },
+      { key: 'max_open_shorts', label: 'Max Open Shorts', hint: 'Maximum simultaneous simulated shorts', min: 1, max: 20, step: 1, type: 'integer' },
+    ],
+  },
 ]
 
 /* presets */

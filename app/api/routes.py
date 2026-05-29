@@ -10,7 +10,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.trade import Trade, Order, TradeStatus
+from app.models.trade import Trade, Order, TradeStatus, OrderSide
 from app.models.portfolio import PaperPortfolio, PaperPosition
 from app.api.schemas import (
     BalanceResponse, PositionResponse,
@@ -360,6 +360,141 @@ def _score_long_opportunity(
     }
 
 
+def _score_short_opportunity(
+    *,
+    symbol: str,
+    active: bool,
+    position_open: bool,
+    snap: dict | None,
+    perf_24h: dict | None,
+    perf_7d: dict | None,
+    perf_all_time: dict | None,
+    news: dict | None,
+) -> dict:
+    score = 0.0
+    reasons: list[str] = []
+    blockers: list[str] = []
+
+    regime = str((snap or {}).get("regime") or "unknown")
+    adx = float((snap or {}).get("adx") or 0)
+    volume_ratio = float((snap or {}).get("volume_ratio") or 0)
+    atr_pct = float((snap or {}).get("atr_pct") or 0)
+    bb_width_pct = float((snap or {}).get("bb_width_pct") or 0)
+
+    if active:
+        score += 8
+    else:
+        blockers.append("symbol_not_enabled")
+    if position_open:
+        blockers.append("position_already_open")
+
+    if regime == "trend":
+        score += 20
+        reasons.append("trend regime supports directional short test")
+    elif regime == "defensive":
+        score += 14
+        reasons.append("defensive regime")
+    elif regime == "range":
+        score += 4
+        reasons.append("range regime: short only at extremes")
+    else:
+        blockers.append("regime_unknown")
+
+    if adx >= 45:
+        score += 20
+        reasons.append(f"strong downside-momentum ADX {adx:.1f}")
+    elif adx >= 30:
+        score += 14
+        reasons.append(f"tradable ADX {adx:.1f}")
+    elif adx >= 20:
+        score += 5
+    else:
+        blockers.append(f"weak_adx {adx:.1f}")
+
+    if volume_ratio >= 1.4:
+        score += 18
+        reasons.append(f"volume expansion {volume_ratio:.2f}x")
+    elif volume_ratio >= 1.0:
+        score += 10
+        reasons.append(f"healthy volume {volume_ratio:.2f}x")
+    elif volume_ratio < 0.7:
+        score -= 8
+        blockers.append(f"low_volume {volume_ratio:.2f}x")
+
+    if 0.3 <= atr_pct <= 2.5:
+        score += 8
+        reasons.append(f"tradable ATR {atr_pct:.2f}%")
+    elif atr_pct > 3.2:
+        score -= 8
+        blockers.append(f"excessive_atr {atr_pct:.2f}%")
+
+    if bb_width_pct >= 2.5:
+        score += 6
+        reasons.append(f"wide bands {bb_width_pct:.2f}%")
+
+    recent = perf_7d or {}
+    recent_trades = int(recent.get("trades") or 0)
+    recent_net = float(recent.get("estimated_net_pnl") or 0)
+    recent_wr = float(recent.get("win_rate") or 0)
+    if recent_trades >= 2 and recent_net <= -3:
+        score += min(16, 6 + abs(recent_net))
+        reasons.append(f"long edge failed 7d {recent_net:.2f}")
+    elif recent_trades >= 2 and recent_net > 2:
+        score -= 10
+        blockers.append(f"long edge still works {recent_net:.2f}")
+
+    all_time = perf_all_time or {}
+    all_trades = int(all_time.get("trades") or 0)
+    all_net = float(all_time.get("estimated_net_pnl") or 0)
+    if all_trades >= 10 and all_net <= -10:
+        score += 8
+        reasons.append(f"historical long weakness {all_net:.2f}")
+
+    fear_greed = int((news or {}).get("fear_greed_value") or 50)
+    news_score = float((news or {}).get("score") or 0)
+    news_label = str((news or {}).get("label") or "unknown")
+    if news_score < -0.08 or fear_greed < 30:
+        score += 18
+        reasons.append(f"bearish macro {news_label} F&G={fear_greed}")
+    elif news_score > 0.12 and fear_greed >= 45:
+        score -= 12
+        blockers.append("supportive_macro")
+
+    score = max(0, min(100, round(score, 1)))
+    if position_open:
+        action = "HOLD_MANAGE"
+        setup = "manage_open_position"
+    elif score >= 75 and len(blockers) <= 1:
+        action = "SHORT_ATTACK"
+        setup = "paper_momentum_short"
+    elif score >= 58 and len(blockers) <= 2:
+        action = "SHORT_WATCH"
+        setup = "paper_short_watch"
+    else:
+        action = "AVOID"
+        setup = "no_short_edge"
+
+    return {
+        "symbol": symbol,
+        "side": "SHORT",
+        "score": score,
+        "action": action,
+        "setup": setup,
+        "active": active,
+        "position_open": position_open,
+        "regime": regime,
+        "adx": round(adx, 2),
+        "volume_ratio": round(volume_ratio, 2),
+        "atr_pct": round(atr_pct, 3),
+        "bb_width_pct": round(bb_width_pct, 3),
+        "recent_net_pnl": round(recent_net, 6),
+        "recent_win_rate": round(recent_wr, 2),
+        "all_time_net_pnl": round(all_net, 6),
+        "reasons": reasons[:5],
+        "blockers": blockers[:5],
+    }
+
+
 def _mark_to_market_for_user(db: Session, user: User, hours: int | None = None) -> dict:
     engine = get_engine()
     user_mode = user.trading_mode or "paper"
@@ -379,7 +514,10 @@ def _mark_to_market_for_user(db: Session, user: User, hours: int | None = None) 
         current_price = engine.last_prices.get(trade.symbol) or trade.entry_price or 0
         entry_notional = (trade.entry_price or 0) * (trade.quantity or 0)
         exit_notional = current_price * (trade.quantity or 0)
-        gross = (current_price - (trade.entry_price or current_price)) * (trade.quantity or 0)
+        if trade.side == OrderSide.SELL:
+            gross = ((trade.entry_price or current_price) - current_price) * (trade.quantity or 0)
+        else:
+            gross = (current_price - (trade.entry_price or current_price)) * (trade.quantity or 0)
         fees = (entry_notional + exit_notional) * (settings.paper_fee_pct / 100)
         slippage = (entry_notional + exit_notional) * (settings.paper_slippage_pct / 100)
         cost = fees + slippage
@@ -400,6 +538,7 @@ def _mark_to_market_for_user(db: Session, user: User, hours: int | None = None) 
             "entry_price": trade.entry_price,
             "current_price": current_price,
             "quantity": trade.quantity,
+            "side": trade.side.value,
             "age_hours": round(age_hours, 2),
             "gross_pnl": round(gross, 6),
             "estimated_roundtrip_cost": round(cost, 6),
@@ -744,16 +883,28 @@ async def get_positions(db: Session = Depends(get_db), user_info: dict = Depends
         cp = engine.last_prices.get(t.symbol, 0)
         entry_notional = t.entry_price * t.quantity
         if cp and user_mode == "paper":
-            exit_price = cp * (1 - settings.paper_slippage_pct / 100)
+            is_short = t.side == OrderSide.SELL
+            exit_price = cp * (
+                1 + settings.paper_slippage_pct / 100
+                if is_short else
+                1 - settings.paper_slippage_pct / 100
+            )
             exit_notional = exit_price * t.quantity
             entry_fee = entry_notional * (settings.paper_fee_pct / 100)
             exit_fee = exit_notional * (settings.paper_fee_pct / 100)
-            upnl = exit_notional - exit_fee - entry_notional - entry_fee
+            if is_short:
+                upnl = entry_notional - entry_fee - exit_notional - exit_fee
+            else:
+                upnl = exit_notional - exit_fee - entry_notional - entry_fee
             upnl_pct = (upnl / (entry_notional + entry_fee) * 100) if entry_notional else 0
-            pos_value = exit_notional - exit_fee
+            pos_value = exit_notional + exit_fee if is_short else exit_notional - exit_fee
         else:
-            upnl = (cp - t.entry_price) * t.quantity if cp else 0
-            upnl_pct = ((cp - t.entry_price) / t.entry_price * 100) if (cp and t.entry_price) else 0
+            if t.side == OrderSide.SELL:
+                upnl = (t.entry_price - cp) * t.quantity if cp else 0
+                upnl_pct = ((t.entry_price - cp) / t.entry_price * 100) if (cp and t.entry_price) else 0
+            else:
+                upnl = (cp - t.entry_price) * t.quantity if cp else 0
+                upnl_pct = ((cp - t.entry_price) / t.entry_price * 100) if (cp and t.entry_price) else 0
             pos_value = cp * t.quantity if cp else entry_notional
         result.append(PositionResponse(
             id=t.id, symbol=t.symbol, side=t.side.value,
@@ -807,16 +958,35 @@ async def close_position_manual(
             await client.close()
 
     elif user_mode == "paper" and user.has_api_keys(live=False):
-        client = BinanceRestClient(
-            api_key=user.get_api_key(live=False),
-            api_secret=user.get_api_secret(live=False),
-            testnet=True,
-        )
-        order_mgr = OrderManager(client, mode="paper")
-        try:
-            await engine._close_trade(db, user, trade, current_price, "manual_close", client, order_mgr)
-        finally:
-            await client.close()
+        if trade.side == OrderSide.SELL:
+            position = db.query(PaperPosition).filter(
+                PaperPosition.user_id == user.id,
+                PaperPosition.symbol == trade.symbol,
+                PaperPosition.side == "SELL",
+            ).first()
+            if position:
+                engine.paper_portfolio.close_position(db, position, current_price, "manual_close")
+            else:
+                entry_notional = trade.entry_price * trade.quantity
+                exit_notional = current_price * trade.quantity
+                fees = (entry_notional + exit_notional) * (settings.paper_fee_pct / 100)
+                trade.exit_price = current_price
+                trade.pnl = entry_notional - exit_notional - fees
+                trade.pnl_pct = (trade.pnl / entry_notional) * 100 if entry_notional else 0
+                trade.status = TradeStatus.CLOSED
+                trade.closed_at = datetime.now(timezone.utc)
+                db.commit()
+        else:
+            client = BinanceRestClient(
+                api_key=user.get_api_key(live=False),
+                api_secret=user.get_api_secret(live=False),
+                testnet=True,
+            )
+            order_mgr = OrderManager(client, mode="paper")
+            try:
+                await engine._close_trade(db, user, trade, current_price, "manual_close", client, order_mgr)
+            finally:
+                await client.close()
 
     else:
         # Paper simulation — close via portfolio manager
@@ -827,9 +997,17 @@ async def close_position_manual(
         if position:
             engine.paper_portfolio.close_position(db, position, current_price, "manual_close")
         else:
+            if trade.side == OrderSide.SELL:
+                entry_notional = trade.entry_price * trade.quantity
+                exit_notional = current_price * trade.quantity
+                fees = (entry_notional + exit_notional) * (settings.paper_fee_pct / 100)
+                trade.exit_price = current_price
+                trade.pnl = entry_notional - exit_notional - fees
+                trade.pnl_pct = (trade.pnl / entry_notional) * 100 if entry_notional else 0
+            else:
+                trade.pnl = (current_price - trade.entry_price) * trade.quantity
+                trade.pnl_pct = ((current_price - trade.entry_price) / trade.entry_price) * 100
             trade.exit_price = current_price
-            trade.pnl = (current_price - trade.entry_price) * trade.quantity
-            trade.pnl_pct = ((current_price - trade.entry_price) / trade.entry_price) * 100
             trade.status = TradeStatus.CLOSED
             trade.closed_at = datetime.now(timezone.utc)
             db.commit()
@@ -1146,7 +1324,7 @@ async def opportunities(db: Session = Depends(get_db), user_info: dict = Depends
             except Exception as exc:
                 logger.warning("Opportunity scan unavailable for %s: %s", symbol, exc)
 
-        row = _score_long_opportunity(
+        common = dict(
             symbol=symbol,
             active=symbol in active_symbols,
             position_open=symbol in open_symbols,
@@ -1156,13 +1334,17 @@ async def opportunities(db: Session = Depends(get_db), user_info: dict = Depends
             perf_all_time=perf_all.get("by_symbol", {}).get(symbol),
             news=news_snapshot,
         )
+        long_row = _score_long_opportunity(**common)
+        short_row = _score_short_opportunity(**common)
+        row = short_row if short_row["score"] > long_row["score"] else long_row
         row["last_price"] = round(engine.last_prices.get(symbol) or 0, 8)
         opportunities.append(row)
 
     opportunities.sort(key=lambda x: (x["score"], x["active"]), reverse=True)
     top = opportunities[0] if opportunities else None
-    attack_count = sum(1 for row in opportunities if row["action"] == "ATTACK")
+    attack_count = sum(1 for row in opportunities if row["action"] in {"ATTACK", "SHORT_ATTACK"})
     watch_count = sum(1 for row in opportunities if row["action"].startswith("WATCH"))
+    short_watch_count = sum(1 for row in opportunities if row["action"] == "SHORT_WATCH")
     kill_switch = {}
     try:
         kill_switch = engine.guardrails.status().get("kill_switch", {})
@@ -1174,13 +1356,13 @@ async def opportunities(db: Session = Depends(get_db), user_info: dict = Depends
         summary = "Kill switch is active: scan only, no new entries until it expires."
     elif attack_count:
         posture = "ATTACK"
-        summary = f"{attack_count} immediate long opportunity detected."
-    elif watch_count:
+        summary = f"{attack_count} immediate opportunity detected, including paper-short candidates when present."
+    elif watch_count or short_watch_count:
         posture = "STALK"
-        summary = f"{watch_count} symbols are worth stalking for breakout or reversal confirmation."
+        summary = f"{watch_count + short_watch_count} symbols are worth stalking for long or paper-short confirmation."
     else:
         posture = "WAIT"
-        summary = "No clean long edge right now."
+        summary = "No clean long or paper-short edge right now."
 
     return {
         "mode": user_mode,
@@ -1388,7 +1570,7 @@ def update_guardrails_config(body: dict, admin: dict = Depends(require_admin)):
     # Basic structure validation
     required_keys = {"kill_switch", "symbol_cooldown", "trade_gate", "dynamic_score",
                      "entry_throttle", "risk_scaling", "strategy_circuit_breaker",
-                     "stale_position", "performance_gate"}
+                     "stale_position", "performance_gate", "paper_short"}
     missing = required_keys - set(body.keys())
     if missing:
         raise HTTPException(400, f"Missing required sections: {', '.join(missing)}")
@@ -1474,6 +1656,10 @@ def reset_guardrails_config(admin: dict = Depends(require_admin)):
             "symbol_min_recent_trades": 2, "symbol_max_recent_net_loss": -3.0,
             "symbol_min_all_time_trades": 10, "symbol_max_all_time_net_loss": -10.0,
             "strategy_min_recent_trades": 4, "strategy_max_recent_net_loss": -6.0,
+        },
+        "paper_short": {
+            "enabled": True, "min_sell_score": 85,
+            "require_bearish_news": False, "max_open_shorts": 1,
         },
     }
 
