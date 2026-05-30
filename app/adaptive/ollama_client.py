@@ -112,6 +112,7 @@ Your job is to suggest concrete, data-driven parameter adjustments — even when
 {news_section}
 
 ## Instructions
+- Output language: {output_language}. All user-facing JSON strings MUST be in this language, especially "reasoning" and every "changes[].reason". Keep enum values and parameter paths unchanged.
 - If win_rate < 35%: suggest loosening entry filters OR tightening exit thresholds to improve selectivity
 - If block_rate > 60%: suggest relaxing the dominant block reason threshold by 10-15%
 - If trades_per_hour < 0.5 in a TREND regime: the bot is too conservative — suggest specific relaxations
@@ -120,7 +121,7 @@ Your job is to suggest concrete, data-driven parameter adjustments — even when
 - Prefer small incremental changes (10-15% of current value), never suggest changes >30% of current value
 
 Respond JSON only (1-3 changes):
-{{"changes":[{{"path":"<full.path>","from":<old>,"to":<new>,"reason":"<specific metric>"}}],"reasoning":"<2-3 sentences>","confidence":<0.0-1.0>,"risk_level":"<low|medium|high>"}}"""
+{{"changes":[{{"path":"<full.path>","from":<old>,"to":<new>,"reason":"<specific metric in {output_language}>"}}],"reasoning":"<2-3 sentences in {output_language}>","confidence":<0.0-1.0>,"risk_level":"<low|medium|high>"}}"""
 
 
 async def check_ollama(url: str = DEFAULT_URL) -> bool:
@@ -156,6 +157,7 @@ async def generate_suggestions(
     news_sentiment: dict | None = None,
     strategy_params: dict | None = None,
     performance_breakdown: dict | None = None,
+    output_language: str = "Italian",
 ) -> dict | None:
     """
     Call Ollama to generate tuning suggestions.
@@ -242,6 +244,7 @@ async def generate_suggestions(
         guardrails_section=guardrails_section,
         symbol_regimes=symbol_regimes,
         news_section=news_section,
+        output_language=output_language,
     )
 
     try:

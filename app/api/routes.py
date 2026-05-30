@@ -5,7 +5,7 @@ All routes (except /api/login) require JWT authentication.
 
 import logging
 from collections import defaultdict
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
@@ -1895,13 +1895,17 @@ def reject_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
 
 @router.post("/adaptive/tuning/generate")
 async def generate_and_save_suggestion(db: Session = Depends(get_db),
-                                       admin: dict = Depends(require_admin)):
+                                       admin: dict = Depends(require_admin),
+                                       body: dict | None = Body(default=None)):
     """Generate a tuning suggestion and save it to DB (admin only)."""
     import json as _json
     from app.models.tuning_suggestion import TuningSuggestion
 
     mc = get_meta_controller()
     engine = get_engine()
+    language = "it"
+    if isinstance(body, dict) and body.get("language") in {"it", "en"}:
+        language = body["language"]
 
     # Inject active_profile into perf dict so LLM prompts receive it
     perf = {
@@ -1934,6 +1938,7 @@ async def generate_and_save_suggestion(db: Session = Depends(get_db),
         news_sentiment=news,
         strategy_params=strategy_params or None,
         performance_breakdown=performance_breakdown,
+        language=language,
     )
 
     if not result["changes"]:

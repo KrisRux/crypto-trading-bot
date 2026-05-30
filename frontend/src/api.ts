@@ -447,8 +447,11 @@ export const api = {
     ollama?: { available: boolean; configured_model: string }
     available: boolean; configured_model: string
   }>('/adaptive/tuning/ollama-status'),
-  generateTuningSuggestion: () =>
-    request<{ ok: boolean; suggestion: TuningSuggestionItem | null; reasoning?: string }>('/adaptive/tuning/generate', { method: 'POST' }),
+  generateTuningSuggestion: (language: 'it' | 'en' = 'it') =>
+    request<{ ok: boolean; suggestion: TuningSuggestionItem | null; reasoning?: string }>('/adaptive/tuning/generate', {
+      method: 'POST',
+      body: JSON.stringify({ language }),
+    }),
   getTuningHistory: () => request<TuningSuggestionItem[]>('/adaptive/tuning/history'),
   applyTuningSuggestion: (id: number) =>
     request<{ ok: boolean; applied_changes: unknown[] }>(`/adaptive/tuning/suggestions/${id}/apply`, { method: 'POST' }),

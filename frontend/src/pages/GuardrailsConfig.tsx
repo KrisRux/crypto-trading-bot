@@ -615,6 +615,7 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
   onApplyChanges: (changes: { path: string; from: unknown; to: unknown }[]) => void
   l: (it: string, en: string) => string
 }) {
+  const { lang } = useLang()
   const [generating, setGenerating] = useState(false)
   const [generateCooldown, setGenerateCooldown] = useState(false)
   const [suggestion, setSuggestion] = useState<TuningSuggestionItem | null>(null)
@@ -659,7 +660,7 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
     setNoSuggestion('')
     setMsg('')
     try {
-      const res = await api.generateTuningSuggestion()
+      const res = await api.generateTuningSuggestion(lang)
       if (res.suggestion) {
         setSuggestion(res.suggestion)
       } else {

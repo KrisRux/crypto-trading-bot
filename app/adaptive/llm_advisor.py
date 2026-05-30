@@ -188,6 +188,7 @@ class LLMAdvisor:
         news_sentiment: dict | None = None,
         strategy_params: dict | None = None,
         performance_breakdown: dict | None = None,
+        language: str = "it",
     ) -> dict:
         """
         Generate guardrails tuning suggestions.
@@ -220,6 +221,7 @@ class LLMAdvisor:
         total_trades = perf.get("total_recent_trades", 0)
         sentiment_score = (news_sentiment or {}).get("score", 0)
         sentiment_available = bool(news_sentiment and news_sentiment.get("available"))
+        output_language = "Italian" if language == "it" else "English"
 
         # EXTREME: everything off
         if (consec >= 7
@@ -229,6 +231,9 @@ class LLMAdvisor:
             return {
                 "changes": [],
                 "reasoning": (
+                    f"Nessun tuning: rischio estremo (CL={consec}, DD={dd:.2f}%, WR={wr:.0f}%, "
+                    f"sentiment={sentiment_score:.2f})."
+                    if language == "it" else
                     f"No tuning: extreme risk (CL={consec}, DD={dd:.2f}%, WR={wr:.0f}%, "
                     f"sentiment={sentiment_score:.2f})."
                 ),
@@ -249,7 +254,8 @@ class LLMAdvisor:
         llm_args = dict(perf=perf, guardrails_status=guardrails_status,
                         guardrails_config=guardrails_config, regime_snapshot=regime_snapshot,
                         news_sentiment=news_sentiment, strategy_params=strategy_params,
-                        performance_breakdown=performance_breakdown)
+                        performance_breakdown=performance_breakdown,
+                        output_language=output_language)
 
         def _apply_tighten_filter(result: dict) -> dict:
             """If risk is elevated, keep only tightening suggestions."""
@@ -260,6 +266,9 @@ class LLMAdvisor:
             result["changes"] = kept
             if dropped:
                 result["reasoning"] = (
+                    f"{result.get('reasoning','')} [modalita solo restrittiva: "
+                    f"{dropped} suggerimento/i di allentamento scartati]"
+                    if language == "it" else
                     f"{result.get('reasoning','')} [tighten-only mode: "
                     f"{dropped} loosening suggestion(s) dropped]"
                 ).strip()
@@ -317,7 +326,10 @@ class LLMAdvisor:
 
         if news_sentiment and news_sentiment.get("available") and sentiment_score < -0.1 and result["changes"]:
             result["confidence"] = max(result["confidence"] - 0.2, 0.1)
-            result["reasoning"] += f" (confidence reduced: news sentiment {sentiment_score:.2f})"
+            if language == "it":
+                result["reasoning"] += f" (confidenza ridotta: sentiment news {sentiment_score:.2f})"
+            else:
+                result["reasoning"] += f" (confidence reduced: news sentiment {sentiment_score:.2f})"
 
         return result
 

@@ -120,6 +120,7 @@ Your job is to suggest concrete, data-driven parameter adjustments — even when
 {news_section}
 
 ## Instructions
+- Output language: {output_language}. All user-facing JSON strings MUST be in this language, especially "reasoning" and every "changes[].reason". Keep enum values and parameter paths unchanged.
 - Use recent windows first (24h/7d), then all-time data as supporting evidence.
 - If recent closed trades < 5: do not loosen just because trades_per_hour is low.
 - If win_rate < 35% with at least 10 recent trades: tighten selectivity via trade_gate or dynamic_score.
@@ -140,10 +141,10 @@ Respond with exactly this JSON (changes array may contain 1-3 items):
       "path": "<full.parameter.path>",
       "from": <current_value>,
       "to": <new_value>,
-      "reason": "<specific metric that justifies this change>"
+      "reason": "<specific metric in {output_language} that justifies this change>"
     }}
   ],
-  "reasoning": "<2-3 sentences: what is the main bottleneck and what do these changes address>",
+  "reasoning": "<2-3 sentences in {output_language}: what is the main bottleneck and what do these changes address>",
   "confidence": <float 0.0 to 1.0>,
   "risk_level": "<low|medium|high>"
 }}
@@ -198,6 +199,7 @@ async def generate_suggestions(
     news_sentiment: dict | None = None,
     strategy_params: dict | None = None,
     performance_breakdown: dict | None = None,
+    output_language: str = "Italian",
 ) -> dict | None:
     """
     Call DeepSeek API to generate tuning suggestions.
@@ -315,6 +317,7 @@ async def generate_suggestions(
         guardrails_section=guardrails_section,
         symbol_regimes=symbol_regimes,
         news_section=news_section,
+        output_language=output_language,
     )
 
     try:
