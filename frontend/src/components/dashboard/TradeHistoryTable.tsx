@@ -14,6 +14,18 @@ const filterBtnClass = (active: boolean) =>
     active ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
   }`
 
+function formatTradeDate(value: string | null) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return new Intl.DateTimeFormat(undefined, {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
 export default function TradeHistoryTable({ trades, loading }: Props) {
   const { t, l } = useLang()
   const [filterStatus, setFilterStatus] = useState('ALL')
@@ -74,7 +86,7 @@ export default function TradeHistoryTable({ trades, loading }: Props) {
       {loading ? (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <tbody>{Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} cols={9} />)}</tbody>
+            <tbody>{Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} cols={10} />)}</tbody>
           </table>
         </div>
       ) : filtered.length > 0 ? (
@@ -83,6 +95,7 @@ export default function TradeHistoryTable({ trades, loading }: Props) {
             <thead>
               <tr className="text-gray-400 border-b border-gray-800">
                 <th className="text-left py-2 px-3">ID</th>
+                <th className="text-left py-2 px-3">{l('Data', 'Date')}</th>
                 <th className="text-left py-2 px-3">{t('symbol')}</th>
                 <th className="text-left py-2 px-3">{t('side')}</th>
                 <th className="text-right py-2 px-3">{t('entry')}</th>
@@ -97,6 +110,9 @@ export default function TradeHistoryTable({ trades, loading }: Props) {
               {filtered.map(tr => (
                 <tr key={tr.id} className="border-b border-gray-800/50 hover:bg-gray-900/50">
                   <td className="py-2 px-3 text-gray-500">#{tr.id}</td>
+                  <td className="py-2 px-3 text-gray-400 whitespace-nowrap">
+                    {formatTradeDate(tr.closed_at ?? tr.opened_at)}
+                  </td>
                   <td className="py-2 px-3 font-medium text-white">{tr.symbol}</td>
                   <td className={`py-2 px-3 ${tr.side === 'BUY' ? 'text-emerald-400' : 'text-red-400'}`}>{tr.side}</td>
                   <td className="py-2 px-3 text-right">{tr.entry_price.toLocaleString()}</td>
