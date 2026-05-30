@@ -1289,14 +1289,13 @@ async def opportunities(db: Session = Depends(get_db), user_info: dict = Depends
         | active_symbols
         | set(perf_all.get("by_symbol", {}).keys())
     )
-    open_symbols = {
-        symbol
-        for (symbol,) in db.query(Trade.symbol).filter(
-            Trade.user_id == user.id,
-            Trade.mode == user_mode,
-            Trade.status == TradeStatus.OPEN,
-        ).distinct().all()
-    }
+    open_rows = db.query(Trade.symbol, Trade.side).filter(
+        Trade.user_id == user.id,
+        Trade.mode == user_mode,
+        Trade.status == TradeStatus.OPEN,
+    ).all()
+    open_symbols = {symbol for symbol, _side in open_rows}
+    open_sides = {symbol: side for symbol, side in open_rows}
 
     live_snapshots: dict[str, dict] = {}
     global_regime = "unknown"
@@ -1336,7 +1335,10 @@ async def opportunities(db: Session = Depends(get_db), user_info: dict = Depends
         )
         long_row = _score_long_opportunity(**common)
         short_row = _score_short_opportunity(**common)
-        row = short_row if short_row["score"] > long_row["score"] else long_row
+        if symbol in open_sides:
+            row = short_row if open_sides[symbol] == OrderSide.SELL else long_row
+        else:
+            row = short_row if short_row["score"] > long_row["score"] else long_row
         row["last_price"] = round(engine.last_prices.get(symbol) or 0, 8)
         opportunities.append(row)
 
@@ -1529,6 +1531,12 @@ def _parse_log_line(line: str) -> dict | None:
         return {"ts": ts, "type": "block", "symbol": m.group(1), "level": "blocked", "reason": "symbol_cooldown", "source": "cooldown"}
     if (m := re.search(r'ENTRY_THROTTLE:\s*blocked\s*\|\s*symbol=(\w+).*?reason=(\S+)', line)):
         return {"ts": ts, "type": "block", "symbol": m.group(1), "level": "blocked", "reason": m.group(2), "source": "throttle"}
+    if (m := re.search(r'PAPER_SHORT:\s*skipped\s+(\w+USDT)\s*\|\s*(.+?)(?:\s*\[|$)', line)):
+        return {"ts": ts, "type": "block", "symbol": m.group(1), "level": "blocked", "reason": m.group(2).strip(), "source": "paper_short"}
+    if (m := re.search(r'\[paper/short\]:\s*SELL\s+(\w+USDT)', line)):
+        return {"ts": ts, "type": "fill", "symbol": m.group(1), "level": "fill", "source": "paper_short"}
+    if (m := re.search(r'PROFIT_LOCK:\s*(\w+USDT)\s+(BUY|SELL).*?pnl=([-\d.]+)%', line)):
+        return {"ts": ts, "type": "risk", "symbol": m.group(1), "level": "info", "source": "profit_lock", "side": m.group(2), "pnl_pct": float(m.group(3))}
     if (m := re.search(r'STRATEGY_BREAKER:\s*blocked\s*\|\s*strategy=(\w+)', line)):
         return {"ts": ts, "type": "block", "symbol": "", "level": "blocked", "reason": f"breaker_{m.group(1)}", "source": "strategy_breaker"}
     if (m := re.search(r'REGIME_CHANGE:\s*(\w+)\s*->\s*(\w+)', line)):
@@ -1650,6 +1658,9 @@ def reset_guardrails_config(admin: dict = Depends(require_admin)):
         "stale_position": {
             "enabled": True, "max_holding_hours": 48, "min_loss_pct": 0.5,
             "flat_holding_hours": 72, "flat_abs_pnl_pct": 0.2,
+            "profit_lock_enabled": True, "profit_lock_trigger_pct": 3.0,
+            "profit_lock_min_pct": 0.4, "profit_trail_start_pct": 4.5,
+            "profit_trail_distance_pct": 1.2,
         },
         "performance_gate": {
             "enabled": True, "recent_hours": 168,
@@ -1658,8 +1669,9 @@ def reset_guardrails_config(admin: dict = Depends(require_admin)):
             "strategy_min_recent_trades": 4, "strategy_max_recent_net_loss": -6.0,
         },
         "paper_short": {
-            "enabled": True, "min_sell_score": 85,
+            "enabled": True, "min_sell_score": 80,
             "require_bearish_news": False, "max_open_shorts": 1,
+            "allow_with_open_long": True,
         },
     }
 
@@ -1752,6 +1764,12 @@ def apply_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
         "performance_gate.symbol_max_recent_net_loss",
         "performance_gate.symbol_max_all_time_net_loss",
         "performance_gate.strategy_max_recent_net_loss",
+        "paper_short.min_sell_score",
+        "paper_short.allow_with_open_long",
+        "stale_position.profit_lock_trigger_pct",
+        "stale_position.profit_lock_min_pct",
+        "stale_position.profit_trail_start_pct",
+        "stale_position.profit_trail_distance_pct",
     }
     engine = get_engine()
     allowed_strategy_paths = {

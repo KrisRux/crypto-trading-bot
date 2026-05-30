@@ -57,6 +57,10 @@ def validate_guardrails_values(cfg: dict) -> list[str]:
     _check("stale_position.min_loss_pct", sp.get("min_loss_pct", 0.5), 0, 20, (int, float))
     _check("stale_position.flat_holding_hours", sp.get("flat_holding_hours", 72), 1, 24 * 21, (int, float))
     _check("stale_position.flat_abs_pnl_pct", sp.get("flat_abs_pnl_pct", 0.2), 0, 5, (int, float))
+    _check("stale_position.profit_lock_trigger_pct", sp.get("profit_lock_trigger_pct", 3.0), 0.1, 50, (int, float))
+    _check("stale_position.profit_lock_min_pct", sp.get("profit_lock_min_pct", 0.4), 0, 20, (int, float))
+    _check("stale_position.profit_trail_start_pct", sp.get("profit_trail_start_pct", 4.5), 0.1, 50, (int, float))
+    _check("stale_position.profit_trail_distance_pct", sp.get("profit_trail_distance_pct", 1.2), 0.1, 20, (int, float))
 
     # Performance gate
     pg = cfg.get("performance_gate", {})
@@ -70,7 +74,7 @@ def validate_guardrails_values(cfg: dict) -> list[str]:
 
     # Paper short simulation
     ps = cfg.get("paper_short", {})
-    _check("paper_short.min_sell_score", ps.get("min_sell_score", 85), 50, 100, (int, float))
+    _check("paper_short.min_sell_score", ps.get("min_sell_score", 80), 50, 100, (int, float))
     _check("paper_short.max_open_shorts", ps.get("max_open_shorts", 1), 1, 20, (int,))
 
     return errors

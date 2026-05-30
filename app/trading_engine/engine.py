@@ -136,13 +136,65 @@ class TradingEngine:
         if opened_at.tzinfo is None:
             opened_at = opened_at.replace(tzinfo=timezone.utc)
         age_hours = (datetime.now(timezone.utc) - opened_at).total_seconds() / 3600
-        pnl_pct = ((current_price - trade.entry_price) / trade.entry_price) * 100
+        pnl_pct = self._profit_lock_pnl_pct(trade, current_price)
 
         if age_hours >= cfg["max_holding_hours"] and pnl_pct <= -cfg["min_loss_pct"]:
             return f"stale_position_loss age={age_hours:.1f}h pnl={pnl_pct:.2f}%"
         if age_hours >= cfg["flat_holding_hours"] and abs(pnl_pct) <= cfg["flat_abs_pnl_pct"]:
             return f"stale_position_flat age={age_hours:.1f}h pnl={pnl_pct:.2f}%"
         return None
+
+    def _profit_lock_pnl_pct(self, trade: Trade, current_price: float) -> float:
+        if not trade.entry_price:
+            return 0.0
+        if trade.side == OrderSide.SELL:
+            return ((trade.entry_price - current_price) / trade.entry_price) * 100
+        return ((current_price - trade.entry_price) / trade.entry_price) * 100
+
+    def _profit_lock_stop(self, trade: Trade, current_price: float) -> float | None:
+        cfg = self.guardrails.stale_position_config()
+        if not cfg.get("profit_lock_enabled", True) or not trade.entry_price:
+            return None
+
+        pnl_pct = self._profit_lock_pnl_pct(trade, current_price)
+        if pnl_pct < cfg["profit_lock_trigger_pct"]:
+            return None
+
+        if trade.side == OrderSide.SELL:
+            desired = trade.entry_price * (1 - cfg["profit_lock_min_pct"] / 100)
+            if pnl_pct >= cfg["profit_trail_start_pct"]:
+                desired = min(desired, current_price * (1 + cfg["profit_trail_distance_pct"] / 100))
+            if trade.stop_loss and trade.stop_loss <= desired:
+                return None
+        else:
+            desired = trade.entry_price * (1 + cfg["profit_lock_min_pct"] / 100)
+            if pnl_pct >= cfg["profit_trail_start_pct"]:
+                desired = max(desired, current_price * (1 - cfg["profit_trail_distance_pct"] / 100))
+            if trade.stop_loss and trade.stop_loss >= desired:
+                return None
+        return self._round_price(trade.symbol, desired)
+
+    def _apply_profit_lock(self, db: Session, trade: Trade, current_price: float) -> bool:
+        new_stop = self._profit_lock_stop(trade, current_price)
+        if new_stop is None:
+            return False
+
+        old_stop = trade.stop_loss
+        trade.stop_loss = new_stop
+        position = db.query(PaperPosition).filter(
+            PaperPosition.user_id == trade.user_id,
+            PaperPosition.symbol == trade.symbol,
+            PaperPosition.side == trade.side.value,
+        ).first()
+        if position:
+            position.stop_loss = new_stop
+        db.commit()
+        logger.info(
+            "PROFIT_LOCK: %s %s stop %.8f -> %.8f (pnl=%.2f%%)",
+            trade.symbol, trade.side.value, old_stop or 0, new_stop,
+            self._profit_lock_pnl_pct(trade, current_price),
+        )
+        return True
 
     def _short_close_reason(
         self,
@@ -184,9 +236,15 @@ class TradingEngine:
         ).count()
         if open_shorts >= cfg["max_open_shorts"]:
             return False, f"max_open_shorts {open_shorts}/{cfg['max_open_shorts']}"
-        reason = self._pre_buy_user_guard_reason(db, user, "paper", signal.symbol, signal.strategy_name)
-        if reason and reason.startswith("max_open_positions"):
-            return False, reason
+        if not cfg.get("allow_with_open_long", True):
+            open_longs = db.query(Trade).filter(
+                Trade.user_id == user.id,
+                Trade.mode == "paper",
+                Trade.status == TradeStatus.OPEN,
+                Trade.side == OrderSide.BUY,
+            ).count()
+            if open_longs:
+                return False, f"open_long_position {open_longs}"
         return True, f"sell_score={score:.0f}"
 
     def _try_open_paper_short(
@@ -760,6 +818,8 @@ class TradingEngine:
             Trade.symbol == symbol,
         ).all()
         for trade in open_trades:
+            self._apply_profit_lock(db, trade, current_price)
+            db.refresh(trade)
             if trade.side == OrderSide.SELL:
                 result = self._short_close_reason(
                     trade, current_price, candle_high=candle_high, candle_low=candle_low
@@ -951,6 +1011,8 @@ class TradingEngine:
             Trade.symbol == symbol,
         ).all()
         for trade in stale_trades:
+            self._apply_profit_lock(db, trade, current_price)
+            db.refresh(trade)
             reason = self._stale_position_reason(trade, current_price)
             if not reason:
                 continue
@@ -1097,6 +1159,8 @@ class TradingEngine:
             Trade.symbol == symbol,
         ).all()
         for trade in open_trades:
+            self._apply_profit_lock(db, trade, current_price)
+            db.refresh(trade)
             result = self.risk_manager.should_close_position(
                 trade.entry_price, current_price,
                 trade.stop_loss, trade.take_profit,

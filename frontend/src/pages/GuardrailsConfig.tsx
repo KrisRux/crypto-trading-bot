@@ -143,6 +143,11 @@ const SECTIONS: SectionDef[] = [
       { key: 'min_loss_pct', label: 'Min Loss %', hint: 'Loss threshold after max holding time', min: 0, max: 20, step: 0.1 },
       { key: 'flat_holding_hours', label: 'Flat Holding Hours', hint: 'Close if too old and nearly flat', min: 1, max: 504, step: 1 },
       { key: 'flat_abs_pnl_pct', label: 'Flat Abs PnL %', hint: 'Near-flat threshold for stale exit', min: 0, max: 5, step: 0.1 },
+      { key: 'profit_lock_enabled', label: 'Profit Lock', hint: 'Move the virtual stop once a position is well in profit', type: 'boolean' },
+      { key: 'profit_lock_trigger_pct', label: 'Lock Trigger %', hint: 'Start protecting profit after this unrealized gain', min: 0.1, max: 50, step: 0.1 },
+      { key: 'profit_lock_min_pct', label: 'Locked Profit %', hint: 'Minimum profit to protect after trigger', min: 0, max: 20, step: 0.1 },
+      { key: 'profit_trail_start_pct', label: 'Trail Start %', hint: 'Start trailing after this unrealized gain', min: 0.1, max: 50, step: 0.1 },
+      { key: 'profit_trail_distance_pct', label: 'Trail Distance %', hint: 'Distance from current price for the trailing stop', min: 0.1, max: 20, step: 0.1 },
     ],
   },
   {
@@ -167,6 +172,7 @@ const SECTIONS: SectionDef[] = [
       { key: 'min_sell_score', label: 'Min SELL Score', hint: 'Minimum SELL score required to open a simulated short', min: 50, max: 100, step: 1 },
       { key: 'require_bearish_news', label: 'Require Bearish News', hint: 'Only short when news sentiment is bearish', type: 'boolean' },
       { key: 'max_open_shorts', label: 'Max Open Shorts', hint: 'Maximum simultaneous simulated shorts', min: 1, max: 20, step: 1, type: 'integer' },
+      { key: 'allow_with_open_long', label: 'Allow With Open Long', hint: 'Allow a simulated short even while another long position is open', type: 'boolean' },
     ],
   },
 ]

@@ -713,6 +713,11 @@ class Guardrails:
             "min_loss_pct": float(cfg.get("min_loss_pct", 0.5)),
             "flat_holding_hours": float(cfg.get("flat_holding_hours", 72)),
             "flat_abs_pnl_pct": float(cfg.get("flat_abs_pnl_pct", 0.2)),
+            "profit_lock_enabled": bool(cfg.get("profit_lock_enabled", True)),
+            "profit_lock_trigger_pct": float(cfg.get("profit_lock_trigger_pct", 3.0)),
+            "profit_lock_min_pct": float(cfg.get("profit_lock_min_pct", 0.4)),
+            "profit_trail_start_pct": float(cfg.get("profit_trail_start_pct", 4.5)),
+            "profit_trail_distance_pct": float(cfg.get("profit_trail_distance_pct", 1.2)),
         }
 
     def entry_limit_config(self) -> dict:
@@ -738,9 +743,10 @@ class Guardrails:
         cfg = self._cfg.get("paper_short", {})
         return {
             "enabled": bool(cfg.get("enabled", True)),
-            "min_sell_score": float(cfg.get("min_sell_score", 85)),
+            "min_sell_score": float(cfg.get("min_sell_score", 80)),
             "require_bearish_news": bool(cfg.get("require_bearish_news", False)),
             "max_open_shorts": int(cfg.get("max_open_shorts", 1)),
+            "allow_with_open_long": bool(cfg.get("allow_with_open_long", True)),
         }
 
     def record_user_guard_block(self, reason: str):

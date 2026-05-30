@@ -55,6 +55,12 @@ ALLOWED_DYNAMIC_SCORE_PATHS = {
     "performance_gate.symbol_max_recent_net_loss",
     "performance_gate.symbol_max_all_time_net_loss",
     "performance_gate.strategy_max_recent_net_loss",
+    "paper_short.min_sell_score",
+    "paper_short.allow_with_open_long",
+    "stale_position.profit_lock_trigger_pct",
+    "stale_position.profit_lock_min_pct",
+    "stale_position.profit_trail_start_pct",
+    "stale_position.profit_trail_distance_pct",
 }
 
 
@@ -123,7 +129,7 @@ Your job is to suggest concrete, data-driven parameter adjustments — even when
 - If an enabled strategy has >=10 trades and negative estimated_net_pnl: suggest strategy.<name>.enabled=false.
 - You may return an empty changes array when data is insufficient or current config is appropriate.
 - Prefer small incremental changes (10-15% of current value), never suggest changes >30% of current value
-- You may suggest ONLY these path families: trade_gate.* thresholds, dynamic_score.* thresholds, performance_gate loss thresholds, entry_throttle.max_open_positions, strategy.<name>.enabled flags.
+- You may suggest ONLY these path families: trade_gate.* thresholds, dynamic_score.* thresholds, performance_gate loss thresholds, entry_throttle.max_open_positions, paper_short min/allow flags, stale_position profit-lock thresholds, strategy.<name>.enabled flags.
 - Do not suggest direct strategy numeric thresholds such as embient_enhanced.trend_buy_threshold; they are not applyable through this endpoint.
 - Do not suggest no-op changes where from == to.
 
@@ -151,6 +157,10 @@ Valid path examples:
 - entry_throttle.max_open_positions
 - performance_gate.strategy_max_recent_net_loss
 - performance_gate.symbol_max_recent_net_loss
+- paper_short.min_sell_score
+- paper_short.allow_with_open_long
+- stale_position.profit_lock_trigger_pct
+- stale_position.profit_trail_distance_pct
 - strategy.embient_enhanced.enabled
 - strategy.sma_crossover.enabled
 - strategy.rsi_reversal.enabled

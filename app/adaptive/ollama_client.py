@@ -52,6 +52,12 @@ ALLOWED_DYNAMIC_SCORE_PATHS = {
     "performance_gate.symbol_max_recent_net_loss",
     "performance_gate.symbol_max_all_time_net_loss",
     "performance_gate.strategy_max_recent_net_loss",
+    "paper_short.min_sell_score",
+    "paper_short.allow_with_open_long",
+    "stale_position.profit_lock_trigger_pct",
+    "stale_position.profit_lock_min_pct",
+    "stale_position.profit_trail_start_pct",
+    "stale_position.profit_trail_distance_pct",
 }
 
 
