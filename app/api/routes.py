@@ -4,7 +4,7 @@ All routes (except /api/login) require JWT authentication.
 """
 
 import logging
-from collections import defaultdict
+from collections import Counter, defaultdict
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
@@ -563,7 +563,105 @@ def _mark_to_market_for_user(db: Session, user: User, hours: int | None = None) 
     }
 
 
-def _tuning_performance_context(db: Session, user: User) -> dict:
+def _recent_diagnostics_context(lines: int = 3000) -> dict:
+    import os
+
+    events: list[dict] = []
+    log_file = "logs/trading_bot.log"
+    if os.path.exists(log_file):
+        try:
+            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+                all_lines = f.readlines()
+            for line in all_lines[-lines:]:
+                ev = _parse_log_line(line)
+                if ev:
+                    events.append(ev)
+        except Exception:
+            events = []
+
+    block_events = [ev for ev in events if ev.get("type") == "block"]
+    pass_events = [ev for ev in events if ev.get("type") == "pass"]
+    fill_events = [ev for ev in events if ev.get("type") == "fill"]
+    return {
+        "sampled_events": len(events),
+        "blocks": len(block_events),
+        "passes": len(pass_events),
+        "fills": len(fill_events),
+        "block_sources": dict(Counter(ev.get("source", "unknown") for ev in block_events)),
+        "block_reasons": dict(Counter(str(ev.get("reason", "unknown")) for ev in block_events).most_common(8)),
+        "blocked_symbols": dict(Counter(ev.get("symbol", "") for ev in block_events if ev.get("symbol")).most_common(8)),
+    }
+
+
+def _top_opportunities_context(db: Session, user: User, limit: int = 6) -> dict:
+    engine = get_engine()
+    user_mode = user.trading_mode or "paper"
+    perf_24h = _performance_breakdown_for_user(db, user, hours=24)
+    perf_7d = _performance_breakdown_for_user(db, user, hours=24 * 7)
+    perf_all = _performance_breakdown_for_user(db, user)
+    active_symbols = set(getattr(engine, "symbols", []))
+    symbols = sorted(DEFAULT_SYMBOL_CANDIDATES | active_symbols | set(perf_all.get("by_symbol", {}).keys()))
+    open_rows = db.query(Trade.symbol, Trade.side).filter(
+        Trade.user_id == user.id,
+        Trade.mode == user_mode,
+        Trade.status == TradeStatus.OPEN,
+    ).all()
+    open_symbols = {symbol for symbol, _side in open_rows}
+    open_sides = {symbol: side for symbol, side in open_rows}
+
+    live_snapshots: dict[str, dict] = {}
+    global_regime = "unknown"
+    news_snapshot: dict | None = None
+    try:
+        mc = get_meta_controller()
+        regime_snapshot = mc.regime_service.global_snapshot()
+        live_snapshots = regime_snapshot.get("symbols", {})
+        global_regime = regime_snapshot.get("global_regime", "unknown")
+        snap_obj = getattr(mc.news_sentiment, "snapshot", None)
+        if snap_obj is not None:
+            news_snapshot = snap_obj.to_dict()
+    except HTTPException:
+        pass
+
+    rows = []
+    for symbol in symbols:
+        snap = live_snapshots.get(symbol)
+        common = dict(
+            symbol=symbol,
+            active=symbol in active_symbols,
+            position_open=symbol in open_symbols,
+            snap=snap,
+            perf_24h=perf_24h.get("by_symbol", {}).get(symbol),
+            perf_7d=perf_7d.get("by_symbol", {}).get(symbol),
+            perf_all_time=perf_all.get("by_symbol", {}).get(symbol),
+            news=news_snapshot,
+        )
+        long_row = _score_long_opportunity(**common)
+        short_row = _score_short_opportunity(**common)
+        if symbol in open_sides:
+            row = short_row if open_sides[symbol] == OrderSide.SELL else long_row
+        else:
+            row = short_row if short_row["score"] > long_row["score"] else long_row
+        row["last_price"] = round(engine.last_prices.get(symbol) or 0, 8)
+        rows.append(row)
+
+    rows.sort(key=lambda x: (x["score"], x["active"]), reverse=True)
+    return {
+        "global_regime": global_regime,
+        "top": rows[:limit],
+        "attack_count": sum(1 for row in rows if row["action"] in {"ATTACK", "SHORT_ATTACK"}),
+        "watch_count": sum(1 for row in rows if row["action"].startswith("WATCH")),
+        "open_position_count": sum(1 for row in rows if row["position_open"]),
+    }
+
+
+def _tuning_performance_context(
+    db: Session,
+    user: User,
+    *,
+    opportunities_context: dict | None = None,
+    diagnostics_context: dict | None = None,
+) -> dict:
     return {
         "mode": user.trading_mode or "paper",
         "fee_pct_per_side": settings.paper_fee_pct,
@@ -573,6 +671,13 @@ def _tuning_performance_context(db: Session, user: User) -> dict:
             "recent_7d": _performance_breakdown_for_user(db, user, hours=24 * 7),
             "all_time": _performance_breakdown_for_user(db, user),
         },
+        "mark_to_market": {
+            "recent_24h": _mark_to_market_for_user(db, user, hours=24),
+            "recent_7d": _mark_to_market_for_user(db, user, hours=24 * 7),
+            "all_time": _mark_to_market_for_user(db, user),
+        },
+        "opportunities": opportunities_context,
+        "diagnostics": diagnostics_context,
     }
 
 
@@ -809,6 +914,31 @@ async def update_api_keys(body: dict, db: Session = Depends(get_db),
 
 
 # ------------------------------------------------------------------ Dashboard (per-user)
+def _paper_equity_snapshot(db: Session, user: User) -> dict:
+    engine = get_engine()
+    portfolio = engine.paper_portfolio.get_or_create(db, user.id)
+    mtm = _mark_to_market_for_user(db, user)
+    closed_trades = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.mode == "paper",
+        Trade.status == TradeStatus.CLOSED,
+    ).all()
+    initial_capital = float(getattr(portfolio, "initial_capital", 0) or 0)
+    total_pnl = sum(t.pnl or 0 for t in closed_trades)
+    unrealized_net = float(mtm.get("unrealized_estimated_net_pnl", 0) or 0)
+    total_equity = initial_capital + total_pnl + unrealized_net
+    if initial_capital <= 0:
+        total_equity = float(getattr(portfolio, "total_equity", 0) or 0) + unrealized_net
+    return {
+        "cash_balance": float(getattr(portfolio, "cash_balance", 0) or 0),
+        "total_equity": round(total_equity, 6),
+        "total_pnl": total_pnl,
+        "total_trades": len(closed_trades),
+        "winning_trades": sum(1 for t in closed_trades if (t.pnl or 0) > 0),
+        "losing_trades": sum(1 for t in closed_trades if (t.pnl or 0) < 0),
+    }
+
+
 @router.get("/balance", response_model=BalanceResponse)
 async def get_balance(db: Session = Depends(get_db), user_info: dict = Depends(require_auth)):
     from app.binance_client.rest_client import BinanceRestClient
@@ -816,6 +946,8 @@ async def get_balance(db: Session = Depends(get_db), user_info: dict = Depends(r
     user = _get_user_obj(user_info, db)
     user_mode = user.trading_mode or "paper"
     is_live = user_mode == "live"
+    if user_mode == "paper":
+        return BalanceResponse(mode=user_mode, **_paper_equity_snapshot(db, user))
 
     cash_balance = 0.0   # USDT free — available to invest
     total_equity = 0.0   # Σ (free + locked) × market price for every asset
@@ -1661,6 +1793,9 @@ def reset_guardrails_config(admin: dict = Depends(require_admin)):
             "profit_lock_enabled": True, "profit_lock_trigger_pct": 3.0,
             "profit_lock_min_pct": 0.4, "profit_trail_start_pct": 4.5,
             "profit_trail_distance_pct": 1.2,
+            "range_profit_exit_enabled": True,
+            "range_profit_exit_min_pct": 0.8,
+            "range_profit_exit_min_hours": 12,
         },
         "performance_gate": {
             "enabled": True, "recent_hours": 168,
@@ -1670,7 +1805,7 @@ def reset_guardrails_config(admin: dict = Depends(require_admin)):
         },
         "paper_short": {
             "enabled": True, "min_sell_score": 80,
-            "require_bearish_news": False, "max_open_shorts": 1,
+            "require_bearish_news": False, "max_open_shorts": 2,
             "allow_with_open_long": True,
         },
     }
@@ -1704,7 +1839,12 @@ async def get_tuning_suggestions(db: Session = Depends(get_db), _admin: dict = D
     regime = mc.regime_service.global_snapshot()
     guardrails_status = engine.guardrails.status()
     admin_user = _get_user_obj(_admin, db)
-    performance_breakdown = _tuning_performance_context(db, admin_user)
+    performance_breakdown = _tuning_performance_context(
+        db,
+        admin_user,
+        opportunities_context=_top_opportunities_context(db, admin_user),
+        diagnostics_context=_recent_diagnostics_context(),
+    )
     strategy_params = {
         s.name: s.get_params()
         for s in getattr(engine, "strategies", [])
@@ -1765,11 +1905,15 @@ def apply_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
         "performance_gate.symbol_max_all_time_net_loss",
         "performance_gate.strategy_max_recent_net_loss",
         "paper_short.min_sell_score",
+        "paper_short.max_open_shorts",
         "paper_short.allow_with_open_long",
         "stale_position.profit_lock_trigger_pct",
         "stale_position.profit_lock_min_pct",
         "stale_position.profit_trail_start_pct",
         "stale_position.profit_trail_distance_pct",
+        "stale_position.range_profit_exit_enabled",
+        "stale_position.range_profit_exit_min_pct",
+        "stale_position.range_profit_exit_min_hours",
     }
     engine = get_engine()
     allowed_strategy_paths = {
@@ -1915,7 +2059,12 @@ async def generate_and_save_suggestion(db: Session = Depends(get_db),
     regime = mc.regime_service.global_snapshot()
     guardrails_status = engine.guardrails.status()
     admin_user = _get_user_obj(admin, db)
-    performance_breakdown = _tuning_performance_context(db, admin_user)
+    performance_breakdown = _tuning_performance_context(
+        db,
+        admin_user,
+        opportunities_context=_top_opportunities_context(db, admin_user),
+        diagnostics_context=_recent_diagnostics_context(),
+    )
     strategy_params = {
         s.name: s.get_params()
         for s in getattr(engine, "strategies", [])

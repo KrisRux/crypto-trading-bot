@@ -53,11 +53,15 @@ ALLOWED_DYNAMIC_SCORE_PATHS = {
     "performance_gate.symbol_max_all_time_net_loss",
     "performance_gate.strategy_max_recent_net_loss",
     "paper_short.min_sell_score",
+    "paper_short.max_open_shorts",
     "paper_short.allow_with_open_long",
     "stale_position.profit_lock_trigger_pct",
     "stale_position.profit_lock_min_pct",
     "stale_position.profit_trail_start_pct",
     "stale_position.profit_trail_distance_pct",
+    "stale_position.range_profit_exit_enabled",
+    "stale_position.range_profit_exit_min_pct",
+    "stale_position.range_profit_exit_min_hours",
 }
 
 
@@ -102,6 +106,18 @@ Your job is to suggest concrete, data-driven parameter adjustments — even when
 ## Strategy Parameters (current values)
 {strategy_params_section}
 
+## Realized Performance Breakdown
+{performance_breakdown_section}
+
+## Mark-to-Market & Open Positions
+{mark_to_market_section}
+
+## Opportunity Scanner
+{opportunities_section}
+
+## Recent Execution Diagnostics
+{diagnostics_section}
+
 ## Kill Switch & Guardrails State
 {guardrails_section}
 
@@ -113,12 +129,15 @@ Your job is to suggest concrete, data-driven parameter adjustments — even when
 
 ## Instructions
 - Output language: {output_language}. All user-facing JSON strings MUST be in this language, especially "reasoning" and every "changes[].reason". Keep enum values and parameter paths unchanged.
+- Do not say the bot is "not trading" when open_positions > 0; distinguish closed trades from mark-to-market open PnL.
+- If 24h closed trades are 0 but open mark-to-market PnL exists, analyze the open position and opportunity blockers instead of waiting passively.
 - If win_rate < 35%: suggest loosening entry filters OR tightening exit thresholds to improve selectivity
 - If block_rate > 60%: suggest relaxing the dominant block reason threshold by 10-15%
 - If trades_per_hour < 0.5 in a TREND regime: the bot is too conservative — suggest specific relaxations
 - If consecutive_losses >= 3: suggest tightening score thresholds or reducing position exposure
 - Always suggest at least 1 change unless all metrics are at target AND block_rate < 30%
 - Prefer small incremental changes (10-15% of current value), never suggest changes >30% of current value
+- Valid paper-short/stale paths include paper_short.max_open_shorts, stale_position.range_profit_exit_min_pct, and stale_position.range_profit_exit_min_hours.
 
 Respond JSON only (1-3 changes):
 {{"changes":[{{"path":"<full.path>","from":<old>,"to":<new>,"reason":"<specific metric in {output_language}>"}}],"reasoning":"<2-3 sentences in {output_language}>","confidence":<0.0-1.0>,"risk_level":"<low|medium|high>"}}"""
@@ -206,6 +225,63 @@ async def generate_suggestions(
     else:
         strategy_params_section = "  Not provided"
 
+    if performance_breakdown:
+        perf_lines = []
+        for label, breakdown in (performance_breakdown.get("windows") or {}).items():
+            overall = breakdown.get("overall", {})
+            perf_lines.append(
+                f"{label}: trades={overall.get('trades', 0)} "
+                f"est_net={overall.get('estimated_net_pnl', 0)} "
+                f"win_rate={overall.get('win_rate', 0)}%"
+            )
+            for name, row in breakdown.get("by_strategy", {}).items():
+                perf_lines.append(
+                    f"  strategy {name}: trades={row.get('trades', 0)} "
+                    f"est_net={row.get('estimated_net_pnl', 0)} win_rate={row.get('win_rate', 0)}%"
+                )
+        performance_breakdown_section = "\n".join(perf_lines) if perf_lines else "  Not provided"
+
+        mtm_lines = []
+        for label, row in (performance_breakdown.get("mark_to_market") or {}).items():
+            realized = row.get("realized", {})
+            mtm_lines.append(
+                f"{label}: closed_trades={realized.get('trades', 0)} "
+                f"open_positions={row.get('open_positions', 0)} "
+                f"unrealized_net={row.get('unrealized_estimated_net_pnl', 0)} "
+                f"total_net={row.get('total_estimated_net_pnl', 0)}"
+            )
+            for pos in row.get("positions", [])[:3]:
+                mtm_lines.append(
+                    f"  open {pos.get('symbol')} {pos.get('side')} age={pos.get('age_hours')}h "
+                    f"net={pos.get('estimated_net_pnl')} pnl_pct={pos.get('pnl_pct')}"
+                )
+        mark_to_market_section = "\n".join(mtm_lines) if mtm_lines else "  Not provided"
+
+        opp = performance_breakdown.get("opportunities") or {}
+        opp_lines = [
+            f"attacks={opp.get('attack_count', 0)} watch={opp.get('watch_count', 0)} "
+            f"open_positions={opp.get('open_position_count', 0)}"
+        ]
+        for row in opp.get("top", [])[:5]:
+            opp_lines.append(
+                f"  {row.get('symbol')} {row.get('side')} {row.get('action')} "
+                f"score={row.get('score')} regime={row.get('regime')} "
+                f"recent_net={row.get('recent_net_pnl')} blockers={','.join(str(b) for b in row.get('blockers', [])[:3])}"
+            )
+        opportunities_section = "\n".join(opp_lines)
+
+        diag = performance_breakdown.get("diagnostics") or {}
+        diagnostics_section = (
+            f"blocks={diag.get('blocks', 0)} passes={diag.get('passes', 0)} fills={diag.get('fills', 0)}\n"
+            f"block_sources={json.dumps(diag.get('block_sources', {}))}\n"
+            f"block_reasons={json.dumps(diag.get('block_reasons', {}))}"
+        )
+    else:
+        performance_breakdown_section = "  Not provided"
+        mark_to_market_section = "  Not provided"
+        opportunities_section = "  Not provided"
+        diagnostics_section = "  Not provided"
+
     # Kill switch and risk state
     ks_status = guardrails_status.get("kill_switch", {})
     ks_cfg = guardrails_config.get("kill_switch", {})
@@ -241,6 +317,10 @@ async def generate_suggestions(
         blocked_score_count=stats.get("blocked_dynamic_score", 0),
         blocked_gate_count=stats.get("blocked_trade_gate", 0),
         strategy_params_section=strategy_params_section,
+        performance_breakdown_section=performance_breakdown_section,
+        mark_to_market_section=mark_to_market_section,
+        opportunities_section=opportunities_section,
+        diagnostics_section=diagnostics_section,
         guardrails_section=guardrails_section,
         symbol_regimes=symbol_regimes,
         news_section=news_section,

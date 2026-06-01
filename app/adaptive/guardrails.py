@@ -718,6 +718,9 @@ class Guardrails:
             "profit_lock_min_pct": float(cfg.get("profit_lock_min_pct", 0.4)),
             "profit_trail_start_pct": float(cfg.get("profit_trail_start_pct", 4.5)),
             "profit_trail_distance_pct": float(cfg.get("profit_trail_distance_pct", 1.2)),
+            "range_profit_exit_enabled": bool(cfg.get("range_profit_exit_enabled", True)),
+            "range_profit_exit_min_pct": float(cfg.get("range_profit_exit_min_pct", 0.8)),
+            "range_profit_exit_min_hours": float(cfg.get("range_profit_exit_min_hours", 12)),
         }
 
     def entry_limit_config(self) -> dict:

@@ -148,6 +148,9 @@ const SECTIONS: SectionDef[] = [
       { key: 'profit_lock_min_pct', label: 'Locked Profit %', hint: 'Minimum profit to protect after trigger', min: 0, max: 20, step: 0.1 },
       { key: 'profit_trail_start_pct', label: 'Trail Start %', hint: 'Start trailing after this unrealized gain', min: 0.1, max: 50, step: 0.1 },
       { key: 'profit_trail_distance_pct', label: 'Trail Distance %', hint: 'Distance from current price for the trailing stop', min: 0.1, max: 20, step: 0.1 },
+      { key: 'range_profit_exit_enabled', label: 'Range Profit Exit', hint: 'Close profitable stale positions when the symbol falls back into range', type: 'boolean' },
+      { key: 'range_profit_exit_min_pct', label: 'Range Profit Min %', hint: 'Minimum unrealized gain required before range profit capture', min: 0.1, max: 20, step: 0.1 },
+      { key: 'range_profit_exit_min_hours', label: 'Range Profit Hours', hint: 'Minimum holding time before range profit capture can close a trade', min: 0, max: 336, step: 1 },
     ],
   },
   {

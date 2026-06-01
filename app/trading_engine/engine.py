@@ -142,7 +142,23 @@ class TradingEngine:
             return f"stale_position_loss age={age_hours:.1f}h pnl={pnl_pct:.2f}%"
         if age_hours >= cfg["flat_holding_hours"] and abs(pnl_pct) <= cfg["flat_abs_pnl_pct"]:
             return f"stale_position_flat age={age_hours:.1f}h pnl={pnl_pct:.2f}%"
+        if (
+            cfg.get("range_profit_exit_enabled", True)
+            and age_hours >= cfg["range_profit_exit_min_hours"]
+            and pnl_pct >= cfg["range_profit_exit_min_pct"]
+            and self._symbol_regime(trade.symbol) == "range"
+        ):
+            return f"range_profit_exit age={age_hours:.1f}h pnl={pnl_pct:.2f}%"
         return None
+
+    def _symbol_regime(self, symbol: str) -> str:
+        if not self.meta_controller:
+            return "unknown"
+        try:
+            snap = self.meta_controller.regime_service.global_snapshot()
+            return str(snap.get("symbols", {}).get(symbol, {}).get("regime") or "unknown")
+        except Exception:
+            return "unknown"
 
     def _profit_lock_pnl_pct(self, trade: Trade, current_price: float) -> float:
         if not trade.entry_price:

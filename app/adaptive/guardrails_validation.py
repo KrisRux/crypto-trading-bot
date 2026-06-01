@@ -61,6 +61,8 @@ def validate_guardrails_values(cfg: dict) -> list[str]:
     _check("stale_position.profit_lock_min_pct", sp.get("profit_lock_min_pct", 0.4), 0, 20, (int, float))
     _check("stale_position.profit_trail_start_pct", sp.get("profit_trail_start_pct", 4.5), 0.1, 50, (int, float))
     _check("stale_position.profit_trail_distance_pct", sp.get("profit_trail_distance_pct", 1.2), 0.1, 20, (int, float))
+    _check("stale_position.range_profit_exit_min_pct", sp.get("range_profit_exit_min_pct", 0.8), 0.1, 20, (int, float))
+    _check("stale_position.range_profit_exit_min_hours", sp.get("range_profit_exit_min_hours", 12), 0, 24 * 14, (int, float))
 
     # Performance gate
     pg = cfg.get("performance_gate", {})

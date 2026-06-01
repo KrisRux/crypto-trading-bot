@@ -31,11 +31,12 @@ _TIGHTEN_ON_INCREASE = {
     "min_adx", "min_volume_ratio", "min_bb_width_pct",
     "base_min_score", "min_score_after_3_losses", "min_score_after_5_losses",
     "extra_score_in_bad_regime", "max_score_cap",
+    "range_profit_exit_min_pct", "range_profit_exit_min_hours",
     "consecutive_losses_threshold",  # lower = earlier circuit break = tighter? Actually higher = looser. Higher threshold → tolerate more losses → looser
 }
 _LOOSEN_ON_INCREASE = {
     "max_entries_per_hour", "max_entries_per_symbol_per_candle",
-    "max_position_pct", "pnl_24h_threshold",  # less negative = looser
+    "max_position_pct", "max_open_shorts", "pnl_24h_threshold",  # less negative = looser
 }
 
 
