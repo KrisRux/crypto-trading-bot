@@ -377,6 +377,21 @@ export interface AdaptiveStatus {
   }
 }
 
+export interface TradingProfile {
+  description?: string
+  auto_apply?: boolean
+  requires_approval?: boolean
+  risk?: Record<string, number>
+  strategies?: Record<string, Record<string, unknown>>
+  regime?: Record<string, number>
+}
+
+export interface ProfilesResponse {
+  active: string
+  profiles: Record<string, TradingProfile>
+  switching_rules: Record<string, number>
+}
+
 // -- API calls --
 export const api = {
   login: (username: string, password: string) =>
@@ -441,6 +456,9 @@ export const api = {
     request<SkillItem[]>(category ? `/skills?category=${category}` : '/skills'),
   getSkill: (name: string) => request<SkillItem>(`/skills/${name}`),
   getAdaptiveStatus: () => request<AdaptiveStatus>('/adaptive/status'),
+  getProfiles: () => request<ProfilesResponse>('/adaptive/profiles'),
+  applyProfile: (profileName: string) =>
+    request<{ ok: boolean; active_profile: string }>(`/adaptive/profiles/${profileName}/apply`, { method: 'POST' }),
   getNewsSentiment: () => request<NewsSentiment>('/adaptive/news-sentiment'),
   getOllamaStatus: () => request<{
     deepseek?: { available: boolean; configured: boolean; model: string }

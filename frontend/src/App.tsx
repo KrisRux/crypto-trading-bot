@@ -15,6 +15,7 @@ import Diagnostics from './pages/Diagnostics'
 import GuardrailsConfig from './pages/GuardrailsConfig'
 import Approvals from './pages/Approvals'
 import Opportunities from './pages/Opportunities'
+import Profiles from './pages/Profiles'
 import Login from './pages/Login'
 import { api } from './api'
 import { Lang } from './i18n'
@@ -164,6 +165,7 @@ function AppContent() {
       label: l('Controllo', 'Control'),
       adminOnly: true,
       items: [
+        { to: '/profiles',    label: l('Profili', 'Profiles'),           adminOnly: true },
         { to: '/guardrails',  label: 'Guardrails',                           adminOnly: true },
         { to: '/approvals',   label: l('Approvazioni', 'Approvals'),         adminOnly: true, badge: pendingApprovalsCount },
         { to: '/diagnostics', label: 'Diagnostics',                          adminOnly: true },
@@ -317,6 +319,7 @@ function AppContent() {
             <Route path="/settings" element={<Settings />} />
             {isAdmin && <Route path="/users" element={<Users />} />}
             {isAdmin && <Route path="/diagnostics" element={<Diagnostics />} />}
+            {isAdmin && <Route path="/profiles" element={<Profiles />} />}
             {isAdmin && <Route path="/guardrails" element={<GuardrailsConfig />} />}
             {isAdmin && <Route path="/approvals" element={<Approvals />} />}
             <Route path="/login" element={<Navigate to="/" replace />} />
