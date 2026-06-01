@@ -14,6 +14,7 @@ venv/
 # Database
 *.db
 *.sqlite3
+*.db.bak
 
 # Logs
 logs/
@@ -38,6 +39,7 @@ Thumbs.db
 # Runtime state (never tracked — written at runtime by the bot)
 config/profile_state.json
 config/guardrails.local.json
+app/embient_skills/.repo_cache/
 risk_params.json
 strategy_params.json
 
