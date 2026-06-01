@@ -92,6 +92,7 @@ const SECTIONS: SectionDef[] = [
       { key: 'low_win_rate_threshold', label: 'Low Win Rate %', hint: 'Pause if win rate drops below', min: 0, max: 50, step: 1, type: 'integer' },
       { key: 'intraday_drawdown_threshold', label: 'Drawdown Threshold %', hint: 'Pause if drawdown exceeds', min: 0.5, max: 10, step: 0.5 },
       { key: 'pnl_24h_threshold', label: 'PnL 24h Threshold', hint: 'Pause if 24h PnL below (USDT)', min: -50, max: 0, step: 1 },
+      { key: 'pnl_24h_pct_threshold', label: 'PnL 24h Threshold %', hint: 'Pause if 24h PnL falls below this account percentage', min: -20, max: 0, step: 0.1 },
       { key: 'pause_minutes_losses', label: 'Pause (losses)', hint: 'Minutes to pause on loss trigger', min: 10, max: 480, step: 10, type: 'integer' },
       { key: 'pause_minutes_drawdown', label: 'Pause (drawdown)', hint: 'Minutes to pause on drawdown trigger', min: 10, max: 480, step: 10, type: 'integer' },
     ],

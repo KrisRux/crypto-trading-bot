@@ -122,6 +122,7 @@ class LLMAdvisor:
         """Human-readable explanation of current bot state."""
         global_regime = regime.get("global_regime", "unknown")
         pnl_6h = perf.get("pnl_6h", 0)
+        pnl_6h_pct = perf.get("pnl_6h_pct", 0)
         win_rate = perf.get("win_rate_last_10", 0)
         drawdown = perf.get("drawdown_intraday", 0)
         consec = perf.get("consecutive_losses", 0)
@@ -132,9 +133,9 @@ class LLMAdvisor:
         ]
 
         if pnl_6h > 0:
-            lines.append(f"Performance is positive (PnL 6h: +{pnl_6h:.2f} USDT).")
+            lines.append(f"Performance is positive (PnL 6h: +{pnl_6h:.2f} USDT, {pnl_6h_pct:.3f}%).")
         elif pnl_6h < 0:
-            lines.append(f"Performance is negative (PnL 6h: {pnl_6h:.2f} USDT).")
+            lines.append(f"Performance is negative (PnL 6h: {pnl_6h:.2f} USDT, {pnl_6h_pct:.3f}%).")
         else:
             lines.append("No recent PnL data.")
 
@@ -157,21 +158,22 @@ class LLMAdvisor:
         None means no change suggested.
         """
         pnl_6h = perf.get("pnl_6h", 0)
+        pnl_6h_pct = perf.get("pnl_6h_pct", 0)
         consec = perf.get("consecutive_losses", 0)
         drawdown = perf.get("drawdown_intraday", 0)
         win_rate = perf.get("win_rate_last_10", 0)
         global_regime = regime.get("global_regime", "unknown")
 
         # Strong defensive signal
-        if (pnl_6h <= -2 or consec >= 3 or drawdown >= 1.5) and current != "defensive":
+        if (pnl_6h_pct <= -0.25 or consec >= 3 or drawdown >= 1.5) and current != "defensive":
             return {"profile": "defensive", "confidence": 0.9}
 
         # Recovery from defensive
-        if current == "defensive" and win_rate >= 55 and drawdown < 1.0 and pnl_6h >= 0:
+        if current == "defensive" and win_rate >= 55 and drawdown < 1.0 and pnl_6h_pct >= 0:
             return {"profile": "normal", "confidence": 0.7}
 
         # Aggressive opportunity
-        if current == "normal" and global_regime == "trend" and win_rate >= 60 and pnl_6h > 0:
+        if current == "normal" and global_regime == "trend" and win_rate >= 60 and pnl_6h_pct > 0:
             return {"profile": "aggressive_trend", "confidence": 0.6}
 
         # Market turned volatile/defensive while aggressive

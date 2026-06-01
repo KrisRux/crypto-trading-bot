@@ -5,6 +5,7 @@
     "min_trades_for_win_rate_check": 5,
     "intraday_drawdown_threshold": 2.0,
     "pnl_24h_threshold": -6.0,
+    "pnl_24h_pct_threshold": -0.3,
     "pause_minutes_losses": 90,
     "pause_minutes_drawdown": 120
   },

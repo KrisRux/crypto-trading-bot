@@ -140,6 +140,7 @@ class KillSwitch:
         self.min_trades_for_wr = c.get("min_trades_for_win_rate_check", 5)
         self.dd_thresh = c.get("intraday_drawdown_threshold", 2.0)
         self.pnl_24h_thresh = c.get("pnl_24h_threshold", -6.0)
+        self.pnl_24h_pct_thresh = c.get("pnl_24h_pct_threshold", -0.3)
         self.pause_min_losses = c.get("pause_minutes_losses", 90)
         self.pause_min_dd = c.get("pause_minutes_drawdown", 120)
         self._active = False
@@ -177,6 +178,7 @@ class KillSwitch:
         wr = perf.get("win_rate_last_10", 100)
         dd = perf.get("drawdown_intraday", 0)
         pnl24 = perf.get("pnl_24h", 0)
+        pnl24_pct = perf.get("pnl_24h_pct")
         total_trades = perf.get("total_recent_trades", 0)
 
         if consec >= self.consec_loss_thresh:
@@ -187,7 +189,9 @@ class KillSwitch:
             self._activate("low_win_rate", wr, self.pause_min_losses)
         elif dd >= self.dd_thresh:
             self._activate("intraday_drawdown", dd, self.pause_min_dd)
-        elif pnl24 <= self.pnl_24h_thresh:
+        elif pnl24_pct is not None and pnl24_pct <= self.pnl_24h_pct_thresh:
+            self._activate("pnl_24h_pct_severe", pnl24_pct, self.pause_min_dd)
+        elif pnl24_pct is None and pnl24 <= self.pnl_24h_thresh:
             self._activate("pnl_24h_severe", pnl24, self.pause_min_dd)
 
     def _activate(self, reason: str, value: Any, pause_minutes: int):
@@ -684,6 +688,7 @@ class Guardrails:
         self.kill_switch.low_wr_thresh = ks_cfg.get("low_win_rate_threshold", 15)
         self.kill_switch.dd_thresh = ks_cfg.get("intraday_drawdown_threshold", 2.0)
         self.kill_switch.pnl_24h_thresh = ks_cfg.get("pnl_24h_threshold", -6.0)
+        self.kill_switch.pnl_24h_pct_thresh = ks_cfg.get("pnl_24h_pct_threshold", -0.3)
         self.kill_switch.pause_min_losses = ks_cfg.get("pause_minutes_losses", 90)
         self.kill_switch.pause_min_dd = ks_cfg.get("pause_minutes_drawdown", 120)
 

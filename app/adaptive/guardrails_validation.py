@@ -39,6 +39,9 @@ def validate_guardrails_values(cfg: dict) -> list[str]:
     # Kill switch
     ks = cfg.get("kill_switch", {})
     _check("kill_switch.consecutive_losses_threshold", ks.get("consecutive_losses_threshold", 6), 2, 20, (int,))
+    _check("kill_switch.intraday_drawdown_threshold", ks.get("intraday_drawdown_threshold", 2.0), 0.1, 20, (int, float))
+    _check("kill_switch.pnl_24h_threshold", ks.get("pnl_24h_threshold", -6.0), -10000, 0, (int, float))
+    _check("kill_switch.pnl_24h_pct_threshold", ks.get("pnl_24h_pct_threshold", -0.3), -20, 0, (int, float))
     _check("kill_switch.pause_minutes_losses", ks.get("pause_minutes_losses", 90), 10, 480, (int,))
     _check("kill_switch.pause_minutes_drawdown", ks.get("pause_minutes_drawdown", 120), 10, 480, (int,))
 

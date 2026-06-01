@@ -1755,6 +1755,7 @@ def reset_guardrails_config(admin: dict = Depends(require_admin)):
         "kill_switch": {
             "consecutive_losses_threshold": 6, "low_win_rate_threshold": 15,
             "intraday_drawdown_threshold": 2.0, "pnl_24h_threshold": -6.0,
+            "pnl_24h_pct_threshold": -0.3,
             "pause_minutes_losses": 90, "pause_minutes_drawdown": 120,
         },
         "symbol_cooldown": {

@@ -144,14 +144,14 @@ class ProfileManager:
 
     def _determine_target(self, current: str, perf: dict, regime: str) -> str | None:
         """Deterministic switching rules."""
-        pnl_6h = perf.get("pnl_6h", 0)
+        pnl_6h_pct = perf.get("pnl_6h_pct", 0)
         consec_losses = perf.get("consecutive_losses", 0)
         drawdown = perf.get("drawdown_intraday", 0)
         win_rate = perf.get("win_rate_last_10", 50)
 
         # Rule 1: normal → defensive
         if current == "normal":
-            if pnl_6h <= -2 or consec_losses >= 3 or drawdown >= 1.5:
+            if pnl_6h_pct <= -0.25 or consec_losses >= 3 or drawdown >= 1.5:
                 return "defensive"
 
         # Rule 2: defensive → normal
@@ -166,7 +166,7 @@ class ProfileManager:
 
         # Rule 3: normal → aggressive_trend (requires approval + min trades)
         if current == "normal" and regime == "trend":
-            if win_rate >= 60 and perf.get("pnl_6h", 0) > 0:
+            if win_rate >= 60 and perf.get("pnl_6h_pct", 0) > 0:
                 # Enforce min_trades_for_upgrade before allowing aggressive switch
                 min_trades = self._switching_rules.get("min_trades_for_upgrade", 5)
                 total_recent_trades = perf.get("total_recent_trades", 0)
@@ -180,7 +180,7 @@ class ProfileManager:
 
         # Rule 4: aggressive → defensive if things go wrong
         if current == "aggressive_trend":
-            if pnl_6h <= -2 or consec_losses >= 2 or drawdown >= 1.5:
+            if pnl_6h_pct <= -0.25 or consec_losses >= 2 or drawdown >= 1.5:
                 return "defensive"
 
         # Rule 5: volatile / defensive regime → defensive profile
@@ -192,8 +192,8 @@ class ProfileManager:
     def _build_reason(self, from_p: str, to_p: str, perf: dict, regime: str) -> str:
         parts = []
         if to_p == "defensive":
-            if perf.get("pnl_6h", 0) <= -2:
-                parts.append(f"PnL 6h = {perf['pnl_6h']:.2f}")
+            if perf.get("pnl_6h_pct", 0) <= -0.25:
+                parts.append(f"PnL 6h = {perf.get('pnl_6h', 0):.2f} ({perf.get('pnl_6h_pct', 0):.3f}%)")
             if perf.get("consecutive_losses", 0) >= 3:
                 parts.append(f"{perf['consecutive_losses']} consecutive losses")
             if perf.get("drawdown_intraday", 0) >= 1.5:

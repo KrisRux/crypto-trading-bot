@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
+from app.models.portfolio import PaperPortfolio
 from app.models.trade import Trade, TradeStatus
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,9 @@ class PerformanceSnapshot:
     pnl_1h: float = 0.0
     pnl_6h: float = 0.0
     pnl_24h: float = 0.0
+    pnl_1h_pct: float = 0.0
+    pnl_6h_pct: float = 0.0
+    pnl_24h_pct: float = 0.0
     win_rate_last_10: float = 0.0
     drawdown_intraday: float = 0.0
     consecutive_losses: int = 0
@@ -43,6 +47,9 @@ class PerformanceSnapshot:
             "pnl_1h": round(self.pnl_1h, 4),
             "pnl_6h": round(self.pnl_6h, 4),
             "pnl_24h": round(self.pnl_24h, 4),
+            "pnl_1h_pct": round(self.pnl_1h_pct, 4),
+            "pnl_6h_pct": round(self.pnl_6h_pct, 4),
+            "pnl_24h_pct": round(self.pnl_24h_pct, 4),
             "win_rate_last_10": round(self.win_rate_last_10, 1),
             "drawdown_intraday": round(self.drawdown_intraday, 3),
             "consecutive_losses": self.consecutive_losses,
@@ -110,6 +117,10 @@ class PerformanceMonitor:
         pnl_1h = sum(t.pnl or 0 for t in trades if t.closed_at and t.closed_at >= cutoff_1h)
         pnl_6h = sum(t.pnl or 0 for t in trades if t.closed_at and t.closed_at >= cutoff_6h)
         pnl_24h = sum(t.pnl or 0 for t in trades if t.closed_at and t.closed_at >= cutoff_24h)
+        capital_base = self._capital_base(db)
+        pnl_1h_pct = pnl_1h / capital_base * 100 if capital_base else 0.0
+        pnl_6h_pct = pnl_6h / capital_base * 100 if capital_base else 0.0
+        pnl_24h_pct = pnl_24h / capital_base * 100 if capital_base else 0.0
 
         # Total recent trades (last 24h) — for min_trades_for_upgrade check
         total_recent_trades = sum(1 for t in trades if t.closed_at and t.closed_at >= cutoff_24h)
@@ -149,12 +160,15 @@ class PerformanceMonitor:
             t for t in reversed(trades)
             if t.closed_at and t.closed_at >= midnight
         ]
-        drawdown = self._calc_drawdown(today_trades)
+        drawdown = self._calc_drawdown(today_trades, capital_base)
 
         snap = PerformanceSnapshot(
             pnl_1h=pnl_1h,
             pnl_6h=pnl_6h,
             pnl_24h=pnl_24h,
+            pnl_1h_pct=pnl_1h_pct,
+            pnl_6h_pct=pnl_6h_pct,
+            pnl_24h_pct=pnl_24h_pct,
             win_rate_last_10=win_rate,
             drawdown_intraday=drawdown,
             consecutive_losses=consec_losses,
@@ -165,28 +179,33 @@ class PerformanceMonitor:
         )
         self._snapshot = snap
         logger.info(
-            "PERF_MONITOR: PnL 1h=%.2f 6h=%.2f 24h=%.2f | WR=%.0f%% | "
+            "PERF_MONITOR: PnL 1h=%.2f 6h=%.2f 24h=%.2f | PnL%% 6h=%.3f 24h=%.3f | WR=%.0f%% | "
             "DD=%.2f%% | ConsecLoss=%d | Trades/h=%.1f | Cooldowns=%d | Errors=%d",
-            pnl_1h, pnl_6h, pnl_24h, win_rate, drawdown,
+            pnl_1h, pnl_6h, pnl_24h, pnl_6h_pct, pnl_24h_pct, win_rate, drawdown,
             consec_losses, trades_per_hour, self._cooldown_hits, self._api_errors,
         )
         return snap
 
-    def _calc_drawdown(self, trades_chronological: list[Trade]) -> float:
-        """Max drawdown % from cumulative PnL curve."""
+    def _capital_base(self, db: Session) -> float:
+        portfolios = db.query(PaperPortfolio).all()
+        capital = sum(float(p.initial_capital or 0) for p in portfolios)
+        return capital if capital > 0 else 10000.0
+
+    def _calc_drawdown(self, trades_chronological: list[Trade], capital_base: float = 10000.0) -> float:
+        """Max intraday drawdown as account-equity %, not per-trade PnL %."""
         if not trades_chronological:
             return 0.0
         cumulative = 0.0
         peak = 0.0
         max_dd = 0.0
         for t in trades_chronological:
-            cumulative += (t.pnl_pct or 0)
+            cumulative += (t.pnl or 0)
             if cumulative > peak:
                 peak = cumulative
             dd = peak - cumulative
             if dd > max_dd:
                 max_dd = dd
-        return max_dd
+        return max_dd / capital_base * 100 if capital_base else 0.0
 
     def reset_counters(self):
         """Reset per-cycle counters (cooldown hits, API errors). Call daily."""

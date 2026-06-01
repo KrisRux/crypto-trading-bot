@@ -93,7 +93,7 @@ Your job is to suggest concrete, data-driven parameter adjustments — even when
 - Global regime: {global_regime} | Active profile: {active_profile}
 - Win rate (last 10 trades): {win_rate:.1f}% — TARGET: >35%
 - Consecutive losses: {consecutive_losses} | Intraday drawdown: {drawdown:.2f}%
-- PnL 24h: {pnl_24h:.2f} USDT | Trades per hour: {trades_per_hour:.2f}
+- PnL 24h: {pnl_24h:.2f} USDT ({pnl_24h_pct:.3f}%) | Trades per hour: {trades_per_hour:.2f}
 - Signals blocked: {total_blocked} | Passed: {total_passed} | Block rate: {block_rate:.0f}%
 - Dominant block reason: {top_block_source}
 
@@ -302,6 +302,7 @@ async def generate_suggestions(
         consecutive_losses=perf.get("consecutive_losses", 0),
         drawdown=perf.get("drawdown_intraday", 0),
         pnl_24h=perf.get("pnl_24h", 0),
+        pnl_24h_pct=perf.get("pnl_24h_pct", 0),
         trades_per_hour=perf.get("trades_per_hour", 0),
         total_blocked=total_blocked,
         total_passed=total_passed,
