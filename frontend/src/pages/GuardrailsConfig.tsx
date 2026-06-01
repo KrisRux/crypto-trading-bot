@@ -733,6 +733,9 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
     return <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${cls}`}>{status}</span>
   }
 
+  const fmtMetric = (value: unknown, digits = 0) =>
+    typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : '-'
+
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
       <div className="px-4 py-3 flex items-center justify-between border-b border-gray-800">
@@ -811,12 +814,12 @@ function TuningAdvisorSection({ onApplyChanges, l }: {
 
             {/* Context snapshot */}
             <div className="flex flex-wrap gap-3 text-[10px] text-gray-600">
-              <span>Regime: {suggestion.global_regime}</span>
-              <span>WR: {suggestion.win_rate?.toFixed(0)}%</span>
-              <span>DD: {suggestion.drawdown?.toFixed(2)}%</span>
-              <span>CL: {suggestion.consecutive_losses}</span>
-              <span>Blocked: {suggestion.total_blocked}</span>
-              <span>Passed: {suggestion.total_passed}</span>
+              <span>Regime: {suggestion.global_regime || '-'}</span>
+              <span>WR: {fmtMetric(suggestion.win_rate)}%</span>
+              <span>DD: {fmtMetric(suggestion.drawdown, 2)}%</span>
+              <span>CL: {fmtMetric(suggestion.consecutive_losses)}</span>
+              <span>Blocked: {fmtMetric(suggestion.total_blocked)}</span>
+              <span>Passed: {fmtMetric(suggestion.total_passed)}</span>
             </div>
 
             {/* Actions */}
