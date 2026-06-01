@@ -33,15 +33,16 @@ function embientSummary(profile: TradingProfile): [string, unknown][] {
 export default function Profiles() {
   const { l } = useLang()
   const fetchProfiles = useCallback(() => api.getProfiles(), [])
-  const [data, loading, , refetch] = usePolling<ProfilesResponse>(fetchProfiles, 10000)
+  const [data, loading, loadError, refetch] = usePolling<ProfilesResponse>(fetchProfiles, 10000)
   const [busyProfile, setBusyProfile] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  const entries = useMemo(
-    () => Object.entries(data?.profiles || {}).sort(([a], [b]) => a.localeCompare(b)),
-    [data]
-  )
+  const invalidPayload = Boolean(data && (!data.profiles || typeof data.active !== 'string'))
+  const entries = useMemo(() => {
+    if (!data?.profiles) return []
+    return Object.entries(data.profiles).sort(([a], [b]) => a.localeCompare(b))
+  }, [data])
 
   const applyProfile = async (name: string) => {
     setBusyProfile(name)
@@ -75,6 +76,11 @@ export default function Profiles() {
       {error && (
         <div role="alert" className="bg-red-900/30 border border-red-800/50 text-red-300 px-4 py-2 rounded text-sm">
           {error}
+        </div>
+      )}
+      {(loadError || invalidPayload) && (
+        <div role="alert" className="bg-red-900/30 border border-red-800/50 text-red-300 px-4 py-2 rounded text-sm">
+          {loadError || l('Risposta profili non valida dal backend.', 'Invalid profiles response from backend.')}
         </div>
       )}
       {success && (

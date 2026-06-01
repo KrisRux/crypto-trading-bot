@@ -2199,10 +2199,6 @@ async def llm_status(_admin: dict = Depends(require_admin)):
         "configured_model": settings.deepseek_model if deepseek_ok else (settings.ollama_model if ollama_ok else "rules"),
     }
 
-
-@router.get("/adaptive/profiles")
-
-
 @router.get("/adaptive/news-sentiment")
 async def get_news_sentiment(_user: dict = Depends(require_auth)):
     """Return current news sentiment snapshot. Triggers refresh if stale."""
