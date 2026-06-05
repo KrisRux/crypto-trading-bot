@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.models.portfolio import PaperPortfolio, PaperPosition
 from app.models.trade import Trade, TradeStatus, OrderSide, Order, OrderType, OrderStatus
 from app.config import settings
+from app.pnl import compute_pnl
 
 logger = logging.getLogger(__name__)
 
@@ -55,14 +56,14 @@ class PaperPortfolioManager:
                       side: OrderSide = OrderSide.BUY,
                       strategy: str = "paper"):
         portfolio = self.get_or_create(db, user_id)
-        fill_price = self._apply_slippage(price, side)
-        cost = quantity * fill_price
-        fee = self._fee(cost)
-        total_cost = cost + fee
+        # Quoted entry price. Fees AND slippage are charged once, at close, via
+        # app.pnl.compute_pnl — one cost model shared across the whole bot.
+        fill_price = price
+        notional = quantity * fill_price
 
-        if total_cost > portfolio.cash_balance:
+        if notional > portfolio.cash_balance:
             logger.warning("User %d: insufficient paper balance (need %.2f, have %.2f)",
-                           user_id, total_cost, portfolio.cash_balance)
+                           user_id, notional, portfolio.cash_balance)
             return None
 
         order = Order(
@@ -88,13 +89,14 @@ class PaperPortfolioManager:
         )
         db.add(trade)
 
-        portfolio.cash_balance -= total_cost
-        portfolio.total_equity = portfolio.cash_balance + cost
+        # Reserve the position notional from cash; round-trip cost realised at close.
+        portfolio.cash_balance -= notional
+        portfolio.total_equity = portfolio.cash_balance + notional
         portfolio.total_trades += 1
         db.commit()
 
-        logger.info("User %d: Paper %s %s qty=%.6f @ %.2f fee=%.4f",
-                     user_id, side.value, symbol, quantity, fill_price, fee)
+        logger.info("User %d: Paper %s %s qty=%.6f @ %.4f (notional=%.2f reserved)",
+                     user_id, side.value, symbol, quantity, fill_price, notional)
         return position
 
     def close_position(self, db: Session, position: PaperPosition,
@@ -107,24 +109,19 @@ class PaperPortfolioManager:
 
         entry_side = OrderSide.SELL if position.side == "SELL" else OrderSide.BUY
         exit_side = OrderSide.BUY if entry_side == OrderSide.SELL else OrderSide.SELL
-        fill_price = self._apply_slippage(exit_price, exit_side)
-        proceeds = position.quantity * fill_price
-        exit_fee = self._fee(proceeds)
-        cost = position.quantity * position.entry_price
-        entry_fee = self._fee(cost)
-        if entry_side == OrderSide.SELL:
-            pnl = cost - proceeds - entry_fee - exit_fee
-            cash_delta = cost + entry_fee + pnl
-        else:
-            net_proceeds = proceeds - exit_fee
-            pnl = net_proceeds - cost - entry_fee
-            cash_delta = net_proceeds
-        pnl_pct = (pnl / (cost + entry_fee)) * 100 if cost > 0 else 0
+
+        # Single source of truth for fees/slippage/net (app.pnl). Quoted exit price;
+        # the full round-trip cost (both legs) is charged here.
+        r = compute_pnl(
+            entry_side.value, position.entry_price, exit_price, position.quantity,
+            self.fee_pct, self.slippage_pct,
+        )
+        notional = position.quantity * position.entry_price
 
         order = Order(
             user_id=position.user_id, symbol=position.symbol,
             side=exit_side, order_type=OrderType.MARKET,
-            quantity=position.quantity, filled_price=fill_price,
+            quantity=position.quantity, filled_price=exit_price,
             status=OrderStatus.FILLED, mode="paper",
         )
         db.add(order)
@@ -136,28 +133,44 @@ class PaperPortfolioManager:
             Trade.status == TradeStatus.OPEN,
             Trade.mode == "paper",
             Trade.side == entry_side,
-        ).first()
+        ).order_by(Trade.opened_at.asc()).first()
         if open_trade:
-            open_trade.exit_price = fill_price
-            open_trade.pnl = pnl
-            open_trade.pnl_pct = pnl_pct
+            open_trade.exit_price = exit_price
+            open_trade.gross_pnl = r.gross_pnl
+            open_trade.fee = r.fee
+            open_trade.slippage = r.slippage
+            open_trade.pnl = r.net_pnl
+            open_trade.pnl_pct = r.net_pnl_pct
+            open_trade.exit_reason = reason
             open_trade.status = TradeStatus.CLOSED
             open_trade.exit_order_id = order.id
             open_trade.closed_at = datetime.now(timezone.utc)
 
-        portfolio.cash_balance += cash_delta
-        portfolio.total_pnl += pnl
-        if pnl > 0:
+        # Return the reserved notional plus the NET result to cash.
+        portfolio.cash_balance += notional + r.net_pnl
+        portfolio.total_pnl += r.net_pnl
+        if r.net_pnl > 0:
             portfolio.winning_trades += 1
         else:
             portfolio.losing_trades += 1
 
+        # Keep total_equity ~in sync (the API endpoint still does live mark-to-market).
+        other_open = db.query(PaperPosition).filter(
+            PaperPosition.user_id == position.user_id,
+            PaperPosition.id != position.id,
+        ).all()
+        open_notional = sum((p.quantity or 0) * (p.entry_price or 0) for p in other_open)
+        portfolio.total_equity = portfolio.cash_balance + open_notional
+
         db.delete(position)
         db.commit()
 
-        logger.info("User %d: Paper close %s (%s) %s qty=%.6f @ %.2f fee=%.4f PnL=%.2f",
-                     position.user_id, position.side, reason, position.symbol,
-                     position.quantity, fill_price, exit_fee, pnl)
+        logger.info(
+            "User %d: Paper close %s (%s) %s qty=%.6f @ %.4f "
+            "gross=%.4f fee=%.4f slip=%.4f NET=%.4f",
+            position.user_id, position.side, reason, position.symbol,
+            position.quantity, exit_price, r.gross_pnl, r.fee, r.slippage, r.net_pnl,
+        )
 
     def close_all_positions(self, db: Session, user_id: int,
                             symbol: str, exit_price: float):
@@ -186,20 +199,22 @@ class PaperPortfolioManager:
             pos.current_price = current_price
             if pos.side == "SELL":
                 pos.unrealized_pnl = (pos.entry_price - current_price) * pos.quantity
-                if pos.take_profit and (low <= pos.take_profit or current_price <= pos.take_profit):
-                    self.close_position(db, pos, current_price, "take_profit")
-                    closed.append((pos, "take_profit"))
-                elif pos.stop_loss and (high >= pos.stop_loss or current_price >= pos.stop_loss):
-                    self.close_position(db, pos, current_price, "stop_loss")
+                # short: SL (price up = loss) checked FIRST, then TP; exit AT the level
+                if pos.stop_loss and (high >= pos.stop_loss or current_price >= pos.stop_loss):
+                    self.close_position(db, pos, pos.stop_loss, "stop_loss")
                     closed.append((pos, "stop_loss"))
+                elif pos.take_profit and (low <= pos.take_profit or current_price <= pos.take_profit):
+                    self.close_position(db, pos, pos.take_profit, "take_profit")
+                    closed.append((pos, "take_profit"))
             else:
                 pos.unrealized_pnl = (current_price - pos.entry_price) * pos.quantity
-                if pos.take_profit and (high >= pos.take_profit or current_price >= pos.take_profit):
-                    self.close_position(db, pos, current_price, "take_profit")
-                    closed.append((pos, "take_profit"))
-                elif pos.stop_loss and (low <= pos.stop_loss or current_price <= pos.stop_loss):
-                    self.close_position(db, pos, current_price, "stop_loss")
+                # long: SL (price down = loss) checked FIRST, then TP; exit AT the level
+                if pos.stop_loss and (low <= pos.stop_loss or current_price <= pos.stop_loss):
+                    self.close_position(db, pos, pos.stop_loss, "stop_loss")
                     closed.append((pos, "stop_loss"))
+                elif pos.take_profit and (high >= pos.take_profit or current_price >= pos.take_profit):
+                    self.close_position(db, pos, pos.take_profit, "take_profit")
+                    closed.append((pos, "take_profit"))
 
         if not closed:
             db.commit()
@@ -215,6 +230,12 @@ class PaperPortfolioManager:
         db.query(Trade).filter(
             Trade.user_id == user_id,
             Trade.mode == "paper",
+        ).delete(synchronize_session=False)
+        # Delete paper orders too — previously orphaned on reset, which made the
+        # orders table drift out of sync with trades (e.g. 1040 orders / 248 trades).
+        db.query(Order).filter(
+            Order.user_id == user_id,
+            Order.mode == "paper",
         ).delete(synchronize_session=False)
         # Reset portfolio counters
         portfolio.cash_balance = portfolio.initial_capital
