@@ -218,13 +218,14 @@ class TradingEngine:
         current_price: float,
         candle_high: float | None = None,
         candle_low: float | None = None,
-    ) -> str | None:
+    ) -> tuple[str, float] | None:
+        """Exit reason + trigger level for a SHORT. SL (price up) checked first."""
         high = candle_high if candle_high is not None else current_price
         low = candle_low if candle_low is not None else current_price
-        if trade.take_profit and (low <= trade.take_profit or current_price <= trade.take_profit):
-            return "tp"
         if trade.stop_loss and (high >= trade.stop_loss or current_price >= trade.stop_loss):
-            return "sl"
+            return ("sl", trade.stop_loss)
+        if trade.take_profit and (low <= trade.take_profit or current_price <= trade.take_profit):
+            return ("tp", trade.take_profit)
         return None
 
     def _sell_signal_score(self, signal: Signal) -> float:
@@ -837,32 +838,36 @@ class TradingEngine:
             self._apply_profit_lock(db, trade, current_price)
             db.refresh(trade)
             if trade.side == OrderSide.SELL:
-                result = self._short_close_reason(
+                close = self._short_close_reason(
                     trade, current_price, candle_high=candle_high, candle_low=candle_low
                 )
-                if not result:
-                    result = self._stale_position_reason(trade, current_price)
-                if result:
+                if close:
+                    exit_reason, exit_level = close
+                else:
+                    exit_reason, exit_level = self._stale_position_reason(trade, current_price), current_price
+                if exit_reason:
                     position = db.query(PaperPosition).filter(
                         PaperPosition.user_id == user.id,
                         PaperPosition.symbol == symbol,
                         PaperPosition.side == "SELL",
                     ).first()
                     if position:
-                        self.paper_portfolio.close_position(db, position, current_price, result)
+                        self.paper_portfolio.close_position(db, position, exit_level, exit_reason)
                         db.refresh(trade)
                         if trade.status == TradeStatus.CLOSED:
-                            self._record_trade_close(trade, result)
+                            self._record_trade_close(trade, exit_reason)
                 continue
 
-            result = self.risk_manager.should_close_position(
+            close = self.risk_manager.should_close_position(
                 trade.entry_price, current_price, trade.stop_loss, trade.take_profit,
-                candle_high=candle_high, candle_low=candle_low,
+                candle_high=candle_high, candle_low=candle_low, side=trade.side,
             )
-            if not result:
-                result = self._stale_position_reason(trade, current_price)
-            if result:
-                await self._close_trade(db, user, trade, current_price, result, client, order_mgr)
+            if close:
+                exit_reason, exit_level = close
+            else:
+                exit_reason, exit_level = self._stale_position_reason(trade, current_price), current_price
+            if exit_reason:
+                await self._close_trade(db, user, trade, exit_level, exit_reason, client, order_mgr)
 
         if not within_hours:
             await client.close()
@@ -1177,15 +1182,17 @@ class TradingEngine:
         for trade in open_trades:
             self._apply_profit_lock(db, trade, current_price)
             db.refresh(trade)
-            result = self.risk_manager.should_close_position(
+            close = self.risk_manager.should_close_position(
                 trade.entry_price, current_price,
                 trade.stop_loss, trade.take_profit,
-                candle_high=candle_high, candle_low=candle_low,
+                candle_high=candle_high, candle_low=candle_low, side=trade.side,
             )
-            if not result:
-                result = self._stale_position_reason(trade, current_price)
-            if result:
-                await self._close_trade(db, user, trade, current_price, result, client, order_mgr)
+            if close:
+                exit_reason, exit_level = close
+            else:
+                exit_reason, exit_level = self._stale_position_reason(trade, current_price), current_price
+            if exit_reason:
+                await self._close_trade(db, user, trade, exit_level, exit_reason, client, order_mgr)
 
         if not within_hours:
             await client.close()
