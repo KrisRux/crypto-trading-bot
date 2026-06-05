@@ -15,10 +15,10 @@ from app.api.auth import create_token, decode_token
 
 def test_hash_password_produces_salt():
     h = hash_password("mypassword")
-    assert "$" in h
-    salt, digest = h.split("$")
-    assert len(salt) == 32  # 16 bytes hex
-    assert len(digest) == 64  # sha256 hex
+    # bcrypt hashes embed the salt and start with the $2b$/$2a$ identifier
+    assert h.startswith("$2b$") or h.startswith("$2a$")
+    assert verify_password("mypassword", h)
+    assert not verify_password("wrongpassword", h)
 
 
 def test_verify_password_correct():

@@ -101,13 +101,20 @@ def _write_guardrails_config(config: dict):
 
 def _paper_cost_estimate(trade: Trade) -> dict:
     entry_notional = (trade.entry_price or 0) * (trade.quantity or 0)
-    exit_price = trade.exit_price if trade.exit_price is not None else trade.entry_price
-    exit_notional = (exit_price or 0) * (trade.quantity or 0)
-    fees = (entry_notional + exit_notional) * (settings.paper_fee_pct / 100)
-    slippage = (entry_notional + exit_notional) * (settings.paper_slippage_pct / 100)
-    gross = trade.pnl or 0
-    net = gross - fees - slippage if trade.pnl is not None else None
-    basis = entry_notional + (entry_notional * settings.paper_fee_pct / 100)
+    # Prefer the values stored at close (single source of truth — app.pnl). trade.pnl
+    # is already NET; only fall back to a post-hoc estimate for legacy rows that
+    # predate the gross_pnl/fee/slippage columns (avoids double-counting fees).
+    if trade.fee is not None and trade.slippage is not None:
+        fees = trade.fee or 0.0
+        slippage = trade.slippage or 0.0
+        net = trade.pnl
+    else:
+        exit_price = trade.exit_price if trade.exit_price is not None else trade.entry_price
+        exit_notional = (exit_price or 0) * (trade.quantity or 0)
+        fees = (entry_notional + exit_notional) * (settings.paper_fee_pct / 100)
+        slippage = (entry_notional + exit_notional) * (settings.paper_slippage_pct / 100)
+        net = trade.pnl - fees - slippage if trade.pnl is not None else None
+    basis = entry_notional
     return {
         "estimated_roundtrip_fee": round(fees, 6),
         "estimated_roundtrip_slippage": round(slippage, 6),
@@ -118,7 +125,12 @@ def _paper_cost_estimate(trade: Trade) -> dict:
 
 
 def _summarize_trades(group: list[Trade]) -> dict:
-    gross = sum(t.pnl or 0 for t in group)
+    # trade.pnl is NET (after fees+slippage); gross_pnl column holds the price-only
+    # PnL. Win/loss is judged on NET — the honest measure. No fee re-subtraction.
+    def _gross(t: Trade) -> float:
+        return t.gross_pnl if t.gross_pnl is not None else (t.pnl or 0)
+    gross = sum(_gross(t) for t in group)
+    net = sum(t.pnl or 0 for t in group)
     wins = sum(1 for t in group if (t.pnl or 0) > 0)
     losses = sum(1 for t in group if (t.pnl or 0) < 0)
     costs = [_paper_cost_estimate(t) for t in group]
@@ -129,10 +141,11 @@ def _summarize_trades(group: list[Trade]) -> dict:
     return {
         "trades": len(group),
         "gross_pnl": round(gross, 6),
+        "net_pnl": round(net, 6),
         "estimated_roundtrip_fees": round(estimated_fees, 6),
         "estimated_roundtrip_slippage": round(estimated_slippage, 6),
         "estimated_roundtrip_cost": round(estimated_cost, 6),
-        "estimated_net_pnl": round(gross - estimated_cost, 6),
+        "estimated_net_pnl": round(net, 6),
         "wins": wins,
         "losses": losses,
         "win_rate": round(wins / len(group) * 100, 2) if group else 0,

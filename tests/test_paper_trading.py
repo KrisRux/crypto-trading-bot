@@ -153,25 +153,34 @@ def test_short_position_tp_sl_are_inverted(db_session, manager):
 
 
 def test_paper_trading_deducts_fee_and_slippage(db_session):
+    from app.pnl import compute_pnl
     manager = PaperPortfolioManager(fee_pct=0.1, slippage_pct=0.02)
     manager.get_or_create(db_session, TEST_USER_ID)
     pos = manager.open_position(db_session, TEST_USER_ID, "BTCUSDT", 0.1, 50000, 48500, 52500)
     assert pos is not None
 
     portfolio = manager.get_or_create(db_session, TEST_USER_ID)
-    buy_fill = 50000 * 1.0002
-    entry_cost = 0.1 * buy_fill
-    entry_fee = entry_cost * 0.001
-    assert portfolio.cash_balance == pytest.approx(10000 - entry_cost - entry_fee)
+    # Open reserves the position notional; the round-trip cost is charged at close.
+    notional = 0.1 * 50000
+    assert portfolio.cash_balance == pytest.approx(10000 - notional)
 
     manager.close_position(db_session, pos, 52000, "manual")
 
-    sell_fill = 52000 * 0.9998
-    proceeds = 0.1 * sell_fill
-    exit_fee = proceeds * 0.001
-    expected_pnl = proceeds - exit_fee - entry_cost - entry_fee
-    assert portfolio.total_pnl == pytest.approx(expected_pnl)
+    # Net PnL comes from the single source of truth (app.pnl): fee + slippage on
+    # BOTH legs are subtracted from the price-only gross.
+    r = compute_pnl("BUY", 50000, 52000, 0.1, 0.1, 0.02)
+    assert r.net_pnl < r.gross_pnl
+    assert portfolio.total_pnl == pytest.approx(r.net_pnl)
+    assert portfolio.cash_balance == pytest.approx(10000 + r.net_pnl)
     assert portfolio.winning_trades == 1
+
+    # the trade row records the full cost breakdown
+    trade = db_session.query(Trade).filter(Trade.user_id == TEST_USER_ID).first()
+    assert trade.gross_pnl == pytest.approx(r.gross_pnl)
+    assert trade.fee == pytest.approx(r.fee)
+    assert trade.slippage == pytest.approx(r.slippage)
+    assert trade.pnl == pytest.approx(r.net_pnl)
+    assert trade.exit_reason == "manual"
 
 
 def test_check_tp_sl_take_profit(db_session, manager):
@@ -234,6 +243,10 @@ def test_reset_portfolio(db_session, manager):
         PaperPosition.user_id == TEST_USER_ID
     ).all()
     assert len(positions) == 0
+
+    # reset must also clear paper orders (previously orphaned -> order/trade drift)
+    orders = db_session.query(Order).filter(Order.user_id == TEST_USER_ID).all()
+    assert len(orders) == 0
 
 
 def test_export_csv(db_session, manager):

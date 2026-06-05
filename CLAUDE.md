@@ -172,7 +172,9 @@ app/
 ├── database.py
 ├── logging_config.py
 ├── strategy_store.py
+├── pnl.py                # contabilita PnL netta centralizzata (fonte di verita)
 ├── api/
+├── backtesting/          # harness backtest event-driven, no-lookahead, walk-forward
 ├── adaptive/
 │   ├── market_regime_service.py
 │   ├── performance_monitor.py
@@ -207,6 +209,20 @@ deploy/
 - Se aggiungi colonne al DB, usa la funzione `_migrate_add_columns()` in `database.py` per retrocompatibilita con DB esistenti.
 - I profili e le switching rules devono restare editabili senza deploy (via API o JSON).
 - Il Telegram chat_id e per-utente (DB), il bot_token e server-wide (.env).
+
+## Aggiornamento redditivita (2026-06) — vedi docs/PROFITABILITY_OVERHAUL.md
+Fatti chiave per le sessioni future:
+- **`Trade.pnl` e il NETTO** (dopo fee+slippage); `gross_pnl/fee/slippage` sono colonne dedicate.
+  Tutto il PnL passa da `app/pnl.py` (`compute_pnl`) — NON duplicare formule fee altrove.
+- Reporting (`/balance`, `/performance/*`) legge le colonne nette: niente doppio conteggio.
+- Engine: niente lookahead (candela in formazione scartata per segnali/regime), exit SL-first
+  al livello, stop ATR + sizing risk-based (`_entry_plan`), filtro multi-timeframe + flat-in-bear,
+  slippage guard + sync server-time. Short paper disabilitati di default (spot non shorta).
+- Nuove impostazioni in `config.py` (fee taker/maker, ATR, risk sizing, MTF, flat_in_bear,
+  disable_paper_shorts) — tutte toggle, default = raccomandato.
+- **Backtester** in `app/backtesting/`: validare SEMPRE una strategia (walk-forward, costi reali)
+  prima del live. La strategia `embient_enhanced` e risultata negative-alpha sul backtest 90gg:
+  l'edge va trovato, non assunto.
 
 ## Nota finale
 Questo progetto deve essere pensato per uso sicuro e responsabile. La modalita testnet/paper trading deve essere sempre disponibile e ben evidenziata nell'interfaccia. Nessun LLM puo mai eseguire ordini o modificare parametri direttamente — solo suggerire.

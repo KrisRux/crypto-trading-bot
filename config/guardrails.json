@@ -25,7 +25,7 @@
     },
     "range": {
       "require_symbol_trend": true,
-      "min_adx": 25,
+      "min_adx": 28,
       "min_volume_ratio": 1.0,
       "min_bb_width_pct": 0.8
     },
@@ -41,14 +41,14 @@
       "min_volume_ratio": 1.4,
       "min_bb_width_pct": 1.0
     },
-    "block_entry_on_symbol_regime": ["defensive"]
+    "block_entry_on_symbol_regime": ["defensive", "range"]
   },
   "dynamic_score": {
-    "base_min_score": 72,
-    "min_score_after_3_losses": 80,
-    "min_score_after_5_losses": 85,
+    "base_min_score": 80,
+    "min_score_after_3_losses": 88,
+    "min_score_after_5_losses": 92,
     "extra_score_in_bad_regime": 5,
-    "bad_regimes": ["defensive"],
+    "bad_regimes": ["defensive", "range"],
     "max_score_cap": 95
   },
   "entry_throttle": {

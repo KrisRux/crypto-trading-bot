@@ -197,6 +197,21 @@ Il frontend sara disponibile su `http://localhost:5173`.
 pytest tests/ -v
 ```
 
+### 5. Backtesting (validare PRIMA del live)
+
+Harness event-driven con costi reali (fee+slippage), nessun lookahead e benchmark buy&hold.
+Vedi [docs/PROFITABILITY_OVERHAUL.md](docs/PROFITABILITY_OVERHAUL.md) e [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
+
+```bash
+# Backtest singolo (klines pubbliche Binance, niente API key)
+python -m app.backtesting.run --symbol BTCUSDT --interval 15m --days 90 \
+    --strategy embient_enhanced --position-size 20
+# Walk-forward out-of-sample
+python -m app.backtesting.run --symbol BTCUSDT --days 180 --walk-forward --train 2000 --test 500
+```
+
+> Regola: non passare a `live` finche un walk-forward non mostra **alpha netto positivo** vs buy&hold.
+
 ## Configurazione .env
 
 | Variabile | Default | Descrizione |
@@ -208,6 +223,17 @@ pytest tests/ -v
 | `DEFAULT_TAKE_PROFIT_PCT` | `5.0` | Take profit default (%) |
 | `PAPER_FEE_PCT` | `0.1` | Commissione simulata per lato nel paper trading (%) |
 | `PAPER_SLIPPAGE_PCT` | `0.02` | Slippage simulato per lato nel paper trading (%) |
+| `TAKER_FEE_PCT` / `MAKER_FEE_PCT` | `0.1` / `0.1` | Commissioni live Binance (taker=market, maker=limit) |
+| `USE_ATR_STOPS` | `true` | SL/TP basati su ATR (volatility-aware) invece di % fisse |
+| `ATR_SL_MULT` / `ATR_TP_MULT` | `2.0` / `3.0` | Moltiplicatori ATR per SL/TP |
+| `RISK_BASED_SIZING` | `true` | Size dal rischio %/trade sulla distanza SL (cap su notional) |
+| `RISK_PCT_PER_TRADE` | `0.5` | Rischio per trade (% equity) |
+| `MTF_FILTER_ENABLED` | `true` | Filtro trend multi-timeframe (no BUY contro-trend) |
+| `MTF_INTERVAL` / `MTF_EMA_PERIOD` | `1h` / `200` | Timeframe + EMA del filtro macro |
+| `FLAT_IN_BEAR` | `true` | Niente BUY quando il regime del simbolo e ribassista |
+| `DISABLE_PAPER_SHORTS` | `true` | Niente short sintetici (coerenza con spot live) |
+| `MAX_SLIPPAGE_PCT` | `0.3` | Soglia di allerta slippage sugli ordini market |
+| `BINANCE_RECV_WINDOW` | `5000` | recvWindow (ms) per le richieste firmate |
 | `JWT_SECRET` | (da cambiare) | Chiave JWT per autenticazione |
 | `ENCRYPTION_KEY` | (generare) | Chiave Fernet per cifrare API keys in DB |
 | `TELEGRAM_BOT_TOKEN` | (vuoto) | Token bot Telegram da @BotFather |

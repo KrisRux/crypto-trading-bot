@@ -67,8 +67,12 @@ class Trade(Base):
     quantity = Column(Float, nullable=False)
     stop_loss = Column(Float, nullable=True)
     take_profit = Column(Float, nullable=True)
-    pnl = Column(Float, nullable=True)  # Profit/loss in USDT
-    pnl_pct = Column(Float, nullable=True)  # Profit/loss percentage
+    pnl = Column(Float, nullable=True)  # NET profit/loss in USDT (after fees + slippage)
+    pnl_pct = Column(Float, nullable=True)  # NET profit/loss percentage
+    gross_pnl = Column(Float, nullable=True)  # Price-only PnL, before fees/slippage
+    fee = Column(Float, nullable=True)  # Round-trip fees actually charged (USDT)
+    slippage = Column(Float, nullable=True)  # Round-trip slippage cost (USDT)
+    exit_reason = Column(String, nullable=True)  # tp | sl | signal | stale | manual ...
     status = Column(SAEnum(TradeStatus), default=TradeStatus.OPEN)
     mode = Column(String, default="paper")
     strategy = Column(String, nullable=True)  # Which strategy opened this
