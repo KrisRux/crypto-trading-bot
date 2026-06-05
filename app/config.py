@@ -28,6 +28,40 @@ class Settings(BaseSettings):
     paper_fee_pct: float = Field(default=0.1, alias="PAPER_FEE_PCT")
     paper_slippage_pct: float = Field(default=0.02, alias="PAPER_SLIPPAGE_PCT")
 
+    # --- Live execution fees (Binance Spot). Taker = MARKET, Maker = LIMIT post-only.
+    # With the BNB fee discount taker ≈ 0.075%. Override per deployment in .env. ---
+    taker_fee_pct: float = Field(default=0.1, alias="TAKER_FEE_PCT")
+    maker_fee_pct: float = Field(default=0.1, alias="MAKER_FEE_PCT")
+    # Prefer LIMIT post-only (maker) orders for non-urgent entries to halve fees.
+    prefer_maker_orders: bool = Field(default=False, alias="PREFER_MAKER_ORDERS")
+    maker_limit_offset_pct: float = Field(default=0.05, alias="MAKER_LIMIT_OFFSET_PCT")
+    maker_fill_timeout_s: int = Field(default=20, alias="MAKER_FILL_TIMEOUT_S")
+    # Reject/flag a market fill if observed VWAP slippage exceeds this %.
+    max_slippage_pct: float = Field(default=0.3, alias="MAX_SLIPPAGE_PCT")
+    # Binance signed-request recvWindow (ms) + server-time drift sync.
+    binance_recv_window: int = Field(default=5000, alias="BINANCE_RECV_WINDOW")
+
+    # --- Risk v2: ATR-based stops & risk-based position sizing ---
+    use_atr_stops: bool = Field(default=True, alias="USE_ATR_STOPS")
+    atr_sl_mult: float = Field(default=2.0, alias="ATR_SL_MULT")
+    atr_tp_mult: float = Field(default=3.0, alias="ATR_TP_MULT")
+    # Size positions so each trade risks a fixed % of equity (derived from SL distance),
+    # capped by max_position_size_pct as a hard notional ceiling.
+    risk_based_sizing: bool = Field(default=True, alias="RISK_BASED_SIZING")
+    risk_pct_per_trade: float = Field(default=0.5, alias="RISK_PCT_PER_TRADE")
+
+    # --- Multi-timeframe trend filter (avoid buying against the higher-TF trend) ---
+    mtf_filter_enabled: bool = Field(default=True, alias="MTF_FILTER_ENABLED")
+    mtf_interval: str = Field(default="1h", alias="MTF_INTERVAL")
+    mtf_ema_period: int = Field(default=200, alias="MTF_EMA_PERIOD")
+
+    # --- Bear-market protection ---
+    # Block new longs when the symbol's higher-timeframe trend is down.
+    flat_in_bear: bool = Field(default=True, alias="FLAT_IN_BEAR")
+    # Keep paper consistent with live SPOT reality (no synthetic shorts that can't
+    # be executed on a spot account). Set False only to study short hypotheticals.
+    disable_paper_shorts: bool = Field(default=True, alias="DISABLE_PAPER_SHORTS")
+
     # Logging
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 

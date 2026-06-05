@@ -44,6 +44,53 @@ def _migrate_add_columns(eng, table: str, columns: list[tuple[str, str]]):
                 _log.info("Migration: added column %s.%s", table, col_name)
 
 
+def _backfill_trade_accounting(eng):
+    """One-time, idempotent backfill of the net-PnL columns.
+
+    Historically ``trades.pnl`` stored the price-only (GROSS) PnL and fees were
+    never subtracted from recorded results. This splits each historical CLOSED
+    trade into ``gross_pnl`` + ``fee`` + ``slippage`` and rewrites ``pnl`` as the
+    NET result, so every consumer (balance, breakdown, kill-switch) reads one
+    consistent number. Only rows whose ``gross_pnl`` is still NULL are touched,
+    so re-running on every startup is a no-op. The original gross value is kept
+    in ``gross_pnl`` (auditable / reversible).
+    """
+    import logging
+    from app.config import settings
+    _log = logging.getLogger(__name__)
+    fee_rate = settings.paper_fee_pct / 100.0
+    slip_rate = settings.paper_slippage_pct / 100.0
+    with eng.connect() as conn:
+        cols = {row[1] for row in conn.execute(sa.text("PRAGMA table_info(trades)"))}
+        if "gross_pnl" not in cols:
+            return
+        rows = conn.execute(sa.text(
+            "SELECT id, entry_price, exit_price, quantity, pnl FROM trades "
+            "WHERE status = 'CLOSED' AND pnl IS NOT NULL AND gross_pnl IS NULL"
+        )).fetchall()
+        n = 0
+        for tid, entry, exitp, qty, pnl in rows:
+            if entry is None or exitp is None or qty is None:
+                continue
+            notional = (abs(entry) + abs(exitp)) * abs(qty)  # entry + exit legs
+            fee = notional * fee_rate
+            slip = notional * slip_rate
+            net = pnl - fee - slip
+            base = abs(entry) * abs(qty)
+            net_pct = (net / base * 100.0) if base else 0.0
+            conn.execute(sa.text(
+                "UPDATE trades SET gross_pnl = :g, fee = :f, slippage = :s, "
+                "pnl = :net, pnl_pct = :p WHERE id = :id"
+            ), {"g": pnl, "f": fee, "s": slip, "net": net, "p": net_pct, "id": tid})
+            n += 1
+        if n:
+            conn.commit()
+            _log.warning(
+                "Backfill: rewrote %d trades to NET pnl (gross kept in gross_pnl). "
+                "Reported PnL/equity now includes fees+slippage.", n,
+            )
+
+
 def init_db():
     """Create all tables, seed admin user, and seed default symbols if needed."""
     from app.models import trade, portfolio, user, symbol, approval, tuning_suggestion  # noqa: F401
@@ -62,6 +109,15 @@ def init_db():
     _migrate_add_columns(engine, "tuning_suggestions", [
         ("source", "VARCHAR DEFAULT 'rules'"),
     ])
+    # Net-PnL accounting columns: pnl now stores NET (after fees+slippage),
+    # gross_pnl preserves the price-only PnL. Backfilled by reconcile_trade_accounting().
+    _migrate_add_columns(engine, "trades", [
+        ("gross_pnl", "FLOAT"),
+        ("fee", "FLOAT"),
+        ("slippage", "FLOAT"),
+        ("exit_reason", "VARCHAR"),
+    ])
+    _backfill_trade_accounting(engine)
 
     db = SessionLocal()
     try:
