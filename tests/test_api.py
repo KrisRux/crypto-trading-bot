@@ -93,7 +93,10 @@ def _login(c, user, pwd):
 def _auth(c, user, pwd):
     r = _login(c, user, pwd)
     assert r.status_code == 200, f"Login failed for {user}: {r.text}"
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+    # The token is delivered as an httpOnly cookie (not in the body). The
+    # TestClient persists Set-Cookie on `c`, so later calls authenticate via the
+    # cookie — no Authorization header needed.
+    return {}
 
 
 # ------------------------------------------------------------------ Login
@@ -102,7 +105,8 @@ def test_login_success(client):
     r = _login(client, "admin", "adminpass")
     assert r.status_code == 200
     d = r.json()
-    assert "access_token" in d
+    # token is set as an httpOnly cookie, not returned in the response body
+    assert client.cookies.get("auth_token")
     assert d["role"] == "admin"
     assert d["session_timeout_minutes"] > 0
 
