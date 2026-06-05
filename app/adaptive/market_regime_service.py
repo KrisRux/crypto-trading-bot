@@ -30,6 +30,7 @@ class RegimeSnapshot:
     atr_pct: float       # ATR as % of current price
     bb_width_pct: float  # BB width as % of middle band
     volume_ratio: float  # current volume / avg volume
+    direction: str = "flat"  # up | down | flat — directional bias (orthogonal to regime)
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict:
@@ -40,6 +41,7 @@ class RegimeSnapshot:
             "atr_pct": round(self.atr_pct, 3),
             "bb_width_pct": round(self.bb_width_pct, 3),
             "volume_ratio": round(self.volume_ratio, 2),
+            "direction": self.direction,
             "timestamp": self.timestamp,
         }
 
@@ -54,6 +56,7 @@ class MarketRegimeService:
     BB_SQUEEZE_PCT = 2.0       # BB width < 2% → tight range
     BB_EXPAND_PCT = 6.0        # BB width > 6% → expansion / volatile
     VOLUME_SPIKE = 2.0         # volume > 2x average → spike
+    EMA_PERIOD = 50            # slow EMA period used for directional bias
 
     def __init__(self):
         self._snapshots: dict[str, RegimeSnapshot] = {}
@@ -68,6 +71,7 @@ class MarketRegimeService:
         atr_pct = self._calc_atr_pct(df)
         bb_width_pct = self._calc_bb_width_pct(df)
         volume_ratio = self._calc_volume_ratio(df)
+        direction = self._calc_direction(df)
 
         regime = self._classify(adx, atr_pct, bb_width_pct, volume_ratio)
 
@@ -78,11 +82,12 @@ class MarketRegimeService:
             atr_pct=atr_pct,
             bb_width_pct=bb_width_pct,
             volume_ratio=volume_ratio,
+            direction=direction,
         )
         self._snapshots[symbol] = snap
         logger.info(
-            "REGIME_SERVICE: %s → %s (ADX=%.1f ATR%%=%.2f BB%%=%.2f Vol=%.1fx)",
-            symbol, regime.upper(), adx, atr_pct, bb_width_pct, volume_ratio,
+            "REGIME_SERVICE: %s → %s [%s] (ADX=%.1f ATR%%=%.2f BB%%=%.2f Vol=%.1fx)",
+            symbol, regime.upper(), direction, adx, atr_pct, bb_width_pct, volume_ratio,
         )
         return snap
 
@@ -107,10 +112,46 @@ class MarketRegimeService:
             return "defensive"
         return max(counts, key=counts.get)
 
+    def global_direction(self) -> str:
+        """Aggregate directional bias across all tracked symbols.
+
+        Returns "down" if >=50% of symbols are "down", "up" if >=50% are
+        "up", otherwise "flat". (Bear bias is checked first so a 50/50
+        down-vs-other split surfaces as defensive "down".)
+        """
+        if not self._snapshots:
+            return "flat"
+        directions = [s.direction for s in self._snapshots.values()]
+        total = len(directions)
+        down = sum(1 for d in directions if d == "down")
+        up = sum(1 for d in directions if d == "up")
+        if down / total >= 0.5:
+            return "down"
+        if up / total >= 0.5:
+            return "up"
+        return "flat"
+
+    def is_bearish(self, symbol: str) -> bool:
+        """True if the symbol's current snapshot direction is "down".
+
+        Returns False for untracked symbols.
+        """
+        snap = self._snapshots.get(symbol)
+        return bool(snap is not None and snap.direction == "down")
+
+    def is_bullish(self, symbol: str) -> bool:
+        """True if the symbol's current snapshot direction is "up".
+
+        Returns False for untracked symbols.
+        """
+        snap = self._snapshots.get(symbol)
+        return bool(snap is not None and snap.direction == "up")
+
     def global_snapshot(self) -> dict:
-        """Return global regime + all per-symbol snapshots."""
+        """Return global regime + global direction + all per-symbol snapshots."""
         return {
             "global_regime": self.global_regime(),
+            "global_direction": self.global_direction(),
             "symbols": {s: snap.to_dict() for s, snap in self._snapshots.items()},
         }
 
@@ -175,6 +216,46 @@ class MarketRegimeService:
             return float(current_vol / avg_vol)
         except Exception:
             return 1.0
+
+    def _calc_direction(self, df: pd.DataFrame) -> str:
+        """Directional bias from price vs slow EMA and EMA slope.
+
+        Uses ONLY closed candles: the last closed bar is iloc[-2] (the
+        in-progress bar iloc[-1] is ignored, consistent with
+        _calc_volume_ratio). Slope is EMA[-2] - EMA[-3] (closed bars only).
+
+          up   — close > EMA and EMA rising  (slope > 0)
+          down — close < EMA and EMA falling (slope < 0)
+          flat — otherwise (no agreement between level and slope)
+
+        Returns "flat" on insufficient data or any error.
+        """
+        try:
+            close = df["close"]
+            # Need EMA_PERIOD bars to seed the EMA + a closed bar at -2 and
+            # the prior closed bar at -3 to measure slope.
+            if len(close) < self.EMA_PERIOD + 2:
+                return "flat"
+            ema_fn = getattr(Indicators, "ema", None)
+            if callable(ema_fn):
+                ema = ema_fn(close, self.EMA_PERIOD)
+            else:
+                ema = close.ewm(span=self.EMA_PERIOD, adjust=False).mean()
+
+            price = close.iloc[-2]          # last CLOSED candle
+            ema_now = ema.iloc[-2]          # EMA at last closed candle
+            ema_prev = ema.iloc[-3]         # EMA at prior closed candle
+            if pd.isna(price) or pd.isna(ema_now) or pd.isna(ema_prev):
+                return "flat"
+
+            slope = ema_now - ema_prev
+            if price > ema_now and slope > 0:
+                return "up"
+            if price < ema_now and slope < 0:
+                return "down"
+            return "flat"
+        except Exception:
+            return "flat"
 
     # ------------------------------------------------------------------
     # Classification
