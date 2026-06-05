@@ -22,6 +22,7 @@ from app.models.portfolio import PaperPosition
 from app.models.trade import Trade, TradeStatus, OrderSide, OrderStatus
 from app.models.user import User
 from app.paper_trading.portfolio import PaperPortfolioManager
+from app.pnl import compute_pnl
 from app.strategies.base import Strategy, Signal, SignalType
 from app.strategies.indicators import Indicators
 from app.trading_engine.order_manager import OrderManager
@@ -56,6 +57,8 @@ class TradingEngine:
         # Cooldown: track last BUY execution time per (user_id, symbol) to avoid overtrading
         self._last_trade_time: dict[tuple[int, str], datetime] = {}
         self._trade_cooldown_minutes: int = 15
+        # Symbols added at runtime whose Binance filters still need loading
+        self._pending_filter_symbols: set[str] = set()
         # Adaptive layer (set externally after construction)
         self.meta_controller = None
         # Guardrails — centralized pre-trade validation
@@ -83,8 +86,13 @@ class TradingEngine:
         if symbol not in self.symbols:
             self.symbols.append(symbol)
             self.last_prices[symbol] = 0.0
-            # Load lot size for the new symbol immediately (non-blocking best-effort)
-            asyncio.get_event_loop().create_task(self._load_lot_size_for(symbol))
+            # Load filters for the new symbol now if an event loop is running;
+            # otherwise defer to the next cycle. get_event_loop() in a sync API
+            # context with no running loop raises — this avoids that crash.
+            try:
+                asyncio.get_running_loop().create_task(self._load_lot_size_for(symbol))
+            except RuntimeError:
+                self._pending_filter_symbols.add(symbol)
 
     def remove_symbol(self, symbol: str):
         symbol = symbol.upper()
@@ -235,6 +243,10 @@ class TradingEngine:
         return float(signal.confidence or 0) * 100
 
     def _paper_short_allowed(self, db: Session, user: User, signal: Signal) -> tuple[bool, str]:
+        # A spot account cannot hold a real short; synthetic paper shorts inflate
+        # results versus what live can actually execute. Disabled by default.
+        if settings.disable_paper_shorts:
+            return False, "paper_shorts_disabled (spot cannot short)"
         cfg = self.guardrails.paper_short_config()
         if not cfg.get("enabled", True):
             return False, "paper_short_disabled"
@@ -283,7 +295,9 @@ class TradingEngine:
         portfolio = self.paper_portfolio.get_or_create(
             db, user.id, user.paper_initial_capital
         )
-        base_qty = self.risk_manager.calculate_position_size(portfolio.cash_balance, current_price)
+        sl, tp, base_qty = self._entry_plan(
+            signal.symbol, OrderSide.SELL, current_price, portfolio.cash_balance,
+        )
         risk_mult = self.guardrails.get_risk_multiplier()
         qty = self._round_qty(signal.symbol, base_qty * risk_mult)
         if qty <= 0:
@@ -295,9 +309,6 @@ class TradingEngine:
                 signal.symbol, qty_reason, user.id, context,
             )
             return False
-
-        sl = self._round_price(signal.symbol, current_price * (1 + self.risk_manager.default_sl_pct / 100))
-        tp = self._round_price(signal.symbol, current_price * (1 - self.risk_manager.default_tp_pct / 100))
         opened = self.paper_portfolio.open_position(
             db, user.id, signal.symbol, qty, current_price, sl, tp,
             side=OrderSide.SELL, strategy=signal.strategy_name,
@@ -504,6 +515,44 @@ class TradingEngine:
     # ------------------------------------------------------------------
     # Regime detection + gate
     # ------------------------------------------------------------------
+
+    def _htf_trend_up(self, df: pd.DataFrame) -> bool | None:
+        """Higher-timeframe trend direction from an EMA on CLOSED candles.
+        Returns True (up), False (down) or None (insufficient data)."""
+        try:
+            closed = df.iloc[:-1]
+            period = settings.mtf_ema_period
+            if len(closed) < period:
+                return None
+            ema = Indicators.ema(closed["close"], period)
+            return bool(closed["close"].iloc[-1] > float(ema.iloc[-1]))
+        except Exception:
+            return None
+
+    def _apply_macro_trend_filter(self, signals: list[Signal], symbol: str,
+                                  htf_up: bool | None) -> list[Signal]:
+        """Drop BUY signals when the higher-TF trend is down or the symbol's
+        regime direction is bearish — don't buy into a downtrend on a spot
+        account that cannot hedge."""
+        if not signals:
+            return signals
+        bearish = False
+        if settings.flat_in_bear and self.meta_controller:
+            try:
+                bearish = self.meta_controller.regime_service.is_bearish(symbol)
+            except Exception:
+                bearish = False
+        htf_block = settings.mtf_filter_enabled and (htf_up is False)
+        if not (bearish or htf_block):
+            return signals
+        kept = []
+        for s in signals:
+            if s.signal_type == SignalType.BUY:
+                logger.info("MACRO_FILTER: BUY %s blocked (%s)", symbol,
+                            "regime_bearish" if bearish else "htf_downtrend")
+                continue
+            kept.append(s)
+        return kept
 
     def _apply_regime_gate(
         self, signals: list[Signal], adx: float | None, symbol: str
@@ -937,7 +986,7 @@ class TradingEngine:
                     {"free": "0"},
                 )
                 capital = float(usdt["free"])
-                base_qty = self.risk_manager.calculate_position_size(capital, current_price)
+                sl, tp, base_qty = self._entry_plan(symbol, "BUY", current_price, capital)
                 risk_mult = self.guardrails.get_risk_multiplier()
                 qty = self._round_qty(symbol, base_qty * risk_mult)
                 if risk_mult < 1.0:
@@ -951,9 +1000,9 @@ class TradingEngine:
                                 symbol, reason, user.id)
                     return
 
-                sl = self._round_price(symbol, self.risk_manager.calculate_stop_loss(current_price))
-                tp = self._round_price(symbol, self.risk_manager.calculate_take_profit(current_price))
-                order = await order_mgr.place_market_order(db, symbol, "BUY", qty)
+                order = await order_mgr.place_market_order(
+                    db, symbol, "BUY", qty, expected_price=current_price,
+                )
                 if order.status != OrderStatus.FILLED:
                     logger.warning("User %d [paper/testnet]: BUY not filled, skip", user.id)
                     return
@@ -1111,7 +1160,7 @@ class TradingEngine:
             portfolio = self.paper_portfolio.get_or_create(
                 db, user.id, user.paper_initial_capital
             )
-            base_qty = self.risk_manager.calculate_position_size(portfolio.cash_balance, current_price)
+            sl, tp, base_qty = self._entry_plan(symbol, "BUY", current_price, portfolio.cash_balance)
             risk_mult = self.guardrails.get_risk_multiplier()
             qty = self._round_qty(symbol, base_qty * risk_mult)
             if risk_mult < 1.0:
@@ -1124,8 +1173,6 @@ class TradingEngine:
                 logger.info("ORDER_VALIDATION: skipped BUY %s | %s [user=%d paper/sim]",
                             symbol, reason, user.id)
                 return
-            sl = self._round_price(symbol, self.risk_manager.calculate_stop_loss(current_price))
-            tp = self._round_price(symbol, self.risk_manager.calculate_take_profit(current_price))
             self.paper_portfolio.open_position(db, user.id, symbol, qty, current_price, sl, tp)
             self._last_trade_time[cooldown_key] = datetime.now(timezone.utc)
             self.guardrails.entry_throttle.record_entry(symbol, user_id=user.id)
@@ -1301,6 +1348,39 @@ class TradingEngine:
 
         return True, ""
 
+    def _entry_plan(self, symbol: str, side, entry_price: float,
+                    equity: float) -> tuple[float, float, float]:
+        """Compute (stop_loss, take_profit, base_qty) for a new entry.
+
+        Uses ATR-based stops (volatility-aware) and risk-based sizing when
+        enabled in settings, falling back to fixed-percentage stops and
+        fixed-notional sizing otherwise. ``base_qty`` is pre-risk-multiplier and
+        pre-rounding — callers still apply the guardrail risk multiplier and
+        LOT_SIZE rounding.
+        """
+        atr_pct = None
+        try:
+            snap = (self.meta_controller.regime_service.snapshots.get(symbol)
+                    if self.meta_controller else None)
+            atr_pct = getattr(snap, "atr_pct", None) if snap else None
+        except Exception:
+            atr_pct = None
+        atr_price = (atr_pct / 100.0) * entry_price if atr_pct else 0.0
+
+        if settings.use_atr_stops and atr_price > 0:
+            sl, tp = self.risk_manager.calculate_atr_stops(entry_price, atr_price, side=side)
+        else:
+            sl = self.risk_manager.calculate_stop_loss(entry_price, side=side)
+            tp = self.risk_manager.calculate_take_profit(entry_price, side=side)
+        sl = self._round_price(symbol, sl)
+        tp = self._round_price(symbol, tp)
+
+        if settings.risk_based_sizing:
+            base_qty = self.risk_manager.calculate_position_size_risk(equity, entry_price, sl)
+        else:
+            base_qty = self.risk_manager.calculate_position_size(equity, entry_price)
+        return sl, tp, base_qty
+
     async def _execute_order(self, db: Session, user: User, signal: Signal,
                              client: BinanceRestClient, order_mgr: "OrderManager"):
         """Place a real BUY/SELL order on Binance live account."""
@@ -1348,7 +1428,7 @@ class TradingEngine:
                     {"free": "0"}
                 )
                 capital = float(usdt["free"])
-                base_qty = self.risk_manager.calculate_position_size(capital, signal.price)
+                sl, tp, base_qty = self._entry_plan(signal.symbol, "BUY", signal.price, capital)
                 risk_mult = self.guardrails.get_risk_multiplier()
                 qty = self._round_qty(signal.symbol, base_qty * risk_mult)
                 if risk_mult < 1.0:
@@ -1362,9 +1442,9 @@ class TradingEngine:
                                 signal.symbol, reason, user.id)
                     return
 
-                sl = self._round_price(signal.symbol, self.risk_manager.calculate_stop_loss(signal.price))
-                tp = self._round_price(signal.symbol, self.risk_manager.calculate_take_profit(signal.price))
-                order = await order_mgr.place_market_order(db, signal.symbol, "BUY", qty)
+                order = await order_mgr.place_market_order(
+                    db, signal.symbol, "BUY", qty, expected_price=signal.price,
+                )
                 if order.status != OrderStatus.FILLED:
                     logger.warning("User %d: BUY order not filled, skipping trade", user.id)
                     return
@@ -1404,25 +1484,37 @@ class TradingEngine:
     async def _close_trade(self, db: Session, user: User,
                            trade: Trade, exit_price: float, reason: str,
                            client: BinanceRestClient, order_mgr: "OrderManager"):
-        """Close a live trade by placing a SELL order on Binance."""
+        """Close a trade with a market SELL on Binance, booking NET PnL (fees included)."""
         try:
             sell_qty = self._round_qty(trade.symbol, trade.quantity)
-            order = await order_mgr.place_market_order(db, trade.symbol, "SELL", sell_qty)
+            order = await order_mgr.place_market_order(
+                db, trade.symbol, "SELL", sell_qty, expected_price=exit_price,
+            )
             if order.status != OrderStatus.FILLED:
                 logger.warning("User %d: SELL order not filled for trade #%d",
                                user.id, trade.id)
                 return
             order.user_id = user.id
-            trade.exit_price = exit_price
-            trade.pnl = (exit_price - trade.entry_price) * trade.quantity
-            trade.pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * 100
+            # The real fill (VWAP) already embeds slippage — charge the fee only,
+            # so PnL is NET and consistent with app.pnl everywhere else.
+            exit_fill = order.filled_price or exit_price
+            fee_pct = settings.taker_fee_pct if order_mgr.mode == "live" else settings.paper_fee_pct
+            r = compute_pnl(trade.side.value, trade.entry_price, exit_fill,
+                            trade.quantity, fee_pct, 0.0)
+            trade.exit_price = exit_fill
+            trade.gross_pnl = r.gross_pnl
+            trade.fee = r.fee
+            trade.slippage = r.slippage
+            trade.pnl = r.net_pnl
+            trade.pnl_pct = r.net_pnl_pct
+            trade.exit_reason = reason
             trade.status = TradeStatus.CLOSED
             trade.exit_order_id = order.id
             trade.closed_at = datetime.now(timezone.utc)
             db.commit()
-            logger.info("User %d [%s]: Trade #%d closed (%s) PnL=%.2f",
-                        user.id, order_mgr.mode, trade.id, reason, trade.pnl)
-            # Record result in guardrails (for cooldown/breaker tracking)
+            logger.info("User %d [%s]: Trade #%d closed (%s) gross=%.2f fee=%.2f NET=%.2f",
+                        user.id, order_mgr.mode, trade.id, reason,
+                        r.gross_pnl, r.fee, r.net_pnl)
             self._record_trade_close(trade, reason)
         except Exception:
             logger.exception("User %d: failed to close trade #%d", user.id, trade.id)
@@ -1445,6 +1537,15 @@ class TradingEngine:
             ).all()
 
             cycle_dataframes: dict[str, pd.DataFrame] = {}
+            forming_candles: dict[str, pd.Series] = {}
+            htf_trend: dict[str, bool | None] = {}
+
+            # Load filters for symbols added at runtime when no event loop was available
+            for sym in list(self._pending_filter_symbols):
+                try:
+                    await self._load_lot_size_for(sym)
+                finally:
+                    self._pending_filter_symbols.discard(sym)
 
             # Candle key for entry throttle (aligned to 15m candle boundaries)
             now_utc = datetime.now(timezone.utc)
@@ -1462,16 +1563,29 @@ class TradingEngine:
 
             for symbol in self.symbols:
                 try:
-                    df = await self.fetch_klines(symbol, interval="15m", limit=150)
-                    if df.empty:
+                    # Fetch one extra candle and DROP the still-forming one — signals
+                    # and regime must only ever see CLOSED candles (no repainting).
+                    df_full = await self.fetch_klines(symbol, interval="15m", limit=151)
+                    if df_full.empty or len(df_full) < 2:
                         continue
-
+                    df = df_full.iloc[:-1]
                     cycle_dataframes[symbol] = df
+                    forming_candles[symbol] = df_full.iloc[-1]
 
-                    # Compute regime for this symbol (needed by guardrails)
+                    # Compute regime for this symbol (needed by guardrails) — closed data
                     if regime_svc:
                         snap = regime_svc.compute(df, symbol)
                         regime_snapshots[symbol] = snap
+
+                    # Higher-timeframe trend for the macro filter (closed candles only)
+                    if settings.mtf_filter_enabled:
+                        try:
+                            htf = await self.fetch_klines(
+                                symbol, settings.mtf_interval, settings.mtf_ema_period + 6,
+                            )
+                            htf_trend[symbol] = self._htf_trend_up(htf)
+                        except Exception:
+                            htf_trend[symbol] = None
 
                 except Exception:
                     logger.exception("Error fetching/computing regime for %s", symbol)
@@ -1493,15 +1607,20 @@ class TradingEngine:
                     if df is None or df.empty:
                         continue
 
-                    current_price = float(df["close"].iloc[-1])
-                    candle_high   = float(df["high"].iloc[-1])
-                    candle_low    = float(df["low"].iloc[-1])
-                    # Supplement with live WebSocket price for the current open candle
+                    # df holds CLOSED candles only. The forming candle + live WS tick
+                    # drive intrabar TP/SL detection (exits), never signal generation.
+                    forming = forming_candles.get(symbol)
+                    last_closed = float(df["close"].iloc[-1])
+                    forming_high = float(forming["high"]) if forming is not None else last_closed
+                    forming_low  = float(forming["low"])  if forming is not None else last_closed
+                    current_price = last_closed
                     ws_price = self.last_prices.get(symbol, 0.0)
                     if ws_price > 0:
-                        candle_high = max(candle_high, ws_price)
-                        candle_low  = min(candle_low,  ws_price)
                         current_price = ws_price
+                    elif forming is not None:
+                        current_price = float(forming["close"])
+                    candle_high = max(forming_high, current_price)
+                    candle_low  = min(forming_low, current_price)
                     self.last_prices[symbol] = current_price
 
                     # Use ADX from pre-computed regime snapshot (single computation)
@@ -1516,6 +1635,7 @@ class TradingEngine:
                         regime_label = "TREND" if adx >= self._trend_adx_threshold else "RANGE"
                         logger.info("REGIME: %s (ADX=%.1f) [%s]", regime_label, adx, symbol)
                     signals = self._apply_regime_gate(signals, adx, symbol)
+                    signals = self._apply_macro_trend_filter(signals, symbol, htf_trend.get(symbol))
 
                     # Guardrails: filter BUY signals through centralized gate
                     if signals:
@@ -1581,6 +1701,11 @@ class TradingEngine:
 
         # Load lot sizes from Binance for proper quantity rounding
         await self._load_lot_sizes()
+        # Sync clock with Binance so signed requests don't fail on drift (-1021)
+        try:
+            await self.market_client.sync_time()
+        except Exception:
+            logger.warning("Binance server-time sync failed; relying on recvWindow")
 
         streams = [f"{s.lower()}@trade" for s in self.symbols]
         self.ws.on_message(self._on_price_update)
