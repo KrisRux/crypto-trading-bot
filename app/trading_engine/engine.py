@@ -596,6 +596,11 @@ class TradingEngine:
                         )
                         kept.append(s)
                         continue
+                    logger.info(
+                        "MACRO_FILTER: BUY %s blocked (htf_downtrend; override_failed=%s)",
+                        symbol, reason,
+                    )
+                    continue
                 logger.info("MACRO_FILTER: BUY %s blocked (%s)", symbol,
                             "regime_bearish" if bearish else "htf_downtrend")
                 continue
