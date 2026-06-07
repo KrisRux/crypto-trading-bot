@@ -529,6 +529,39 @@ class TradingEngine:
         except Exception:
             return None
 
+    def _strong_local_long_override(self, signal: Signal, symbol: str) -> tuple[bool, str]:
+        """Allow high-quality local momentum longs before the slower HTF EMA flips."""
+        if not settings.mtf_countertrend_override_enabled:
+            return False, "override_disabled"
+        if signal.signal_type != SignalType.BUY:
+            return False, "not_buy"
+        if not self.meta_controller:
+            return False, "no_meta_controller"
+
+        snap = None
+        try:
+            snap = self.meta_controller.regime_service.snapshots.get(symbol)
+        except Exception:
+            snap = None
+        if not snap:
+            return False, "no_regime_snapshot"
+        if getattr(snap, "direction", "flat") != "up":
+            return False, f"local_direction_{getattr(snap, 'direction', 'unknown')}"
+        if getattr(snap, "regime", "") not in {"trend", "volatile"}:
+            return False, f"local_regime_{getattr(snap, 'regime', 'unknown')}"
+
+        meta = signal.metadata or {}
+        score = float(meta.get("buy_score", (signal.confidence or 0) * 100))
+        adx = float(getattr(snap, "adx", 0) or 0)
+        volume_ratio = float(getattr(snap, "volume_ratio", 0) or 0)
+        if score < settings.mtf_countertrend_min_score:
+            return False, f"score_{score:.0f}<{settings.mtf_countertrend_min_score:.0f}"
+        if adx < settings.mtf_countertrend_min_adx:
+            return False, f"adx_{adx:.1f}<{settings.mtf_countertrend_min_adx:.1f}"
+        if volume_ratio < settings.mtf_countertrend_min_volume_ratio:
+            return False, f"volume_{volume_ratio:.2f}<{settings.mtf_countertrend_min_volume_ratio:.2f}"
+        return True, f"score={score:.0f} adx={adx:.1f} vol={volume_ratio:.2f}x"
+
     def _apply_macro_trend_filter(self, signals: list[Signal], symbol: str,
                                   htf_up: bool | None) -> list[Signal]:
         """Drop BUY signals when the higher-TF trend is down or the symbol's
@@ -548,6 +581,15 @@ class TradingEngine:
         kept = []
         for s in signals:
             if s.signal_type == SignalType.BUY:
+                if htf_block and not bearish:
+                    allowed, reason = self._strong_local_long_override(s, symbol)
+                    if allowed:
+                        logger.info(
+                            "MACRO_FILTER: BUY %s allowed by strong-local override (%s)",
+                            symbol, reason,
+                        )
+                        kept.append(s)
+                        continue
                 logger.info("MACRO_FILTER: BUY %s blocked (%s)", symbol,
                             "regime_bearish" if bearish else "htf_downtrend")
                 continue

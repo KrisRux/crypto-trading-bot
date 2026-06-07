@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     mtf_filter_enabled: bool = Field(default=True, alias="MTF_FILTER_ENABLED")
     mtf_interval: str = Field(default="1h", alias="MTF_INTERVAL")
     mtf_ema_period: int = Field(default=200, alias="MTF_EMA_PERIOD")
+    # Allow a very strong local BUY setup to pass even while the slower
+    # higher-timeframe EMA is still down. This avoids missing early recoveries
+    # after selloffs while keeping weak counter-trend longs blocked.
+    mtf_countertrend_override_enabled: bool = Field(default=True, alias="MTF_COUNTERTREND_OVERRIDE_ENABLED")
+    mtf_countertrend_min_score: float = Field(default=85.0, alias="MTF_COUNTERTREND_MIN_SCORE")
+    mtf_countertrend_min_adx: float = Field(default=30.0, alias="MTF_COUNTERTREND_MIN_ADX")
+    mtf_countertrend_min_volume_ratio: float = Field(default=1.1, alias="MTF_COUNTERTREND_MIN_VOLUME_RATIO")
 
     # --- Bear-market protection ---
     # Block new longs when the symbol's higher-timeframe trend is down.
