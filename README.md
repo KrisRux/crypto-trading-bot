@@ -230,6 +230,10 @@ python -m app.backtesting.run --symbol BTCUSDT --days 180 --walk-forward --train
 | `RISK_PCT_PER_TRADE` | `0.5` | Rischio per trade (% equity) |
 | `MTF_FILTER_ENABLED` | `true` | Filtro trend multi-timeframe (no BUY contro-trend) |
 | `MTF_INTERVAL` / `MTF_EMA_PERIOD` | `1h` / `200` | Timeframe + EMA del filtro macro |
+| `MTF_COUNTERTREND_OVERRIDE_ENABLED` | `true` | Consente solo BUY locali molto forti contro HTF laggante |
+| `MTF_COUNTERTREND_MIN_SCORE` / `MTF_COUNTERTREND_MIN_ADX` | `90` / `32` | Soglie minime per override countertrend |
+| `MTF_COUNTERTREND_MIN_VOLUME_RATIO` | `1.3` | Volume minimo per override countertrend |
+| `MTF_COUNTERTREND_RISK_MULTIPLIER` | `0.5` | Size ridotta per BUY passati dall'override |
 | `FLAT_IN_BEAR` | `true` | Niente BUY quando il regime del simbolo e ribassista |
 | `DISABLE_PAPER_SHORTS` | `true` | Niente short sintetici (coerenza con spot live) |
 | `MAX_SLIPPAGE_PCT` | `0.3` | Soglia di allerta slippage sugli ordini market |

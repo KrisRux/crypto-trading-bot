@@ -58,9 +58,10 @@ class Settings(BaseSettings):
     # higher-timeframe EMA is still down. This avoids missing early recoveries
     # after selloffs while keeping weak counter-trend longs blocked.
     mtf_countertrend_override_enabled: bool = Field(default=True, alias="MTF_COUNTERTREND_OVERRIDE_ENABLED")
-    mtf_countertrend_min_score: float = Field(default=85.0, alias="MTF_COUNTERTREND_MIN_SCORE")
-    mtf_countertrend_min_adx: float = Field(default=30.0, alias="MTF_COUNTERTREND_MIN_ADX")
-    mtf_countertrend_min_volume_ratio: float = Field(default=1.1, alias="MTF_COUNTERTREND_MIN_VOLUME_RATIO")
+    mtf_countertrend_min_score: float = Field(default=90.0, alias="MTF_COUNTERTREND_MIN_SCORE")
+    mtf_countertrend_min_adx: float = Field(default=32.0, alias="MTF_COUNTERTREND_MIN_ADX")
+    mtf_countertrend_min_volume_ratio: float = Field(default=1.3, alias="MTF_COUNTERTREND_MIN_VOLUME_RATIO")
+    mtf_countertrend_risk_multiplier: float = Field(default=0.5, alias="MTF_COUNTERTREND_RISK_MULTIPLIER")
 
     # --- Bear-market protection ---
     # Block new longs when the symbol's higher-timeframe trend is down.
