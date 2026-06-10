@@ -52,7 +52,8 @@ Quando implementi codice, assicurati di usare:
 - **rsi_reversal**: RSI oversold/overbought
 - **macd_crossover**: MACD/signal crossover con filtro ADX >= 25
 - **embient_enhanced**: Strategia principale, regime-aware (trend/range/neutral), scoring 0-100 con soglie per regime
-- Indicatori disponibili in `indicators.py`: SMA, EMA, RSI, MACD, Bollinger Bands, ADX
+- **regime_breakout**: Donchian 55-bar breakout gated da regime EMA200 direction-aware, exit canale 20-bar/regime-flip, NO take-profit, filtro ATR% sui costi. Progettata per 4h; registrata DISABILITATA nel live (il loop 15m non ha abbastanza storia) — validata nel backtester (docs/EXPERIMENTS.md 2026-06-10: netta-positiva 4/6 simboli su 730gg, max bleed 4,6% nel bear OOS)
+- Indicatori disponibili in `indicators.py`: SMA, EMA, RSI, MACD, Bollinger Bands, ADX, ATR
 - I parametri di tutte le strategie sono configurabili dalla UI e persistiti in `strategy_params.json`
 
 ### Adaptive Layer (`app/adaptive/`)
@@ -80,11 +81,14 @@ API: `GET /adaptive/guardrails`, `POST /adaptive/guardrails/reload`
 
 ### Profili (`config/profiles.json`)
 Tre profili con parametri rischio + soglie strategie + flag auto_apply/requires_approval:
-- **defensive**: position 1%, soglie embient +5 vs normal, auto_apply
+- **defensive**: position 0.75%, entry embient 90/85, SELL threshold PIU BASSE del normal (70: in difesa si esce piu facilmente, non piu difficilmente), auto_apply
 - **normal**: position 1.5%, soglie embient 80/75, auto_apply
 - **aggressive_trend**: position 1.5%, TP 6%, soglie embient 75, requires_approval
 
-Switching rules con cooldown (60 min), hysteresis (30 min), max 4 cambi/giorno.
+Switching rules anti-thrashing (2026-06): cooldown 90 min + hysteresis 60, max 3 cambi/giorno,
+recovery defensive→normal solo con campione min 5 trade + persistenza 120 min + regime sano,
+dampening 30 min sulla regola regime, guard anti flip-flop 240 min (asimmetrico: il
+tightening verso defensive non e MAI ritardato). Vedi tests/test_profile_switching.py.
 Profili e switching rules editabili via API senza deploy.
 
 ### Modelli DB (`app/models/`)

@@ -33,6 +33,32 @@ strategia senza il layer guardrails, che filtrerebbe ulteriormente.)
 7. **Confronto strategie** — `sma_crossover`, `macd_crossover`, `rsi_reversal` con stessi costi:
    quale (se alcuna) ha profit factor netto > 1?
 
+## Risultati 2026-06-10 — regime_breakout (Donchian 4h regime-gated)
+
+Comando: `python -m app.backtesting.compare --strategies regime_breakout,embient_enhanced,macd_crossover
+--interval 4h --days 730 --position-size 20 --atr-tp 0` (e variante `--walk-forward --train 1500 --test 480`).
+
+**Single-pass 730 gg** (bull 2024-H2 + bear 2025/26), net% con size 20%, stop ATR 2x, NO take-profit:
+
+| Simbolo | regime_breakout | embient_enhanced | macd_crossover | B&H |
+|---|---:|---:|---:|---:|
+| BTCUSDT | **+3,09 (PF 1,34, 29 tr)** | −5,72 | +1,87 | −12,5 |
+| ETHUSDT | **+4,23 (PF 1,34, 24 tr)** | −4,67 | −14,16 | −55,9 |
+| BNBUSDT | −7,25 | −5,85 | −8,65 | −9,9 |
+| XRPUSDT | **+39,70 (PF 2,74, 28 tr)** | +34,39 | −3,91 | +122,0 |
+| SOLUSDT | **+3,34 (PF 1,25, 27 tr)** | −18,40 | −9,00 | −60,5 |
+| LTCUSDT | −3,14 | −13,09 | −13,64 | −47,2 |
+
+**Walk-forward OOS** (finestra test ≈ quasi solo bear, B&H −37/−68%): regime_breakout
+ETH **+7,77 (PF 2,03)**, peggior simbolo SOL −4,64; embient peggior caso −19,98. MaxDD
+regime_breakout 4–9% vs 7–26% embient; fee dimezzate (≈20-30 trade/2 anni per simbolo).
+
+**Lettura onesta**: long-only in un ciclo a 2 regimi, regime_breakout è netto-positivo su 4/6
+simboli, in bear puro perde al massimo il 4,6% (vs −67% del mercato) — il contratto
+"cattura il bull, preserva nel bear" è rispettato. Debolezza nota: simboli range-bound
+(BNB). Non ancora pronta per live: serve la selezione relative-strength a livello
+portafoglio e il supporto per-strategy timeframe nell'engine.
+
 ## Idee di ricerca per un edge reale (oltre il tuning)
 - Conferma multi-timeframe come **filtro obbligatorio** (già implementata nel live engine).
 - Mean-reversion solo in regime range *con bassa* volatilità (non il contrario).
