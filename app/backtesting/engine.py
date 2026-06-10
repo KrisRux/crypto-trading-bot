@@ -232,13 +232,18 @@ class Backtester:
     # ---------------------------------------------------------------------
 
     def _stop_levels(self, side: str, entry_price: float,
-                     atr_value: float | None) -> tuple[float, float]:
+                     atr_value: float | None) -> tuple[float, float | None]:
         """
         Return (sl_price, tp_price) for an entry.
 
         Long:  SL below entry, TP above. Short: mirrored.
         ATR stops win when enabled and ATR is finite & > 0; otherwise fall back
         to the percentage stops.
+
+        A non-positive TP multiplier/percent disables the take-profit entirely
+        (``tp_price = None``) so trend-following strategies can let winners run
+        and exit on their own signal or the stop. The stop-loss can never be
+        disabled — every position keeps a hard floor.
         """
         cfg = self.config
         use_atr = (
@@ -249,15 +254,17 @@ class Backtester:
         )
         if use_atr:
             sl_dist = cfg.atr_sl_mult * atr_value
-            tp_dist = cfg.atr_tp_mult * atr_value
+            tp_dist = cfg.atr_tp_mult * atr_value if cfg.atr_tp_mult > 0 else None
         else:
             sl_dist = entry_price * (cfg.sl_pct / 100.0)
-            tp_dist = entry_price * (cfg.tp_pct / 100.0)
+            tp_dist = entry_price * (cfg.tp_pct / 100.0) if cfg.tp_pct > 0 else None
 
         if side == "BUY":
-            return entry_price - sl_dist, entry_price + tp_dist
+            return (entry_price - sl_dist,
+                    entry_price + tp_dist if tp_dist is not None else None)
         # short
-        return entry_price + sl_dist, entry_price - tp_dist
+        return (entry_price + sl_dist,
+                entry_price - tp_dist if tp_dist is not None else None)
 
     # ---------------------------------------------------------------------
     # Intrabar SL/TP resolution (conservative — SL wins a tie)

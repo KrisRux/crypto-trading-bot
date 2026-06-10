@@ -47,6 +47,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--allow-short", action="store_true")
     p.add_argument("--atr-stops", dest="atr_stops", action=argparse.BooleanOptionalAction,
                    default=settings.use_atr_stops)
+    p.add_argument("--atr-sl", type=float, default=settings.atr_sl_mult,
+                   help="ATR stop-loss multiplier")
+    p.add_argument("--atr-tp", type=float, default=settings.atr_tp_mult,
+                   help="ATR take-profit multiplier (<=0 disables the TP)")
+    p.add_argument("--sl", type=float, default=settings.default_stop_loss_pct,
+                   help="Fixed stop-loss %% (fallback when ATR stops are off)")
+    p.add_argument("--tp", type=float, default=settings.default_take_profit_pct,
+                   help="Fixed take-profit %% (<=0 disables the TP)")
     p.add_argument("--params-file", default=None,
                    help="JSON file {strategy: {param: value}} applied via set_params")
     p.add_argument("--walk-forward", action="store_true",
@@ -120,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
         return BacktestConfig(
             initial_capital=args.capital, position_size_pct=args.position_size,
             allow_short=args.allow_short, use_atr_stops=args.atr_stops,
+            atr_sl_mult=args.atr_sl, atr_tp_mult=args.atr_tp,
+            sl_pct=args.sl, tp_pct=args.tp,
             fee_pct=args.fee, slippage_pct=args.slippage, symbol=symbol,
         )
 
