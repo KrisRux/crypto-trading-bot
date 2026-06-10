@@ -35,21 +35,21 @@
       }
     },
     "defensive": {
-      "description": "Conservative profile — tighter thresholds, smaller positions",
+      "description": "Conservative profile — much harder entries, EASIER exits, smaller positions",
       "auto_apply": true,
       "requires_approval": false,
       "risk": {
-        "max_position_pct": 1.0,
-        "default_sl_pct": 3.0,
-        "default_tp_pct": 5.5
+        "max_position_pct": 0.75,
+        "default_sl_pct": 2.5,
+        "default_tp_pct": 5.0
       },
       "strategies": {
         "embient_enhanced": {
-          "trend_buy_threshold": 85.0,
-          "trend_sell_threshold": 80.0,
-          "range_buy_threshold": 78.0,
-          "range_sell_threshold": 80.0,
-          "neutral_sell_threshold": 75.0
+          "trend_buy_threshold": 90.0,
+          "trend_sell_threshold": 70.0,
+          "range_buy_threshold": 85.0,
+          "range_sell_threshold": 70.0,
+          "neutral_sell_threshold": 65.0
         },
         "rsi_reversal": {
           "oversold": 28.0,
@@ -107,7 +107,11 @@
     "cooldown_minutes": 90,
     "min_trades_for_upgrade": 7,
     "max_profile_changes_per_day": 3,
-    "hysteresis_minutes": 60
+    "hysteresis_minutes": 60,
+    "min_trades_for_recovery": 5,
+    "recovery_persistence_minutes": 120,
+    "regime_dampening_minutes": 30,
+    "flip_flop_block_minutes": 240
   },
   "active_profile": "normal"
 }

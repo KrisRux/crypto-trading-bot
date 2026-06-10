@@ -37,6 +37,9 @@ class ProfileManager:
         self._active_profile: str = "normal"
         self._switch_history: list[dict] = []  # [{from, to, at, reason}]
         self._last_switch_time: datetime | None = None
+        # Anti-thrashing timers (in-memory only: a restart just restarts the count)
+        self._recovery_pending_since: datetime | None = None
+        self._bad_regime_since: datetime | None = None
         self.load()
 
     @property
@@ -121,12 +124,14 @@ class ProfileManager:
         """
         current = self._active_profile
 
-        # Check switching rules: cooldown
-        if not self._can_switch():
-            return None
-
+        # Determine the target FIRST so the persistence/dampening timers keep
+        # advancing even while the cooldown blocks the actual switch.
         target = self._determine_target(current, perf, regime)
         if target is None or target == current:
+            return None
+
+        # Check switching rules: cooldown, daily cap, flip-flop guard
+        if not self._can_switch(target):
             return None
 
         target_profile = self._profiles.get(target)
@@ -149,19 +154,49 @@ class ProfileManager:
         drawdown = perf.get("drawdown_intraday", 0)
         win_rate = perf.get("win_rate_last_10", 50)
 
+        # Timer maintenance up-front: earlier rules may return before the
+        # tail of this function, so resets cannot live inside Rule 5/Rule 2.
+        now = datetime.now(timezone.utc)
+        if regime in ("volatile", "defensive"):
+            if self._bad_regime_since is None:
+                self._bad_regime_since = now
+        else:
+            self._bad_regime_since = None
+        if current != "defensive":
+            self._recovery_pending_since = None
+
         # Rule 1: normal → defensive
         if current == "normal":
             if pnl_6h_pct <= -0.25 or consec_losses >= 3 or drawdown >= 1.5:
                 return "defensive"
 
         # Rule 2: defensive → normal
+        # Loosening is the dangerous direction (live data showed 10 flips in 5
+        # days driven by WR computed on tiny samples), so it requires:
+        #   - a minimum sample of recent trades (WR on 2 trades is noise)
+        #   - a regime that is NOT defensive/volatile (otherwise Rule 5 flips
+        #     straight back — the historical thrash loop)
+        #   - the clean conditions to PERSIST for recovery_persistence_minutes
         if current == "defensive":
-            # Require clean conditions: no recent losses, improved WR, lower drawdown
             consec_losses = perf.get("consecutive_losses", 0)
-            if (win_rate >= 60
-                    and drawdown < 0.8
-                    and consec_losses == 0
-                    and perf.get("api_error_count", 0) <= 2):
+            min_sample = self._switching_rules.get("min_trades_for_recovery", 5)
+            persistence_min = self._switching_rules.get("recovery_persistence_minutes", 120)
+            clean = (win_rate >= 60
+                     and drawdown < 0.8
+                     and consec_losses == 0
+                     and perf.get("total_recent_trades", 0) >= min_sample
+                     and regime not in ("volatile", "defensive")
+                     and perf.get("api_error_count", 0) <= 2)
+            if not clean:
+                self._recovery_pending_since = None
+            elif self._recovery_pending_since is None:
+                self._recovery_pending_since = now
+                logger.info(
+                    "Profile recovery armed: conditions clean, waiting %d min persistence",
+                    persistence_min,
+                )
+            elif (now - self._recovery_pending_since).total_seconds() >= persistence_min * 60:
+                self._recovery_pending_since = None
                 return "normal"
 
         # Rule 3: normal → aggressive_trend (requires approval + min trades)
@@ -183,9 +218,16 @@ class ProfileManager:
             if pnl_6h_pct <= -0.25 or consec_losses >= 2 or drawdown >= 1.5:
                 return "defensive"
 
-        # Rule 5: volatile / defensive regime → defensive profile
+        # Rule 5: volatile / defensive regime → defensive profile.
+        # Dampened: the bad regime must persist for regime_dampening_minutes
+        # before tightening, so a single noisy snapshot (1-2 symbols flipping
+        # for one cycle) does not bounce the profile around. The timer itself
+        # is maintained at the top of this function.
         if regime in ("volatile", "defensive") and current != "defensive":
-            return "defensive"
+            dampening_min = self._switching_rules.get("regime_dampening_minutes", 30)
+            if (self._bad_regime_since is not None
+                    and (now - self._bad_regime_since).total_seconds() >= dampening_min * 60):
+                return "defensive"
 
         return None
 
@@ -206,18 +248,39 @@ class ProfileManager:
             parts.append(f"trend regime, WR={perf.get('win_rate_last_10', 0):.0f}%")
         return "; ".join(parts) if parts else f"{from_p} → {to_p}"
 
-    def _can_switch(self) -> bool:
-        """Check cooldown and daily limit."""
+    def _can_switch(self, target: str | None = None) -> bool:
+        """Check cooldown, daily limit and the anti flip-flop guard."""
         now = datetime.now(timezone.utc)
         cooldown = self._switching_rules.get("cooldown_minutes", 60)
         hysteresis = self._switching_rules.get("hysteresis_minutes", 30)
         max_changes = self._switching_rules.get("max_profile_changes_per_day", 4)
+        flip_flop_min = self._switching_rules.get("flip_flop_block_minutes", 240)
 
         # Cooldown
         if self._last_switch_time:
             elapsed = (now - self._last_switch_time).total_seconds() / 60
             if elapsed < cooldown + hysteresis:
                 return False
+
+        # Flip-flop guard: never undo the most recent switch too quickly
+        # (A→B followed by B→A within flip_flop_block_minutes is pure thrash —
+        # the historical log showed exactly this defensive↔normal ping-pong).
+        # Asymmetric on purpose: switching TO defensive (tightening) is never
+        # delayed — protection must stay immediate.
+        if target and target != "defensive" and self._switch_history:
+            last = self._switch_history[-1]
+            try:
+                last_at = datetime.fromisoformat(last["at"])
+                if (last.get("from") == target
+                        and (now - last_at).total_seconds() < flip_flop_min * 60):
+                    logger.info(
+                        "Profile switch blocked: flip-flop guard (%s→%s would undo "
+                        "%s→%s of %s)", self._active_profile, target,
+                        last.get("from"), last.get("to"), last.get("at"),
+                    )
+                    return False
+            except (KeyError, ValueError):
+                pass
 
         # Daily limit
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
