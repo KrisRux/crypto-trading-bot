@@ -1,380 +1,218 @@
 # Crypto Trading Bot
 
-Bot di trading automatico per criptovalute con integrazione Binance Spot API, web dashboard responsive, adaptive layer a 3 livelli con notifiche Telegram e human-in-the-loop.
+Bot di trading spot su Binance, **long-only**, con una sola strategia validata
+(trend-following su breakout 4h), guardrail di rischio deterministici, web
+dashboard e loop di monitoraggio KPI con notifiche Telegram.
 
-> **DISCLAIMER**: Questo software e fornito a scopo educativo e sperimentale. Il trading di criptovalute comporta rischi significativi. Non costituisce consiglio finanziario. Utilizza a tuo rischio e pericolo. Testa sempre prima in modalita paper trading.
+> **DISCLAIMER**: software a scopo educativo e sperimentale. Il trading di
+> criptovalute comporta rischi significativi. Non costituisce consiglio
+> finanziario. Testa sempre in modalità paper prima di qualsiasi uso reale.
 
 ---
 
-## Funzionalita
+## Overview
 
-### Trading Engine
-- **Tre modalita**: Dry Run (solo log), Paper (Binance Testnet), Live (ordini reali)
-- **Dati in tempo reale**: Prezzi via Binance WebSocket con riconnessione automatica
-- **Ciclo ogni 15 minuti**: Candele 15m per ridurre overtrading
-- **Cooldown per simbolo**: 15 minuti tra un trade e l'altro per utente/simbolo
-- **Multi-utente**: Ogni utente ha il proprio portafoglio, chiavi API e modalita
+**Cosa fa**: ogni 15 minuti analizza i simboli configurati; quando la strategia
+`regime_breakout` rileva un breakout confermato in regime rialzista su candele
+4h apre una posizione long con stop ATR e sizing risk-based; chiude su rottura
+del canale, flip di regime o stop. In mercato ribassista **resta flat per
+design**: su un conto spot la protezione del capitale È la posizione bear.
 
-### Strategie
-- **SMA Crossover**: Golden/death cross con filtro ADX >= 25
-- **RSI Reversal**: Inversione da zone oversold/overbought
-- **MACD Crossover**: Crossover MACD/signal con filtro ADX >= 25
-- **Embient Enhanced**: Strategia principale multi-fattore con scoring 0-100, regime-aware (trend/range/neutral)
-- **Parametri configurabili dalla UI**: Ogni strategia e modificabile senza deploy
-- **Persistenza parametri**: Salvati in JSON, sopravvivono ai restart
+**Obiettivo della strategia**: catturare i trend rialzisti sostenuti (dove
+sta l'edge misurato del time-series momentum) pagando il meno possibile in
+costi — poche operazioni (~1–2/mese per simbolo), movimenti attesi molto
+maggiori dello 0,24% di costo round-trip.
 
-### Regime Gate (ADX-based)
-- **TREND (ADX >= 25)**: embient_enhanced ha priorita assoluta, rsi_reversal completamente disabilitata
-- **RANGE (ADX < 25)**: rsi_reversal OK, embient solo se score >= 80
-- **Signal arbitration**: Risoluzione conflitti BUY vs SELL con priorita per regime
+**Tre modalità**: `dry_run` (solo log), `paper` (portafoglio virtuale o
+testnet Binance), `live` (chiavi reali, mai con permessi di withdrawal).
 
-### Adaptive Layer (3 livelli)
-- **Market Regime Service**: Classifica il mercato per simbolo e globale usando ADX, ATR%, BB width, volume ratio. Regimi: trend, range, volatile, defensive
-- **Performance Monitor**: Metriche rolling (PnL 1h/6h/24h, win rate, drawdown intraday, consecutive losses, trades/hour)
-- **Profile Manager**: 3 profili (defensive, normal, aggressive_trend) con switching automatico deterministico, cooldown, hysteresis, limiti giornalieri
-- **Notification Service**: Notifiche Telegram per-utente con dedup e rate limiting
-- **Approval Service**: Human-in-the-loop per cambi profilo aggressivi (pending/approved/rejected/expired)
-- **LLM Advisor**: Advisor read-only che spiega il comportamento del bot e suggerisce profili (mai execution)
-- **Meta Controller**: Orchestratore che coordina tutti i servizi dopo ogni ciclo del motore
-
-### Profili di Trading
-
-| Profilo | max_position | SL | TP | embient trend_buy | Auto? |
-|---|---|---|---|---|---|
-| **defensive** | 1.0% | 3% | 5% | 85 | auto |
-| **normal** | 1.5% | 3% | 5% | 80 | auto |
-| **aggressive_trend** | 1.5% | 3% | 6% | 75 | richiede approvazione |
-
-### Regole di Switching
-
-| Da → A | Condizione |
-|---|---|
-| normal → defensive | pnl_6h <= -2 OR 3+ consecutive losses OR drawdown >= 1.5% |
-| defensive → normal | win_rate >= 55% AND drawdown < 1% AND pochi API errors |
-| normal → aggressive_trend | regime trend, win_rate >= 60%, pnl_6h > 0 (richiede approvazione) |
-| aggressive → defensive | pnl_6h <= -2 OR 2+ losses OR drawdown >= 1.5% |
-| qualsiasi → defensive | regime volatile o defensive |
-
-### Notifiche Telegram
-- **CRITICAL**: Drawdown breach, approval required, bot paused, API errors persistenti
-- **WARNING**: Profile switch, consecutive losses
-- **INFO**: Regime change, daily summary
-- Notifica inviata una sola volta per episodio (si resetta quando la condizione rientra)
-- Bot token server-wide, chat_id per-utente configurabile dalla UI
-
-### Risk Management
-- Stop-loss e take-profit automatici (configurabili per profilo)
-- Position sizing basato su % del capitale
-- Lot size arrotondato ai decimali Binance (step size)
-
-### Web App
-- **Dashboard**: Saldo, posizioni aperte con PnL%, banner profilo/regime/metriche, chiusura manuale posizioni
-- **Strategies**: Configurazione parametri per ogni strategia con salvataggio live
-- **Settings**: Modalita trading, chiavi API, orario trading, Telegram (chat_id + test)
-- **Logs**: Segnali e ordini
-- **Responsive**: Utilizzabile da PC e smartphone
-- **Autenticazione JWT**: Cookie httpOnly, ruoli admin/user/guest
+---
 
 ## Architettura
 
 ```
-bot_inv/
-├── app/
-│   ├── main.py                    # Entrypoint FastAPI + startup adaptive layer
-│   ├── config.py                  # Configurazione da .env
-│   ├── database.py                # Setup SQLAlchemy + auto-migration colonne
-│   ├── logging_config.py          # Logging strutturato
-│   ├── strategy_store.py          # Persistenza parametri strategie/rischio (JSON)
-│   │
-│   ├── api/
-│   │   ├── routes.py              # REST API (auth, trading, adaptive, approvals)
-│   │   ├── auth.py                # JWT, password hashing, ruoli
-│   │   └── schemas.py             # Pydantic schemas
-│   │
-│   ├── adaptive/                  # Layer adattivo a 3 livelli
-│   │   ├── market_regime_service.py   # Regime detection (ADX, ATR, BB, volume)
-│   │   ├── performance_monitor.py     # Metriche rolling da trade history
-│   │   ├── profile_manager.py         # Profili + switching rules + hysteresis
-│   │   ├── notification_service.py    # Telegram Bot API (per-utente)
-│   │   ├── approval_service.py        # Human-in-the-loop approvals
-│   │   ├── llm_advisor.py            # Advisor read-only (mai execution)
-│   │   └── meta_controller.py        # Orchestratore post-cycle
-│   │
-│   ├── binance_client/
-│   │   ├── rest_client.py         # Binance REST API (HMAC-SHA256)
-│   │   └── ws_client.py           # Binance WebSocket (prezzi real-time)
-│   │
-│   ├── strategies/
-│   │   ├── base.py                # Classe astratta Strategy + Signal
-│   │   ├── indicators.py          # SMA, EMA, RSI, MACD, Bollinger, ADX
-│   │   ├── sma_crossover.py       # Incrocio medie mobili + ADX gate
-│   │   ├── rsi_strategy.py        # RSI oversold/overbought
-│   │   ├── macd_strategy.py       # MACD crossover + ADX gate
-│   │   └── embient_enhanced.py    # Multi-fattore regime-aware (principale)
-│   │
-│   ├── trading_engine/
-│   │   ├── engine.py              # Motore principale (multi-user, multi-symbol)
-│   │   ├── order_manager.py       # Esecuzione ordini Binance
-│   │   └── risk_manager.py        # Position sizing, SL/TP
-│   │
-│   ├── paper_trading/
-│   │   └── portfolio.py           # Portafoglio virtuale per-utente
-│   │
-│   ├── models/
-│   │   ├── user.py                # User (auth, API keys, Telegram, schedule)
-│   │   ├── trade.py               # Trade, Order, enums
-│   │   ├── portfolio.py           # PaperPortfolio, PaperPosition
-│   │   ├── symbol.py              # TradingSymbol
-│   │   └── approval.py            # ApprovalRequest
-│   │
-│   └── embient_skills/            # Knowledge base trading (56 skills, 7 categorie)
-│       ├── loader.py
-│       └── data/
-│
-├── config/
-│   └── profiles.json              # Profili trading (editable senza deploy)
-│
-├── frontend/                      # React + TypeScript + Tailwind CSS
-│   └── src/
-│       ├── App.tsx                # Layout e routing
-│       ├── api.ts                 # Client API (typed)
-│       ├── pages/
-│       │   ├── Dashboard.tsx      # Saldo, posizioni, PnL%, banner adaptive
-│       │   ├── Strategies.tsx     # Config strategie con auto-save
-│       │   ├── Settings.tsx       # API keys, Telegram, modalita, orario
-│       │   └── Logs.tsx           # Segnali e ordini
-│       └── components/
-│
-├── tests/                         # Test pytest
-├── deploy/
-│   ├── setup.sh                   # Setup iniziale server
-│   └── update.sh                  # Aggiornamento (git pull + build + restart)
-├── docker-compose.yml
-├── requirements.txt
-└── .env.example
+                 ┌──────────────────────────────────────────────┐
+ Binance REST/WS │  TradingEngine (ciclo 15m)                   │
+ ───────────────►│  • fetch candele chiuse (15m + 4h via        │
+                 │    TimeframeFeed, cache per barra)           │
+                 │  • regime_breakout → segnali BUY/SELL        │
+                 │  • macro filter (flat-in-bear, MTF 1h)       │
+                 │  • Guardrails.can_open_new_trade()           │
+                 │  • esecuzione per-utente (dry/paper/live)    │
+                 │  • exit: SL-first, profit lock, stale exit   │
+                 └───────────────┬──────────────────────────────┘
+                                 │ dopo ogni ciclo
+                 ┌───────────────▼──────────────────────────────┐
+                 │  MetaController (layer adattivo, MAI ordini) │
+                 │  regime → performance → profili (risk-only)  │
+                 │  → KPI/allarmi/trigger → Telegram → advisor  │
+                 └───────────────┬──────────────────────────────┘
+                                 │
+        FastAPI /api ◄── DB SQLite (trade, ordini, utenti, portafogli)
+            │
+        React dashboard (saldo, posizioni, KPI, config, approvazioni)
 ```
 
-## Setup Rapido
+| Modulo | Responsabilità |
+|---|---|
+| `app/trading_engine/engine.py` | Orchestrazione ciclo, esecuzione ordini, exit |
+| `app/trading_engine/data_feed.py` | Candele chiuse per timeframe custom (cache per barra, dedup) |
+| `app/strategies/regime_breakout.py` | L'unica strategia (segnali puri, nessun side effect) |
+| `app/adaptive/guardrails.py` | Kill switch, cooldown, trade gate, throttle, risk scaler, circuit breaker |
+| `app/adaptive/profile_manager.py` | Profili di **solo rischio** (normal/defensive/aggressive) con anti-thrashing |
+| `app/adaptive/kpi_monitor.py` | KPI 30gg, allarmi, trigger di revisione, report giornaliero |
+| `app/pnl.py` | Unica fonte di verità per fee/slippage/PnL netto |
+| `app/backtesting/` | Harness event-driven no-lookahead + walk-forward + compare CLI |
+| `app/api/routes.py` | REST API (auth JWT, trading, config, adaptive, KPI) |
+| `frontend/` | Dashboard React + TypeScript + Tailwind |
 
-### Prerequisiti
+**Flusso dati**: candele chiuse → segnali → filtri → guardrail → ordine →
+`Trade` in DB (PnL **netto** via `compute_pnl`) → KPI/report.
 
-- Python 3.11+
-- Node.js 18+
-- Un account Binance (o Binance Testnet per paper trading)
+---
 
-### 1. Clona e configura
+## Strategia: `regime_breakout`
 
-```bash
-cd bot_inv
-cp .env.example .env
-# Modifica .env con i tuoi valori
-```
+Trend-following long-only su candele **4h**, quattro regole trasparenti:
 
-### 2. Backend
+1. **Regime gate (direction-aware)** — entry solo se `close > EMA200` **e**
+   EMA200 in salita. Niente acquisti in downtrend, mai.
+2. **Entry** — breakout Donchian: il close supera il massimo delle 55 barre
+   precedenti.
+3. **Exit (edge-triggered)** — close sotto il minimo delle 20 barre precedenti
+   **oppure** flip di regime; nessun take-profit vincolante (TP a 12×ATR, i
+   winner corrono), stop hard a 2×ATR(4h) sotto l'entry.
+4. **Filtro costi** — ATR% dell'entry in [0,5%, 6%]: il movimento atteso deve
+   dominare i costi, ma niente entry in panico di volatilità.
 
+**Validazione** (vedi `docs/EXPERIMENTS.md`): su 730 giorni (bull 2024 +
+bear 2025/26) netta-positiva su 4/6 simboli (PF 1,25–2,74, maxDD 4–16%);
+nel walk-forward out-of-sample quasi tutto-bear perde al massimo il 4,6%
+contro un mercato a −67%. ~25 trade per simbolo in 2 anni.
+
+**Risk management**:
+- Sizing risk-based: la quantità deriva dalla distanza dello stop (rischio %
+  fisso del capitale per trade), scalata dai moltiplicatori dei guardrail.
+- Stop ATR del timeframe del segnale (il segnale porta il suo `atr_pct`).
+- Guardrail pre-trade (unico punto: `can_open_new_trade()`): kill switch
+  globale, cooldown per simbolo, gate di regime, score minimo dinamico,
+  throttle per candela/ora, riduzione size dopo perdite, circuit breaker
+  per strategia, performance gate.
+- Profili (`config/profiles.json`): modulano **solo** position size e stop —
+  mai la logica del segnale. Switch deterministici con cooldown, persistenza
+  della recovery, dampening e guard anti flip-flop.
+
+---
+
+## Setup
+
+### Requisiti
+Python 3.12+, Node 20+, chiavi Binance (testnet e/o live).
+
+### Backend
 ```bash
 python -m venv venv
-source venv/bin/activate   # Linux/macOS
-# oppure: venv\Scripts\activate   # Windows
-
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+venv/Scripts/pip install -r requirements.txt        # Windows
+# crea .env (vedi sotto)
+venv/Scripts/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-### 3. Frontend
+### Frontend
+```bash
+cd frontend && npm install && npm run dev            # dev su :5173
+npm run build                                        # produzione (dist/)
+```
+
+### .env (server-wide)
+```
+DATABASE_URL=sqlite:///./trading_bot.db
+SYMBOLS=BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,SOLUSDT
+MAX_POSITION_SIZE_PCT=2.0
+DEFAULT_STOP_LOSS_PCT=3.0
+DEFAULT_TAKE_PROFIT_PCT=5.0
+JWT_SECRET=<token casuale>
+ENCRYPTION_KEY=<chiave Fernet>
+TELEGRAM_BOT_TOKEN=<token da @BotFather>
+LOG_LEVEL=INFO
+```
+Le chiavi API Binance sono **per-utente**, inserite dalla UI (Settings) e
+cifrate con Fernet nel DB. Mai chiavi nel codice o nel repo.
+
+### API Binance
+- Testnet Spot: https://testnet.binance.vision/
+- Spot ufficiale: https://binance-docs.github.io/apidocs/spot/en/
+- REST per candele/ordini con firma e sync del server time; WebSocket per i
+  tick prezzo usati dal controllo intrabar di SL/TP.
+
+### Deploy (Oracle Cloud / Ubuntu)
+`deploy/setup.sh` (prima installazione), `deploy/update.sh` (pull + restart).
+Nginx serve `frontend/dist` e proxa `/api/` su uvicorn (127.0.0.1:8000).
+
+---
+
+## Runtime: il flusso operativo
+
+1. Ogni 15 minuti l'engine fetcha le candele 15m chiuse (per regime/exit) e —
+   tramite `TimeframeFeed` — le 4h chiuse per la strategia (refetch solo a
+   barra nuova, invocazione max 1 volta per barra).
+2. I segnali passano: macro filter (blocco BUY se direzione bear o HTF down)
+   → guardrail → cooldown/risk per-utente → ordine (market) con SL/TP.
+3. Gli exit girano a ogni ciclo anche fuori orario di trading: SL-first al
+   livello, profit lock/trailing, chiusura posizioni stantie.
+4. Dopo il ciclo il MetaController aggiorna regime e performance, valuta i
+   profili di rischio, calcola i KPI e invia report/allarmi Telegram
+   (bot token server-wide, chat_id per-utente).
+5. L'LLM advisor è **solo consultivo**: spiega lo stato e suggerisce; ogni
+   modifica ai guardrail richiede approvazione umana esplicita (UI/Telegram).
+
+---
+
+## Metriche: cosa guardare e come leggerle
+
+`GET /api/performance/kpi` (e report Telegram giornaliero, ore 6 UTC):
+
+| KPI | Soglia sana | Significato |
+|---|---|---|
+| Expectancy netta/trade | > 0 | Se negativa su ≥20 trade, il sistema brucia capitale |
+| Profit factor | > 1,1 | < 0,8 su 30+ trade ⇒ trigger di revisione automatico |
+| Cost ratio | < 30% | Quota dei profitti lordi mangiata da fee+slippage |
+| Turnover | < 1 trade/giorno | Più alto = sta tradando rumore |
+| Max drawdown 30gg | < 2% capitale | Oltre ⇒ allarme CRITICAL |
+| Win rate × payoff | coerenti | WR ~30% è OK **solo** con payoff > 2,5 (trend following) |
+| Giorni senza trade | qualsiasi in bear | ⇒ trigger solo se il mercato è in uptrend |
+
+Soglie modificabili a caldo in `config/kpi.json`. Tutto il PnL esposto è
+**netto** (gross − fee − slippage, colonne dedicate sul `Trade`).
+
+---
+
+## Limiti: cosa il bot NON fa
+
+- **Non shorta e non copre**: spot long-only. In bear market il risultato
+  atteso è ~0 (flat), non un profitto.
+- **Non predice**: segue trend confermati. Nei mercati laterali prolungati
+  (es. BNB nel periodo di validazione) perde poco ma perde — è il costo noto
+  dei falsi breakout.
+- **Non si auto-modifica**: nessun LLM può toccare ordini o parametri; i
+  cambi automatici sono solo i profili di rischio deterministici.
+- **Edge non garantito**: la validazione copre un ciclo bull+bear (2024–26).
+  Il gate per il live resta: walk-forward netto positivo su più simboli +
+  30 giorni di paper coerenti col backtest.
+- **Rischi residui**: gap oltre lo stop (lo stop è sul prezzo, il fill può
+  essere peggiore), dipendenza da un solo exchange, un solo timeframe, una
+  sola famiglia di segnali.
+
+---
+
+## Sviluppo
 
 ```bash
-cd frontend
-npm install
-npm run dev
+venv/Scripts/python -m pytest tests/ -q                  # 281 test
+venv/Scripts/python -m app.backtesting.run --symbol BTCUSDT --interval 4h \
+    --days 365 --strategy regime_breakout                # backtest singolo
+venv/Scripts/python -m app.backtesting.compare --interval 4h --days 730 \
+    --position-size 20 --atr-tp 0 --walk-forward         # confronto/OOS
 ```
 
-Il frontend sara disponibile su `http://localhost:5173`.
-
-### 4. Test
-
-```bash
-pytest tests/ -v
-```
-
-### 5. Backtesting (validare PRIMA del live)
-
-Harness event-driven con costi reali (fee+slippage), nessun lookahead e benchmark buy&hold.
-Vedi [docs/PROFITABILITY_OVERHAUL.md](docs/PROFITABILITY_OVERHAUL.md) e [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
-
-```bash
-# Backtest singolo (klines pubbliche Binance, niente API key)
-python -m app.backtesting.run --symbol BTCUSDT --interval 15m --days 90 \
-    --strategy embient_enhanced --position-size 20
-# Walk-forward out-of-sample
-python -m app.backtesting.run --symbol BTCUSDT --days 180 --walk-forward --train 2000 --test 500
-```
-
-> Regola: non passare a `live` finche un walk-forward non mostra **alpha netto positivo** vs buy&hold.
-
-## Configurazione .env
-
-| Variabile | Default | Descrizione |
-|---|---|---|
-| `DATABASE_URL` | `sqlite:///./trading_bot.db` | Database SQLAlchemy |
-| `SYMBOLS` | `BTCUSDT,ETHUSDT` | Simboli monitorati (comma-separated) |
-| `MAX_POSITION_SIZE_PCT` | `2.0` | Max % capitale per posizione |
-| `DEFAULT_STOP_LOSS_PCT` | `3.0` | Stop loss default (%) |
-| `DEFAULT_TAKE_PROFIT_PCT` | `5.0` | Take profit default (%) |
-| `PAPER_FEE_PCT` | `0.1` | Commissione simulata per lato nel paper trading (%) |
-| `PAPER_SLIPPAGE_PCT` | `0.02` | Slippage simulato per lato nel paper trading (%) |
-| `TAKER_FEE_PCT` / `MAKER_FEE_PCT` | `0.1` / `0.1` | Commissioni live Binance (taker=market, maker=limit) |
-| `USE_ATR_STOPS` | `true` | SL/TP basati su ATR (volatility-aware) invece di % fisse |
-| `ATR_SL_MULT` / `ATR_TP_MULT` | `2.0` / `3.0` | Moltiplicatori ATR per SL/TP |
-| `RISK_BASED_SIZING` | `true` | Size dal rischio %/trade sulla distanza SL (cap su notional) |
-| `RISK_PCT_PER_TRADE` | `0.5` | Rischio per trade (% equity) |
-| `MTF_FILTER_ENABLED` | `true` | Filtro trend multi-timeframe (no BUY contro-trend) |
-| `MTF_INTERVAL` / `MTF_EMA_PERIOD` | `1h` / `200` | Timeframe + EMA del filtro macro |
-| `MTF_COUNTERTREND_OVERRIDE_ENABLED` | `true` | Consente solo BUY locali molto forti contro HTF laggante |
-| `MTF_COUNTERTREND_MIN_SCORE` / `MTF_COUNTERTREND_MIN_ADX` | `90` / `32` | Soglie minime per override countertrend |
-| `MTF_COUNTERTREND_MIN_VOLUME_RATIO` | `1.3` | Volume minimo per override countertrend |
-| `MTF_COUNTERTREND_RISK_MULTIPLIER` | `0.5` | Size ridotta per BUY passati dall'override |
-| `FLAT_IN_BEAR` | `true` | Niente BUY quando il regime del simbolo e ribassista |
-| `DISABLE_PAPER_SHORTS` | `true` | Niente short sintetici (coerenza con spot live) |
-| `MAX_SLIPPAGE_PCT` | `0.3` | Soglia di allerta slippage sugli ordini market |
-| `BINANCE_RECV_WINDOW` | `5000` | recvWindow (ms) per le richieste firmate |
-| `JWT_SECRET` | (da cambiare) | Chiave JWT per autenticazione |
-| `ENCRYPTION_KEY` | (generare) | Chiave Fernet per cifrare API keys in DB |
-| `TELEGRAM_BOT_TOKEN` | (vuoto) | Token bot Telegram da @BotFather |
-| `LOG_LEVEL` | `INFO` | Livello logging |
-
-**Nota**: Il `TELEGRAM_CHAT_ID` e per-utente, configurabile dalla pagina Settings della web app.
-
-### Generazione chiavi
-
-```bash
-# JWT Secret
-python -c "import secrets; print(secrets.token_hex(32))"
-
-# Encryption Key (Fernet)
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-## Configurazione Telegram
-
-1. Crea un bot con [@BotFather](https://t.me/botfather) su Telegram
-2. Copia il token e inseriscilo come `TELEGRAM_BOT_TOKEN` nel `.env` del server
-3. Invia un messaggio al bot (es. `/start`)
-4. Trova il tuo Chat ID: `https://api.telegram.org/bot<TOKEN>/getUpdates`
-5. Nella web app, vai su **Settings** → sezione **Telegram Notifications**
-6. Inserisci il Chat ID, abilita il toggle, premi **Salva**
-7. Usa il pulsante **Invia Test** per verificare
-
-## API Endpoints
-
-### Autenticazione
-| Metodo | Path | Descrizione |
-|---|---|---|
-| POST | `/api/login` | Login (restituisce cookie JWT) |
-| POST | `/api/logout` | Logout |
-| GET | `/api/me` | Info utente corrente |
-
-### Trading
-| Metodo | Path | Descrizione |
-|---|---|---|
-| GET | `/api/balance` | Saldo (paper o live) |
-| GET | `/api/positions` | Posizioni aperte con PnL% |
-| POST | `/api/positions/{id}/close` | Chiudi posizione manualmente |
-| GET | `/api/orders` | Storico ordini |
-| GET | `/api/trades` | Storico trade |
-| GET | `/api/performance/breakdown` | PnL e win rate aggregati per strategia e simbolo, con costi paper stimati. Supporta `?hours=24` o `?since=2026-05-24T12:58:24Z` |
-| GET | `/api/signals` | Ultimi segnali generati |
-
-### Strategie e Rischio
-| Metodo | Path | Descrizione |
-|---|---|---|
-| GET | `/api/strategies` | Lista strategie con parametri |
-| PUT | `/api/strategies` | Modifica strategia (auto-save) |
-| GET | `/api/risk` | Parametri rischio |
-| PUT | `/api/risk` | Modifica rischio |
-
-### Adaptive Layer
-| Metodo | Path | Descrizione |
-|---|---|---|
-| GET | `/api/adaptive/status` | Stato completo (regime, profilo, performance, advisor) |
-| GET | `/api/adaptive/profiles` | Lista profili + switching rules |
-| PUT | `/api/adaptive/profiles/{name}` | Modifica profilo (admin) |
-| POST | `/api/adaptive/profiles/{name}/apply` | Applica profilo manualmente (admin) |
-| PUT | `/api/adaptive/switching-rules` | Modifica regole switching (admin) |
-| POST | `/api/adaptive/telegram/test` | Invia test Telegram |
-
-### Approvals
-| Metodo | Path | Descrizione |
-|---|---|---|
-| GET | `/api/approvals` | Lista tutte le richieste |
-| GET | `/api/approvals/pending` | Solo pending |
-| POST | `/api/approvals/{id}/approve` | Approva (admin) |
-| POST | `/api/approvals/{id}/reject` | Rifiuta (admin) |
-
-### Configurazione
-| Metodo | Path | Descrizione |
-|---|---|---|
-| GET | `/api/settings/keys` | Impostazioni utente (keys, mode, Telegram) |
-| PUT | `/api/settings/keys` | Salva impostazioni |
-| POST | `/api/symbols/add` | Aggiungi simbolo (admin) |
-| POST | `/api/symbols/remove` | Rimuovi simbolo (admin) |
-
-## Deploy su Server (systemd)
-
-```bash
-# Prima installazione
-sudo ./deploy/setup.sh
-
-# Aggiornamento
-sudo ./deploy/update.sh
-
-# Log
-sudo tail -f /var/log/cryptobot.log
-```
-
-## Come aggiungere una nuova strategia
-
-1. Crea un file in `app/strategies/` (es. `my_strategy.py`)
-2. Estendi la classe `Strategy`:
-
-```python
-from app.strategies.base import Strategy, Signal, SignalType
-
-class MyStrategy(Strategy):
-    name = "my_strategy"
-    enabled = True
-
-    def generate_signals(self, df, symbol):
-        # df contiene: open, high, low, close, volume (indice datetime)
-        return []  # Lista di Signal
-
-    def get_params(self):
-        return {"my_param": self.my_param}
-
-    def set_params(self, params):
-        if "my_param" in params:
-            self.my_param = params["my_param"]
-```
-
-3. Registra in `app/main.py`:
-
-```python
-engine.register_strategy(MyStrategy())
-```
-
-4. Aggiungi i parametri al profilo in `config/profiles.json`
-
-La strategia apparira automaticamente nella dashboard.
-
-## Note Tecniche
-
-- Il trading engine esegue un ciclo ogni 15 minuti (candele 15m)
-- Il meta-controller valuta regime/performance/profilo dopo ogni ciclo
-- I prezzi real-time sono aggiornati via WebSocket (riconnessione automatica)
-- Database SQLite con auto-migration per nuove colonne
-- I log vengono salvati in `logs/trading_bot.log` (rotazione automatica)
-- Le API keys sono cifrate con Fernet (AES-128-CBC) nel database
-- L'autenticazione usa JWT in cookie httpOnly (protezione XSS)
-- I profili e le switching rules sono in `config/profiles.json` (editable senza deploy)
-- I parametri strategia sono persistiti in `strategy_params.json`
-- Un LLM advisor analizza lo stato ma **non puo mai** modificare parametri o eseguire ordini
+Regola d'oro: **nessuna modifica alla strategia va in produzione senza
+backtest walk-forward positivo e senza che la suite sia verde.**

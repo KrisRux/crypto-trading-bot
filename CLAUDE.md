@@ -1,233 +1,162 @@
 # Claude Instructions
 
 ## Obiettivo del progetto
-Crea e mantieni un bot/agente per trading di criptovalute su Binance, con web app responsive per desktop e mobile, modalita live/paper/dry-run, gestione autonoma di ordini e logiche di ingresso/uscita, adaptive layer a 3 livelli con notifiche Telegram e human-in-the-loop, e modulo per rilevare pattern di investimento.
-
-## Riferimenti di progetto
-- Repository principale (skills e agenti): https://github.com/SKE-Labs/agent-trading-skills
-- Fai sempre riferimento a questo repository per skills, pattern e implementazioni condivise.
+Bot di trading spot su Binance, long-only, con UNA strategia validata
+(`regime_breakout`, trend-following su breakout 4h), guardrail deterministici,
+web app responsive, modalità live/paper/dry-run, profili di rischio adattivi
+con notifiche Telegram e human-in-the-loop, e loop permanente di monitoraggio
+KPI. Filosofia: **semplicità misurabile** — ogni componente deve dimostrare
+con i numeri che genera rendimento corretto per il rischio, o viene rimosso.
 
 ## Documentazione API da usare
-Per tutte le integrazioni con Binance devi fare riferimento esclusivamente a questi link:
-
+Per tutte le integrazioni con Binance fare riferimento esclusivamente a:
 - Testnet Binance Spot: https://testnet.binance.vision/
 - Documentazione Binance Spot API: https://binance-docs.github.io/apidocs/spot/en/
 
-Quando implementi codice, assicurati di usare:
-- endpoint testnet per la modalita di prova;
-- endpoint spot ufficiali per la modalita live;
-- WebSocket e REST coerenti con la documentazione ufficiale;
-- gestione corretta di firma, timestamp, rate limit ed errori API.
+Endpoint testnet in modalità prova, spot ufficiali in live; WebSocket e REST
+coerenti con la documentazione; gestione corretta di firma, timestamp, rate
+limit ed errori API.
 
 ## Regole importanti
-- Non inserire mai chiavi API reali nel codice.
-- Le chiavi devono essere lette da variabili d'ambiente o file `.env` o da db.
-- Le chiavi API Binance sono cifrate con Fernet nel DB (per-utente).
-- In modalita test/demo il sistema deve inviare ordini utilizzando il puntamento di test.
-- In modalita live il sistema deve operare solo con permessi di trading, mai con permessi di withdrawal.
+- Non inserire mai chiavi API reali nel codice. Chiavi da .env o DB
+  (per-utente, cifrate Fernet).
+- In live solo permessi di trading, MAI withdrawal.
 - Ogni funzione critica deve avere gestione errori e logging.
-- Prima di eseguire azioni irreversibili, verifica sempre la modalita attiva.
-- Nessun LLM puo modificare direttamente ordini o parametri live. L'LLM puo solo suggerire.
-- I cambi automatici devono essere solo deterministici e confinati ai profili JSON.
+- Prima di azioni irreversibili verificare la modalità attiva.
+- **Nessun LLM può modificare ordini o parametri live. Solo suggerire.**
+  I cambi automatici sono solo i profili di rischio deterministici (JSON).
+- **Nessuna modifica alla strategia va in produzione senza walk-forward netto
+  positivo** (`app/backtesting/compare.py`) e suite test verde.
+- Il sistema è SPOT LONG-ONLY ovunque: niente short, nemmeno simulati in
+  paper (gli short sintetici falsificano il confronto paper vs live).
 
 ## Architettura attuale
 
-### Tre modalita di trading
-- **dry_run**: il bot analizza e logga tutto, ma non apre posizioni e non chiama Binance
-- **paper**: ordini reali su Binance Testnet (soldi virtuali) se chiavi testnet configurate, altrimenti simulazione locale
-- **live**: ordini reali su Binance con le chiavi live dell'utente
+### Tre modalità di trading
+- **dry_run**: analizza e logga, nessun ordine
+- **paper**: ordini su Binance Testnet (se chiavi testnet) o simulazione locale
+- **live**: ordini reali con chiavi live per-utente
 
-### Trading Engine (`app/trading_engine/engine.py`)
-- Ciclo ogni 15 minuti (candele 15m) per ridurre overtrading
-- Cooldown per simbolo: 15 minuti tra un trade e l'altro
-- Multi-utente: segnali condivisi, esecuzione per-utente
-- Regime gate ADX-based prima dell'esecuzione:
-  - TREND (ADX >= 25): embient priorita assoluta, rsi_reversal BLOCCATA
-  - RANGE (ADX < 25): rsi_reversal OK, embient solo se score >= 80
-- Signal arbitration per conflitti BUY vs SELL
-- Dopo il ciclo, chiama `meta_controller.evaluate()` con i DataFrame
+### Trading Engine (`app/trading_engine/`)
+- `engine.py`: ciclo ogni 15 minuti su candele CHIUSE (no lookahead);
+  esecuzione per-utente; cooldown 15 min per (utente, simbolo); exit SL-first
+  al livello + profit lock/trailing + stale-position; macro filter che blocca
+  i BUY quando la direzione del simbolo è bear (flat_in_bear) o l'HTF 1h è
+  down; conflitti BUY/SELL risolti con la regola "un exit batte sempre un
+  nuovo entry". Dopo il ciclo chiama `meta_controller.evaluate()`.
+- `data_feed.py` (`TimeframeFeed`): frame di candele chiuse per strategie con
+  `interval` custom (es. 4h) — cache invalidata solo alla chiusura di una
+  nuova barra, strategia invocata max 1 volta per barra chiusa.
+- `_entry_plan()`: stop ATR + sizing risk-based; il segnale può fornire
+  `atr_pct` (ATR del SUO timeframe) e `tp_atr_mult` nei metadata.
 
-### Strategie (`app/strategies/`)
-- **sma_crossover**: Golden/death cross con filtro ADX >= 25
-- **rsi_reversal**: RSI oversold/overbought
-- **macd_crossover**: MACD/signal crossover con filtro ADX >= 25
-- **embient_enhanced**: Strategia principale, regime-aware (trend/range/neutral), scoring 0-100 con soglie per regime
-- **regime_breakout**: Donchian 55-bar breakout gated da regime EMA200 direction-aware, exit canale 20-bar/regime-flip, NO take-profit, filtro ATR% sui costi. Progettata per 4h; registrata DISABILITATA nel live (il loop 15m non ha abbastanza storia) — validata nel backtester (docs/EXPERIMENTS.md 2026-06-10: netta-positiva 4/6 simboli su 730gg, max bleed 4,6% nel bear OOS)
-- Indicatori disponibili in `indicators.py`: SMA, EMA, RSI, MACD, Bollinger Bands, ADX, ATR
-- I parametri di tutte le strategie sono configurabili dalla UI e persistiti in `strategy_params.json`
+### Strategia (`app/strategies/`)
+UNA strategia registrata: **regime_breakout** (`regime_breakout.py`)
+- `interval="4h"`, `min_history_bars` ~220
+- Entry: breakout Donchian 55-bar in regime bull (close > EMA200 e EMA200 in
+  salita) con ATR% in [0.5, 6] (filtro costi)
+- Exit edge-triggered: rottura 20-bar low O flip di regime; sell_score=0
+  (il SELL è solo chiusura, mai conviction short); TP 12×ATR non vincolante
+- Validata su 730gg + walk-forward OOS: vedi docs/EXPERIMENTS.md (2026-06-10)
+- Parametri configurabili da UI, persistiti via `strategy_store.py`
+- `indicators.py`: SMA, EMA, RSI, MACD, Bollinger, ADX, ATR (libreria pura;
+  il market_regime_service usa ADX/ATR/BB)
+- Per aggiungere una strategia: implementare `Strategy` (base.py), dichiarare
+  `interval`/`min_history_bars` se serve un TF custom, registrarla in main.py
+  e nel registry del backtester, e validarla PRIMA con compare.py
 
 ### Adaptive Layer (`app/adaptive/`)
-Layer esterno al motore, non tocca mai l'esecuzione degli ordini direttamente.
+Layer esterno al motore, non tocca mai l'esecuzione degli ordini.
+- **market_regime_service.py**: regime per simbolo (trend/range/volatile/
+  defensive via ADX, ATR%, BB width, volume) + `direction` (up/down/flat) e
+  `is_bearish()` usato dal macro filter
+- **performance_monitor.py**: metriche rolling dal DB (pnl 1h/6h/24h, WR,
+  drawdown intraday, consecutive losses)
+- **profile_manager.py**: profili di SOLO rischio da `config/profiles.json`
+  (normal 1.5%, defensive 0.75%, aggressive_trend 2% con approvazione).
+  Anti-thrashing: recovery con campione minimo + persistenza 120 min,
+  dampening 30 min sulla regola regime, flip-flop guard 240 min asimmetrico
+  (il tightening non è mai ritardato). I profili NON toccano i parametri
+  della strategia.
+- **guardrails.py**: gate pre-trade unico `can_open_new_trade()` — kill
+  switch, symbol cooldown, trade gate regime-aware, dynamic score, entry
+  throttle, risk scaler, strategy circuit breaker, performance gate.
+  Config `config/guardrails.json` (hot-reload via API).
+- **kpi_monitor.py**: loop permanente — KPI 30gg (expectancy, PF, cost_ratio,
+  turnover, DD, Sharpe/trade, attribution per-strategia), allarmi da
+  `config/kpi.json`, trigger di revisione deterministici (pf_collapse,
+  net_loss, strategy_negative, asleep_in_bull) che notificano senza MAI
+  cambiare parametri. Report Telegram giornaliero; API `GET /performance/kpi`.
+- **notification_service.py**: Telegram (bot token server-wide, chat_id
+  per-utente, dedup + rate limiting)
+- **approval_service.py**: richieste approvazione in DB (human-in-the-loop)
+- **llm_advisor.py**: READ-ONLY, spiega e suggerisce; i suggerimenti di
+  tuning guardrail si applicano SOLO con approvazione umana via API
+- **meta_controller.py**: orchestratore post-ciclo (regime → performance →
+  profili → KPI/report → advisor)
 
-- **market_regime_service.py**: Classifica mercato per simbolo usando ADX, ATR%, BB width, volume ratio. Regimi: trend, range, volatile, defensive
-- **performance_monitor.py**: Metriche rolling dal DB (pnl_1h/6h/24h, win_rate_last_10, drawdown_intraday, consecutive_losses, trades_per_hour)
-- **profile_manager.py**: Carica profili da `config/profiles.json`, valuta regole di switching deterministiche con cooldown/hysteresis/limiti giornalieri
-- **notification_service.py**: Telegram Bot API, bot_token server-wide, chat_id per-utente dal DB, dedup + rate limiting, alert una volta per episodio
-- **approval_service.py**: Richieste approvazione in DB (pending/approved/rejected/expired), per cambi profilo aggressivi
-- **llm_advisor.py**: Advisor READ-ONLY. Legge stato e produce spiegazioni + suggerimenti. MAI modifica parametri
-- **meta_controller.py**: Orchestratore chiamato dopo ogni ciclo. Coordina: regime → performance → switch evaluation → notifications → advisor
-- **guardrails.py**: Layer centralizzato pre-trade con kill switch, symbol cooldown, trade gate regime-aware, dynamic score, entry throttle, risk scaling, strategy circuit breaker. Punto unico: `can_open_new_trade()`. Config da `config/guardrails.json` (hot-reload via API).
-- **kpi_monitor.py**: Loop di miglioramento permanente. KPI 30gg (expectancy, PF, cost_ratio, turnover, DD, Sharpe/trade, attribution per-strategia = tabella A/B), allarmi con soglie in `config/kpi.json`, trigger deterministici di revisione (pf_collapse, net_loss, strategy_negative, asleep_in_bull) che notificano SENZA mai cambiare parametri. Report Telegram giornaliero (ora UTC configurabile) via meta_controller; API `GET /performance/kpi`.
+### Contabilità (`app/pnl.py`)
+`Trade.pnl` è il NETTO (dopo fee+slippage); `gross_pnl/fee/slippage` colonne
+dedicate. Tutto il PnL passa da `compute_pnl` — NON duplicare formule altrove.
 
-### Guardrails (`config/guardrails.json`)
-Layer di protezione centralizzato con 7 componenti:
-- **KillSwitch**: pausa globale su consecutive_losses>=6 (90min), win_rate<=15% (90min), drawdown>=2% (120min), pnl_24h<=-6 (120min)
-- **SymbolCooldown**: per-simbolo dopo 3 loss consecutive (60min) o 2 SL ravvicinati in 90min (90min)
-- **TradeGate**: soglie regime-aware (ADX/volume/BB width) per global regime (defensive: ADX>=30, range: ADX>=32, trend: ADX>=25)
-- **DynamicScoreFilter**: min score 80 (base), 88 (3+ loss), 92 (5+ loss), +5 in regime range/defensive, cap 95
-- **EntryThrottle**: max 1 entry/simbolo/candle, max orarie per regime (defensive:2, range:3, trend:5)
-- **RiskScaler**: multiplier size 0.75 (3+ loss), 0.50 (5+ loss o drawdown>=1.5%)
-- **StrategyCircuitBreaker**: pausa strategia dopo 4 loss consecutive (2h), anche per coppia simbolo+strategia
-API: `GET /adaptive/guardrails`, `POST /adaptive/guardrails/reload`
-
-### Profili (`config/profiles.json`)
-Tre profili con parametri rischio + soglie strategie + flag auto_apply/requires_approval:
-- **defensive**: position 0.75%, entry embient 90/85, SELL threshold PIU BASSE del normal (70: in difesa si esce piu facilmente, non piu difficilmente), auto_apply
-- **normal**: position 1.5%, soglie embient 80/75, auto_apply
-- **aggressive_trend**: position 1.5%, TP 6%, soglie embient 75, requires_approval
-
-Switching rules anti-thrashing (2026-06): cooldown 90 min + hysteresis 60, max 3 cambi/giorno,
-recovery defensive→normal solo con campione min 5 trade + persistenza 120 min + regime sano,
-dampening 30 min sulla regola regime, guard anti flip-flop 240 min (asimmetrico: il
-tightening verso defensive non e MAI ritardato). Vedi tests/test_profile_switching.py.
-Profili e switching rules editabili via API senza deploy.
+### Backtesting (`app/backtesting/`)
+Event-driven, no-lookahead (signal-on-close/fill-next-open), SL-first
+intrabar, costi reali via app/pnl, TP disattivabile (`--atr-tp 0`),
+walk-forward, orchestratore comparativo `compare.py` (strategie × simboli,
+iniezione parametri live). SEMPRE validare qui prima di toccare il live.
 
 ### Modelli DB (`app/models/`)
-- **User**: auth, chiavi API (Fernet-encrypted), trading_mode, paper_initial_capital, trading_hours, telegram_chat_id, telegram_enabled
-- **Trade**: ciclo completo entry→exit, PnL, mode (paper/live), strategy
-- **Order**: ordini singoli (BUY/SELL, MARKET/LIMIT)
-- **PaperPortfolio** / **PaperPosition**: portafoglio virtuale per-utente
-- **TradingSymbol**: simboli attivi (persistiti in DB)
-- **ApprovalRequest**: richieste approvazione profilo (pending/approved/rejected/expired)
+User (auth, chiavi cifrate, trading_mode, telegram), Trade (entry→exit, PnL
+netto, mode, strategy), Order, PaperPortfolio/PaperPosition (portfolio.py),
+TradingSymbol, ApprovalRequest.
+Nuove colonne DB: usare `_migrate_add_columns()` in `database.py`.
 
 ### Frontend (`frontend/`)
-React + TypeScript + Tailwind CSS:
-- **Dashboard.tsx**: Saldo, posizioni con PnL%, banner profilo/regime/metriche, chiusura manuale, advisor suggestion
-- **Strategies.tsx**: Config parametri per strategia con auto-save (flash verde su salvataggio)
-- **Settings.tsx**: Modalita trading (dry_run/paper/live), chiavi API, orario UTC, Telegram (chat_id + toggle + test)
-- **Logs.tsx**: Segnali e ordini
+React + TypeScript + Tailwind: Dashboard (saldo, posizioni, banner profilo/
+regime), Strategies (parametri con auto-save), Opportunities, Profiles,
+Guardrails config, Approvals, Diagnostics, Settings (modalità, chiavi,
+Telegram), Logs, Users, Assets, Manual.
 
 ### API (`app/api/routes.py`)
-Endpoints principali:
-- Auth: login, logout, me, CRUD utenti
-- Trading: balance, positions, orders, trades, signals, close position
-- Config: strategies CRUD, risk CRUD, symbols add/remove, settings/keys
-- Adaptive: status, profiles CRUD, switching-rules, telegram test, guardrails status/reload
-- Approvals: list, pending, approve, reject
+Auth JWT; trading (balance, positions, orders, trades, signals, close);
+config (strategies, risk, symbols, settings/keys); adaptive (status, profiles,
+switching-rules, guardrails status/reload/config, tuning con approvazione,
+telegram test); performance (breakdown, mark-to-market, **kpi**); approvals;
+diagnostics; logs/tail; paper reset/export.
 
 ## Configurazione
-
-### .env (server-wide)
-```
-DATABASE_URL=sqlite:///./trading_bot.db
-SYMBOLS=BTCUSDT,ETHUSDT,LTCUSDT,BNBUSDT,XRPUSDT,SOLUSDT
-MAX_POSITION_SIZE_PCT=2.0
-DEFAULT_STOP_LOSS_PCT=3.0
-DEFAULT_TAKE_PROFIT_PCT=5.0
-JWT_SECRET=<token casuale>
-ENCRYPTION_KEY=<chiave Fernet>
-TELEGRAM_BOT_TOKEN=<token da @BotFather>
-LOG_LEVEL=INFO
-```
-
-### Per-utente (DB, configurabile da Settings UI)
-- Chiavi API Binance (live + testnet)
-- Trading mode (dry_run / paper / live)
-- Orario trading (UTC)
-- Telegram chat_id + enabled
-
-### Profili (config/profiles.json, editabili via API)
-- Parametri rischio per profilo
-- Soglie strategie per profilo
-- Switching rules (cooldown, hysteresis, max cambi/giorno)
-
-## Funzionalita richieste (mantenute)
-
-### Trading
-- Il bot piazza ordini in modo autonomo
-- Chiude posizioni quando raggiunge SL/TP configurabile
-- Supporta: market order, limit order, stop loss, take profit
-- Chiusura manuale posizioni dalla dashboard
-
-### Pattern detection
-- Indicatori tecnici: SMA, EMA, RSI, MACD, Bollinger Bands, ADX
-- Segnali: BUY, SELL, HOLD
-- Scoring 0-100 per embient_enhanced
-
-### Web app
-- Dashboard con saldo, posizioni, PnL%, banner profilo/regime
-- Storico trade e ordini con filtri
-- Configurazione strategie e rischio
-- Selezione modalita dry_run / paper / live
-- Notifiche Telegram configurabili per-utente
-- Log tail da browser
-
-### Modalita demo
-- Simulazione ordini e posizioni su Binance Testnet o locale
-- Saldo virtuale, storico trade simulati
-- Reset portafoglio demo
-- Export CSV
-
-## Struttura progetto
-
-```
-app/
-├── main.py
-├── config.py
-├── database.py
-├── logging_config.py
-├── strategy_store.py
-├── pnl.py                # contabilita PnL netta centralizzata (fonte di verita)
-├── api/
-├── backtesting/          # harness backtest event-driven, no-lookahead, walk-forward
-├── adaptive/
-│   ├── market_regime_service.py
-│   ├── performance_monitor.py
-│   ├── profile_manager.py
-│   ├── notification_service.py
-│   ├── approval_service.py
-│   ├── llm_advisor.py
-│   ├── meta_controller.py
-│   └── guardrails.py
-├── binance_client/
-├── strategies/
-├── trading_engine/
-├── paper_trading/
-├── models/
-└── embient_skills/
-config/profiles.json
-config/guardrails.json
-frontend/
-tests/
-deploy/
-```
+- `.env`: DATABASE_URL, SYMBOLS, MAX_POSITION_SIZE_PCT, DEFAULT_SL/TP,
+  JWT_SECRET, ENCRYPTION_KEY, TELEGRAM_BOT_TOKEN, LOG_LEVEL (+ toggle in
+  config.py: fee, ATR, risk sizing, MTF, flat_in_bear — default = raccomandato)
+- Per-utente (DB, da Settings UI): chiavi Binance, trading mode, orario UTC,
+  Telegram chat_id
+- `config/profiles.json`: profili rischio + switching rules (editabili via API)
+- `config/guardrails.json`: guardrail (hot-reload)
+- `config/kpi.json`: soglie KPI/allarmi + ora report
 
 ## Git
-- Dopo ogni modifica al codice, esegui sempre `git add`, `git commit` e `git push` per mantenere il repository aggiornato.
-- Non lasciare modifiche locali senza push.
+- Dopo ogni modifica: `git add`, `git commit`, `git push`. Niente modifiche
+  locali senza push.
+- Il server di produzione (Oracle Cloud) si aggiorna con `deploy/update.sh`.
 
 ## Stile di lavoro
-- Scrivi codice pulito, modulare e documentato.
-- Se una richiesta e ambigua, fai una sola domanda chiarificatrice prima di procedere.
-- Preferisci soluzioni semplici, robuste e facili da mantenere.
-- Se proponi una strategia, separa sempre: acquisizione dati, calcolo indicatori, generazione segnali, esecuzione ordini.
-- Se aggiungi colonne al DB, usa la funzione `_migrate_add_columns()` in `database.py` per retrocompatibilita con DB esistenti.
-- I profili e le switching rules devono restare editabili senza deploy (via API o JSON).
-- Il Telegram chat_id e per-utente (DB), il bot_token e server-wide (.env).
+- Codice pulito, modulare, documentato; soluzioni semplici e robuste.
+- Separare sempre: acquisizione dati, indicatori, segnali, esecuzione.
+- Se una richiesta è ambigua, una sola domanda chiarificatrice.
+- Componenti nuovi = giustificazione misurabile o non entrano. La complessità
+  rimossa nel cleanup 2026-06 (4 strategie legacy, skills library, paper
+  short, regime gate per-strategia) NON va reintrodotta senza validazione.
 
-## Aggiornamento redditivita (2026-06) — vedi docs/PROFITABILITY_OVERHAUL.md
-Fatti chiave per le sessioni future:
-- **`Trade.pnl` e il NETTO** (dopo fee+slippage); `gross_pnl/fee/slippage` sono colonne dedicate.
-  Tutto il PnL passa da `app/pnl.py` (`compute_pnl`) — NON duplicare formule fee altrove.
-- Reporting (`/balance`, `/performance/*`) legge le colonne nette: niente doppio conteggio.
-- Engine: niente lookahead (candela in formazione scartata per segnali/regime), exit SL-first
-  al livello, stop ATR + sizing risk-based (`_entry_plan`), filtro multi-timeframe + flat-in-bear,
-  slippage guard + sync server-time. Short paper disabilitati di default (spot non shorta).
-- Nuove impostazioni in `config.py` (fee taker/maker, ATR, risk sizing, MTF, flat_in_bear,
-  disable_paper_shorts) — tutte toggle, default = raccomandato.
-- **Backtester** in `app/backtesting/`: validare SEMPRE una strategia (walk-forward, costi reali)
-  prima del live. La strategia `embient_enhanced` e risultata negative-alpha sul backtest 90gg:
-  l'edge va trovato, non assunto.
+## Storia essenziale (per contesto, vedi git per i dettagli)
+- 2026-06: profitability overhaul (docs/PROFITABILITY_OVERHAUL.md) — PnL
+  netto centralizzato, no-lookahead, backtester; diagnosi: long-only senza
+  edge in bear, costi > movimento medio catturato.
+- 2026-06-10: cicli di miglioramento — anti-thrashing profili, strategia
+  regime_breakout validata (docs/EXPERIMENTS.md), per-strategy timeframe,
+  KPI loop, cleanup aggressivo (−7.400 righe). La strategia legacy
+  embient_enhanced era negative-alpha misurata: non recuperarla.
 
 ## Nota finale
-Questo progetto deve essere pensato per uso sicuro e responsabile. La modalita testnet/paper trading deve essere sempre disponibile e ben evidenziata nell'interfaccia. Nessun LLM puo mai eseguire ordini o modificare parametri direttamente — solo suggerire.
+Uso sicuro e responsabile: testnet/paper sempre disponibile ed evidenziata.
+Nessun LLM esegue ordini o modifica parametri direttamente — solo suggerimenti
+con approvazione umana.
