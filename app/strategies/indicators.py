@@ -65,6 +65,19 @@ class Indicators:
         return upper, middle, lower
 
     @staticmethod
+    def atr(high: pd.Series, low: pd.Series, close: pd.Series,
+            period: int = 14) -> pd.Series:
+        """
+        Average True Range (Wilder's smoothing, alpha = 1/period).
+        Measures absolute volatility in price units.
+        """
+        hl = high - low
+        hc = (high - close.shift()).abs()
+        lc = (low - close.shift()).abs()
+        tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
+        return tr.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+
+    @staticmethod
     def adx(high: pd.Series, low: pd.Series, close: pd.Series,
             period: int = 14) -> pd.Series:
         """

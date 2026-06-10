@@ -21,6 +21,7 @@ from app.strategies.sma_crossover import SmaCrossoverStrategy
 from app.strategies.rsi_strategy import RsiStrategy
 from app.strategies.macd_strategy import MacdStrategy
 from app.strategies.embient_enhanced import EmbientEnhancedStrategy
+from app.strategies.regime_breakout import RegimeBreakoutStrategy
 from app.embient_skills.loader import SkillsLibrary
 from app.strategy_store import load_strategy_params, load_risk_params
 from app.adaptive.meta_controller import MetaController
@@ -57,6 +58,13 @@ async def lifespan(app: FastAPI):
     engine.register_strategy(RsiStrategy())
     engine.register_strategy(MacdStrategy())
     engine.register_strategy(EmbientEnhancedStrategy(skills_library=skills_library))
+    # Disabled by default: regime_breakout is designed for 4h candles and needs
+    # ~210 closed bars of history — the 15m live loop fetches only 151, so it
+    # would never fire. Enable it once the engine supports per-strategy
+    # timeframes (it is already fully usable from the back-tester).
+    _breakout = RegimeBreakoutStrategy()
+    _breakout.enabled = False
+    engine.register_strategy(_breakout)
 
     # Restore persisted params saved by the UI (survives restarts)
     saved_strategies = load_strategy_params()

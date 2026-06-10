@@ -77,6 +77,7 @@ def _strategy_registry() -> dict[str, Callable[[], Strategy]]:
     from app.strategies.rsi_strategy import RsiStrategy
     from app.strategies.macd_strategy import MacdStrategy
     from app.strategies.embient_enhanced import EmbientEnhancedStrategy
+    from app.strategies.regime_breakout import RegimeBreakoutStrategy
 
     return {
         "sma_crossover": SmaCrossoverStrategy,
@@ -86,6 +87,8 @@ def _strategy_registry() -> dict[str, Callable[[], Strategy]]:
         "macd": MacdStrategy,
         "embient_enhanced": EmbientEnhancedStrategy,
         "embient": EmbientEnhancedStrategy,
+        "regime_breakout": RegimeBreakoutStrategy,
+        "breakout": RegimeBreakoutStrategy,
     }
 
 
