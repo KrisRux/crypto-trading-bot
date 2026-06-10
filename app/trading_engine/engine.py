@@ -529,8 +529,47 @@ class TradingEngine:
         except Exception:
             return None
 
+    def _signal_risk_multiplier(self, signal: Signal) -> float:
+        meta = signal.metadata or {}
+        try:
+            multiplier = float(meta.get("macro_risk_multiplier", 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+        return min(1.0, max(0.1, multiplier))
+
+    def _strong_local_long_override(self, signal: Signal, symbol: str,
+                                    sym_snap=None) -> tuple[bool, str]:
+        """Allow high-quality local momentum longs before the slower HTF EMA flips."""
+        if not settings.mtf_countertrend_override_enabled:
+            return False, "override_disabled"
+        if signal.signal_type != SignalType.BUY:
+            return False, "not_buy"
+        if not sym_snap:
+            return False, "no_regime_snapshot"
+        if getattr(sym_snap, "direction", "flat") != "up":
+            return False, f"local_direction_{getattr(sym_snap, 'direction', 'unknown')}"
+        if getattr(sym_snap, "regime", "") != "trend":
+            return False, f"local_regime_{getattr(sym_snap, 'regime', 'unknown')}"
+
+        meta = signal.metadata or {}
+        score = float(meta.get("buy_score", (signal.confidence or 0) * 100))
+        adx = float(getattr(sym_snap, "adx", 0) or 0)
+        volume_ratio = float(getattr(sym_snap, "volume_ratio", 0) or 0)
+        if score < settings.mtf_countertrend_min_score:
+            return False, f"score_{score:.0f}<{settings.mtf_countertrend_min_score:.0f}"
+        if adx < settings.mtf_countertrend_min_adx:
+            return False, f"adx_{adx:.1f}<{settings.mtf_countertrend_min_adx:.1f}"
+        if volume_ratio < settings.mtf_countertrend_min_volume_ratio:
+            return False, f"volume_{volume_ratio:.2f}<{settings.mtf_countertrend_min_volume_ratio:.2f}"
+        signal.metadata = {
+            **meta,
+            "macro_override": "strong_local_long",
+            "macro_risk_multiplier": settings.mtf_countertrend_risk_multiplier,
+        }
+        return True, f"score={score:.0f} adx={adx:.1f} vol={volume_ratio:.2f}x"
+
     def _apply_macro_trend_filter(self, signals: list[Signal], symbol: str,
-                                  htf_up: bool | None) -> list[Signal]:
+                                  htf_up: bool | None, sym_snap=None) -> list[Signal]:
         """Drop BUY signals when the higher-TF trend is down or the symbol's
         regime direction is bearish — don't buy into a downtrend on a spot
         account that cannot hedge."""
@@ -548,6 +587,20 @@ class TradingEngine:
         kept = []
         for s in signals:
             if s.signal_type == SignalType.BUY:
+                if htf_block and not bearish:
+                    allowed, reason = self._strong_local_long_override(s, symbol, sym_snap)
+                    if allowed:
+                        logger.info(
+                            "MACRO_FILTER: BUY %s allowed by strong-local override (%s)",
+                            symbol, reason,
+                        )
+                        kept.append(s)
+                        continue
+                    logger.info(
+                        "MACRO_FILTER: BUY %s blocked (htf_downtrend; override_failed=%s)",
+                        symbol, reason,
+                    )
+                    continue
                 logger.info("MACRO_FILTER: BUY %s blocked (%s)", symbol,
                             "regime_bearish" if bearish else "htf_downtrend")
                 continue
@@ -987,7 +1040,7 @@ class TradingEngine:
                 )
                 capital = float(usdt["free"])
                 sl, tp, base_qty = self._entry_plan(symbol, "BUY", current_price, capital)
-                risk_mult = self.guardrails.get_risk_multiplier()
+                risk_mult = self.guardrails.get_risk_multiplier() * self._signal_risk_multiplier(buy_signals[0])
                 qty = self._round_qty(symbol, base_qty * risk_mult)
                 if risk_mult < 1.0:
                     logger.info("RISK_SCALING: applied multiplier=%.2f to %s qty=%.6f→%.6f",
@@ -1161,7 +1214,7 @@ class TradingEngine:
                 db, user.id, user.paper_initial_capital
             )
             sl, tp, base_qty = self._entry_plan(symbol, "BUY", current_price, portfolio.cash_balance)
-            risk_mult = self.guardrails.get_risk_multiplier()
+            risk_mult = self.guardrails.get_risk_multiplier() * self._signal_risk_multiplier(buy_signals[0])
             qty = self._round_qty(symbol, base_qty * risk_mult)
             if risk_mult < 1.0:
                 logger.info("RISK_SCALING: applied multiplier=%.2f to %s qty=%.6f→%.6f",
@@ -1429,7 +1482,7 @@ class TradingEngine:
                 )
                 capital = float(usdt["free"])
                 sl, tp, base_qty = self._entry_plan(signal.symbol, "BUY", signal.price, capital)
-                risk_mult = self.guardrails.get_risk_multiplier()
+                risk_mult = self.guardrails.get_risk_multiplier() * self._signal_risk_multiplier(signal)
                 qty = self._round_qty(signal.symbol, base_qty * risk_mult)
                 if risk_mult < 1.0:
                     logger.info("RISK_SCALING: applied multiplier=%.2f to %s qty=%.6f→%.6f",
@@ -1635,7 +1688,9 @@ class TradingEngine:
                         regime_label = "TREND" if adx >= self._trend_adx_threshold else "RANGE"
                         logger.info("REGIME: %s (ADX=%.1f) [%s]", regime_label, adx, symbol)
                     signals = self._apply_regime_gate(signals, adx, symbol)
-                    signals = self._apply_macro_trend_filter(signals, symbol, htf_trend.get(symbol))
+                    signals = self._apply_macro_trend_filter(
+                        signals, symbol, htf_trend.get(symbol), sym_snap
+                    )
 
                     # Guardrails: filter BUY signals through centralized gate
                     if signals:

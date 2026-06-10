@@ -55,6 +55,8 @@ sizing 20%: **net −10,4%**, profit factor **0,40**, alpha vs buy&hold **negati
   `is_bearish/is_bullish` + `global_direction`.
 - **Filtro macro multi-timeframe** + **flat-in-bear**: niente BUY contro il trend del
   timeframe superiore o quando il regime del simbolo è ribassista.
+  Eccezione controllata: un setup locale `trend/up` molto forte può passare contro
+  un HTF ancora laggante, ma con size ridotta.
 
 ### Guardrails più selettivi (`config/guardrails.json`)
 Allineati ai default documentati (erano stati tarati troppo permissivi):
@@ -76,6 +78,11 @@ MAX_SLIPPAGE_PCT=0.3         BINANCE_RECV_WINDOW=5000
 USE_ATR_STOPS=true           ATR_SL_MULT=2.0   ATR_TP_MULT=3.0
 RISK_BASED_SIZING=true       RISK_PCT_PER_TRADE=0.5
 MTF_FILTER_ENABLED=true      MTF_INTERVAL=1h   MTF_EMA_PERIOD=200
+MTF_COUNTERTREND_OVERRIDE_ENABLED=true
+MTF_COUNTERTREND_MIN_SCORE=90
+MTF_COUNTERTREND_MIN_ADX=32
+MTF_COUNTERTREND_MIN_VOLUME_RATIO=1.3
+MTF_COUNTERTREND_RISK_MULTIPLIER=0.5
 FLAT_IN_BEAR=true            DISABLE_PAPER_SHORTS=true
 ```
 
