@@ -26,6 +26,7 @@ from app.adaptive.profile_manager import ProfileManager
 from app.adaptive.notification_service import NotificationService
 from app.adaptive.approval_service import ApprovalService
 from app.adaptive.llm_advisor import LLMAdvisor
+from app.adaptive.kpi_monitor import KPIMonitor
 from app.adaptive.news_sentiment import NewsSentimentService
 from app.config import settings
 from app.models.trade import Trade, TradeStatus
@@ -62,9 +63,11 @@ class MetaController:
         self.approval_service = ApprovalService()
         self.advisor = LLMAdvisor()
         self.news_sentiment = NewsSentimentService()
+        self.kpi_monitor = KPIMonitor()
 
         self._last_global_regime: str | None = None
         self._daily_summary_sent: str | None = None
+        self._kpi_report_sent: str | None = None
         # Avoid spamming: track alert state + silence period
         self._drawdown_alerted: bool = False
         self._consec_losses_alerted: bool = False
@@ -322,6 +325,12 @@ class MetaController:
             # 5. Daily summary (once per day at ~00:00 UTC cycle)
             await self._maybe_send_daily_summary(perf_dict, chat_ids)
 
+            # 7. Permanent improvement loop: daily KPI report + review triggers
+            await self._maybe_send_kpi_report(
+                db, chat_ids, global_regime,
+                regime_snapshot.get("global_direction", "flat"),
+            )
+
             logger.info(
                 "META_CTRL: cycle complete | regime=%s | profile=%s | "
                 "PnL6h=%.2f | WR=%.0f%% | DD=%.2f%%",
@@ -446,6 +455,47 @@ class MetaController:
         if now.hour == 0 and now.minute < 20:
             await self.notifier.notify_daily_summary(perf_dict, chat_ids=chat_ids)
             self._daily_summary_sent = today
+
+    async def _maybe_send_kpi_report(self, db: Session, chat_ids: list,
+                                     global_regime: str, global_direction: str):
+        """Permanent improvement loop: daily KPI report at the configured UTC
+        hour, plus immediate (24h-deduped) notifications for review triggers.
+
+        Triggers never change parameters — they tell the operator that a new
+        improvement cycle (diagnosis -> change -> backtest -> rollout) is due.
+        """
+        try:
+            now = datetime.now(timezone.utc)
+            today = now.strftime("%Y-%m-%d")
+            report_hour = int(self.kpi_monitor.thresholds.get("report_hour_utc", 6))
+            report_due = (self._kpi_report_sent != today and now.hour >= report_hour)
+
+            # Compute KPIs once per cycle only when something must be sent:
+            # the daily report, or potentially-fresh review triggers.
+            kpi = self.kpi_monitor.compute(db)
+            alarms = self.kpi_monitor.evaluate_alarms(kpi)
+            triggers = self.kpi_monitor.review_triggers(
+                kpi, global_regime=global_regime, global_direction=global_direction,
+            )
+            fresh_triggers = self.kpi_monitor.unnotified_triggers(triggers, now)
+
+            if report_due:
+                text = self.kpi_monitor.format_report(kpi, alarms, triggers)
+                await self.notifier.broadcast(text, level="INFO",
+                                              chat_ids=chat_ids or [])
+                self._kpi_report_sent = today
+                logger.info("KPI_REPORT: sent (%d alarms, %d review triggers)",
+                            len(alarms), len(triggers))
+            elif fresh_triggers:
+                # Out-of-band: a review trigger fired between daily reports.
+                lines = ["\U0001F501 <b>Trigger di revisione strategia</b>", ""]
+                lines += [f"- {t['message']}" for t in fresh_triggers]
+                await self.notifier.broadcast("\n".join(lines), level="WARNING",
+                                              chat_ids=chat_ids or [])
+                logger.warning("KPI_REVIEW_TRIGGER: %s",
+                               "; ".join(t["key"] for t in fresh_triggers))
+        except Exception:
+            logger.exception("KPI report/trigger evaluation failed")
 
     # ------------------------------------------------------------------
     # Telegram callback polling (inline approval buttons)

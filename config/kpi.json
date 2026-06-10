@@ -1,0 +1,20 @@
+{
+  "min_trades_for_quality_alarms": 20,
+  "expectancy_min_usdt": 0.0,
+  "profit_factor_min": 1.0,
+  "win_rate_min_pct": 25.0,
+  "cost_ratio_max": 0.5,
+  "max_drawdown_pct_max": 2.0,
+  "trades_per_day_max": 4.0,
+  "net_pnl_30d_pct_min": -2.0,
+
+  "review_profit_factor_below": 0.8,
+  "review_min_trades": 30,
+  "review_net_pnl_30d_pct_below": -2.0,
+  "review_strategy_expectancy_below": 0.0,
+  "review_strategy_min_trades": 20,
+  "review_idle_days_in_uptrend": 14,
+
+  "report_hour_utc": 6,
+  "capital_base_fallback": 10000.0
+}

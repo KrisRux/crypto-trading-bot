@@ -1230,6 +1230,27 @@ def get_mark_to_market_performance(
     return _mark_to_market_for_user(db, user, hours=hours)
 
 
+@router.get("/performance/kpi")
+def get_performance_kpi(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(require_auth),
+    window_days: int = Query(default=30, ge=1, le=365),
+):
+    """Daily-loop KPI snapshot: overall + per-strategy (A/B) metrics, active
+    alarms and review-cycle triggers. Same logic the Telegram report uses."""
+    mc = get_meta_controller()
+    kpi = mc.kpi_monitor.compute(db, window_days=window_days)
+    regime = mc.regime_service.global_snapshot()
+    alarms = mc.kpi_monitor.evaluate_alarms(kpi)
+    triggers = mc.kpi_monitor.review_triggers(
+        kpi,
+        global_regime=regime.get("global_regime", "unknown"),
+        global_direction=regime.get("global_direction", "flat"),
+    )
+    return {"kpi": kpi, "alarms": alarms, "review_triggers": triggers,
+            "thresholds": mc.kpi_monitor.thresholds}
+
+
 # ------------------------------------------------------------------ Price
 @router.get("/price/{symbol}", response_model=PriceResponse)
 async def get_price(symbol: str, _user: dict = Depends(require_auth)):

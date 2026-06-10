@@ -67,6 +67,7 @@ Layer esterno al motore, non tocca mai l'esecuzione degli ordini direttamente.
 - **llm_advisor.py**: Advisor READ-ONLY. Legge stato e produce spiegazioni + suggerimenti. MAI modifica parametri
 - **meta_controller.py**: Orchestratore chiamato dopo ogni ciclo. Coordina: regime → performance → switch evaluation → notifications → advisor
 - **guardrails.py**: Layer centralizzato pre-trade con kill switch, symbol cooldown, trade gate regime-aware, dynamic score, entry throttle, risk scaling, strategy circuit breaker. Punto unico: `can_open_new_trade()`. Config da `config/guardrails.json` (hot-reload via API).
+- **kpi_monitor.py**: Loop di miglioramento permanente. KPI 30gg (expectancy, PF, cost_ratio, turnover, DD, Sharpe/trade, attribution per-strategia = tabella A/B), allarmi con soglie in `config/kpi.json`, trigger deterministici di revisione (pf_collapse, net_loss, strategy_negative, asleep_in_bull) che notificano SENZA mai cambiare parametri. Report Telegram giornaliero (ora UTC configurabile) via meta_controller; API `GET /performance/kpi`.
 
 ### Guardrails (`config/guardrails.json`)
 Layer di protezione centralizzato con 7 componenti:
