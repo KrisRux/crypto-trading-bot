@@ -28,6 +28,7 @@ from app.strategies.indicators import Indicators
 from app.trading_engine.order_manager import OrderManager
 from app.trading_engine.risk_manager import RiskManager
 from app.adaptive.guardrails import Guardrails
+from app.trading_engine.data_feed import TimeframeFeed
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,9 @@ class TradingEngine:
         self.meta_controller = None
         # Guardrails — centralized pre-trade validation
         self.guardrails = Guardrails()
+        # Closed-candle frames for strategies that declare a custom interval
+        # (cached per (symbol, interval), strategies invoked once per closed bar)
+        self.feed = TimeframeFeed(self.fetch_klines)
 
     # ADX period (shared with embient) — threshold read dynamically from embient strategy
     _ADX_PERIOD = 14
@@ -122,14 +126,39 @@ class TradingEngine:
         df.set_index("datetime", inplace=True)
         return df
 
+    def _custom_intervals(self) -> dict[str, int]:
+        """Distinct custom intervals declared by enabled strategies, mapped to
+        the largest min_history_bars among the strategies that want each one."""
+        out: dict[str, int] = {}
+        for strat in self.strategies:
+            if strat.enabled and strat.interval:
+                out[strat.interval] = max(out.get(strat.interval, 0),
+                                          int(strat.min_history_bars))
+        return out
+
     def _run_strategies(self, df: pd.DataFrame, symbol: str,
-                        precomputed_adx: float | None = None) -> list[Signal]:
+                        precomputed_adx: float | None = None,
+                        alt_frames: dict[str, pd.DataFrame] | None = None,
+                        ) -> list[Signal]:
         all_signals: list[Signal] = []
         for strat in self.strategies:
             if not strat.enabled:
                 continue
             try:
-                signals = strat.generate_signals(df, symbol, precomputed_adx=precomputed_adx)
+                if strat.interval:
+                    # Custom timeframe: dedicated closed-candle frame, invoked
+                    # at most once per closed bar of that interval. The 15m
+                    # precomputed ADX does NOT apply to other timeframes.
+                    alt = (alt_frames or {}).get(strat.interval)
+                    if alt is None or len(alt) < strat.min_history_bars:
+                        continue
+                    if not self.feed.is_new_closed_bar(
+                            strat.name, symbol, strat.interval, alt.index[-1]):
+                        continue
+                    signals = strat.generate_signals(alt, symbol)
+                else:
+                    signals = strat.generate_signals(
+                        df, symbol, precomputed_adx=precomputed_adx)
                 all_signals.extend(signals)
             except Exception:
                 logger.exception("Strategy %s error on %s", strat.name, symbol)
@@ -297,6 +326,8 @@ class TradingEngine:
         )
         sl, tp, base_qty = self._entry_plan(
             signal.symbol, OrderSide.SELL, current_price, portfolio.cash_balance,
+            atr_pct_override=(signal.metadata or {}).get("atr_pct"),
+            tp_atr_mult_override=(signal.metadata or {}).get("tp_atr_mult"),
         )
         risk_mult = self.guardrails.get_risk_multiplier()
         qty = self._round_qty(signal.symbol, base_qty * risk_mult)
@@ -1039,7 +1070,11 @@ class TradingEngine:
                     {"free": "0"},
                 )
                 capital = float(usdt["free"])
-                sl, tp, base_qty = self._entry_plan(symbol, "BUY", current_price, capital)
+                sl, tp, base_qty = self._entry_plan(
+                    symbol, "BUY", current_price, capital,
+                    atr_pct_override=(buy_signals[0].metadata or {}).get("atr_pct"),
+                    tp_atr_mult_override=(buy_signals[0].metadata or {}).get("tp_atr_mult"),
+                )
                 risk_mult = self.guardrails.get_risk_multiplier() * self._signal_risk_multiplier(buy_signals[0])
                 qty = self._round_qty(symbol, base_qty * risk_mult)
                 if risk_mult < 1.0:
@@ -1213,7 +1248,11 @@ class TradingEngine:
             portfolio = self.paper_portfolio.get_or_create(
                 db, user.id, user.paper_initial_capital
             )
-            sl, tp, base_qty = self._entry_plan(symbol, "BUY", current_price, portfolio.cash_balance)
+            sl, tp, base_qty = self._entry_plan(
+                symbol, "BUY", current_price, portfolio.cash_balance,
+                atr_pct_override=(buy_signals[0].metadata or {}).get("atr_pct"),
+                tp_atr_mult_override=(buy_signals[0].metadata or {}).get("tp_atr_mult"),
+            )
             risk_mult = self.guardrails.get_risk_multiplier() * self._signal_risk_multiplier(buy_signals[0])
             qty = self._round_qty(symbol, base_qty * risk_mult)
             if risk_mult < 1.0:
@@ -1402,7 +1441,10 @@ class TradingEngine:
         return True, ""
 
     def _entry_plan(self, symbol: str, side, entry_price: float,
-                    equity: float) -> tuple[float, float, float]:
+                    equity: float,
+                    atr_pct_override: float | None = None,
+                    tp_atr_mult_override: float | None = None,
+                    ) -> tuple[float, float, float]:
         """Compute (stop_loss, take_profit, base_qty) for a new entry.
 
         Uses ATR-based stops (volatility-aware) and risk-based sizing when
@@ -1410,18 +1452,30 @@ class TradingEngine:
         fixed-notional sizing otherwise. ``base_qty`` is pre-risk-multiplier and
         pre-rounding — callers still apply the guardrail risk multiplier and
         LOT_SIZE rounding.
+
+        ``atr_pct_override`` lets a signal supply the ATR%% of ITS OWN
+        timeframe (signal.metadata["atr_pct"]): a 4h breakout sized with the
+        15m snapshot ATR would get a stop ~10x too tight and be shaken out by
+        noise. When absent, the 15m regime-snapshot ATR is used as before.
         """
-        atr_pct = None
-        try:
-            snap = (self.meta_controller.regime_service.snapshots.get(symbol)
-                    if self.meta_controller else None)
-            atr_pct = getattr(snap, "atr_pct", None) if snap else None
-        except Exception:
-            atr_pct = None
+        atr_pct = atr_pct_override if (atr_pct_override or 0) > 0 else None
+        if atr_pct is None:
+            try:
+                snap = (self.meta_controller.regime_service.snapshots.get(symbol)
+                        if self.meta_controller else None)
+                atr_pct = getattr(snap, "atr_pct", None) if snap else None
+            except Exception:
+                atr_pct = None
         atr_price = (atr_pct / 100.0) * entry_price if atr_pct else 0.0
 
         if settings.use_atr_stops and atr_price > 0:
             sl, tp = self.risk_manager.calculate_atr_stops(entry_price, atr_price, side=side)
+            # Trend-following signals can ask for a wider TP than the default
+            # 3xATR (signal.metadata["tp_atr_mult"]) so winners are not capped:
+            # the strategy's own exit signal / stop do the real work.
+            if tp_atr_mult_override and tp_atr_mult_override > 0:
+                direction = -1.0 if str(getattr(side, "value", side)).upper() == "SELL" else 1.0
+                tp = entry_price + direction * tp_atr_mult_override * atr_price
         else:
             sl = self.risk_manager.calculate_stop_loss(entry_price, side=side)
             tp = self.risk_manager.calculate_take_profit(entry_price, side=side)
@@ -1481,7 +1535,11 @@ class TradingEngine:
                     {"free": "0"}
                 )
                 capital = float(usdt["free"])
-                sl, tp, base_qty = self._entry_plan(signal.symbol, "BUY", signal.price, capital)
+                sl, tp, base_qty = self._entry_plan(
+                    signal.symbol, "BUY", signal.price, capital,
+                    atr_pct_override=(signal.metadata or {}).get("atr_pct"),
+                    tp_atr_mult_override=(signal.metadata or {}).get("tp_atr_mult"),
+                )
                 risk_mult = self.guardrails.get_risk_multiplier() * self._signal_risk_multiplier(signal)
                 qty = self._round_qty(signal.symbol, base_qty * risk_mult)
                 if risk_mult < 1.0:
@@ -1592,6 +1650,9 @@ class TradingEngine:
             cycle_dataframes: dict[str, pd.DataFrame] = {}
             forming_candles: dict[str, pd.Series] = {}
             htf_trend: dict[str, bool | None] = {}
+            # Closed-candle frames per custom interval (per-strategy timeframes)
+            cycle_alt_frames: dict[str, dict[str, pd.DataFrame]] = {}
+            custom_intervals = self._custom_intervals()
 
             # Load filters for symbols added at runtime when no event loop was available
             for sym in list(self._pending_filter_symbols):
@@ -1640,6 +1701,18 @@ class TradingEngine:
                         except Exception:
                             htf_trend[symbol] = None
 
+                    # Per-strategy timeframes (e.g. regime_breakout on 4h):
+                    # TimeframeFeed caches per closed bar, so this is a real
+                    # fetch only ~6 times/day for a 4h interval.
+                    for iv, min_bars in custom_intervals.items():
+                        try:
+                            alt = await self.feed.get_closed(symbol, iv, min_bars)
+                            if alt is not None:
+                                cycle_alt_frames.setdefault(symbol, {})[iv] = alt
+                        except Exception:
+                            logger.exception(
+                                "Error fetching %s %s candles", symbol, iv)
+
                 except Exception:
                     logger.exception("Error fetching/computing regime for %s", symbol)
 
@@ -1681,7 +1754,10 @@ class TradingEngine:
                     adx = sym_snap.adx if sym_snap else None
 
                     # Generate signals (shared across all users) — pass pre-computed ADX
-                    signals = self._run_strategies(df, symbol, precomputed_adx=adx)
+                    signals = self._run_strategies(
+                        df, symbol, precomputed_adx=adx,
+                        alt_frames=cycle_alt_frames.get(symbol),
+                    )
 
                     # Regime gate: filter signals based on ADX before execution
                     if adx is not None and signals:

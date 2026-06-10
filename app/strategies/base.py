@@ -38,6 +38,17 @@ class Strategy(ABC):
     name: str = "base"
     enabled: bool = True
 
+    # Candle timeframe this strategy wants. ``None`` means "use the engine's
+    # default cycle candles" (15m). Strategies that set e.g. "4h" are fed a
+    # dedicated closed-candle frame by the engine's TimeframeFeed and are
+    # invoked at most once per closed bar of that interval.
+    interval: str | None = None
+
+    # How many CLOSED bars of history generate_signals() needs to produce
+    # meaningful output. The engine uses this to size fetches for custom
+    # intervals; strategies on the default timeframe can ignore it.
+    min_history_bars: int = 151
+
     @abstractmethod
     def generate_signals(self, df: pd.DataFrame, symbol: str,
                          precomputed_adx: float | None = None) -> list[Signal]:

@@ -58,13 +58,10 @@ async def lifespan(app: FastAPI):
     engine.register_strategy(RsiStrategy())
     engine.register_strategy(MacdStrategy())
     engine.register_strategy(EmbientEnhancedStrategy(skills_library=skills_library))
-    # Disabled by default: regime_breakout is designed for 4h candles and needs
-    # ~210 closed bars of history — the 15m live loop fetches only 151, so it
-    # would never fire. Enable it once the engine supports per-strategy
-    # timeframes (it is already fully usable from the back-tester).
-    _breakout = RegimeBreakoutStrategy()
-    _breakout.enabled = False
-    engine.register_strategy(_breakout)
+    # regime_breakout declares interval="4h": the engine's TimeframeFeed fetches
+    # its closed 4h candles (cached per bar) and invokes it once per closed bar.
+    # Validated on 730d/walk-forward before enabling — see docs/EXPERIMENTS.md.
+    engine.register_strategy(RegimeBreakoutStrategy())
 
     # Restore persisted params saved by the UI (survives restarts)
     saved_strategies = load_strategy_params()

@@ -40,6 +40,15 @@ class RegimeBreakoutStrategy(Strategy):
     name = "regime_breakout"
     enabled = True
 
+    # The engine feeds this strategy a dedicated closed-candle 4h frame via
+    # TimeframeFeed and invokes it at most once per closed 4h bar.
+    interval: str | None = "4h"
+
+    # Take-profit multiple requested from the engine's _entry_plan: wide on
+    # purpose (12 x ATR ~ +25-30%) — winners exit on the channel/regime break,
+    # not on a TP cap. The backtest validation ran with the TP disabled.
+    tp_atr_mult: float = 12.0
+
     def __init__(self,
                  regime_ema_period: int = 200,
                  slope_lookback: int = 10,
@@ -55,6 +64,7 @@ class RegimeBreakoutStrategy(Strategy):
         self.atr_period = atr_period
         self.min_atr_pct = min_atr_pct
         self.max_atr_pct = max_atr_pct
+        self.min_history_bars = self._min_bars() + 10
 
     def get_params(self) -> dict:
         return {
@@ -159,6 +169,7 @@ class RegimeBreakoutStrategy(Strategy):
                 confidence=0.9,
                 metadata={"buy_score": round(score, 1),
                           "atr_pct": round(atr_pct, 4),
+                          "tp_atr_mult": self.tp_atr_mult,
                           "adx": adx_val},
             )]
 
