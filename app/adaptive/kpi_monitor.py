@@ -179,7 +179,7 @@ class KPIMonitor:
     def compute(self, db, *, window_days: int = 30) -> dict:
         """DB wrapper: query closed/open trades and delegate to the pure core."""
         from app.models.trade import Trade, TradeStatus
-        from app.models.paper_trading import PaperPortfolio
+        from app.models.portfolio import PaperPortfolio
 
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(days=window_days)

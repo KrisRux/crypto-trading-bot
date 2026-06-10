@@ -141,3 +141,46 @@ def test_config_file_overrides_defaults(tmp_path):
     mon = KPIMonitor(config_path=str(cfg))
     assert mon.thresholds["trades_per_day_max"] == 1.0
     assert mon.thresholds["profit_factor_min"] == DEFAULT_THRESHOLDS["profit_factor_min"]
+
+
+def test_compute_against_real_db_session(monitor):
+    """Integration: exercise the DB wrapper (imports, query, capital base)
+    against an in-memory SQLite with the REAL models. Regression for the
+    ModuleNotFoundError (app.models.paper_trading vs app.models.portfolio)
+    that the pure-computation tests could not catch and broke the live
+    /performance/kpi endpoint with a 500."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import Base
+    from app.models.trade import Trade, TradeStatus, OrderSide
+    from app.models.portfolio import PaperPortfolio
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        db.add(PaperPortfolio(user_id=1, initial_capital=10_000.0,
+                              cash_balance=10_000.0, total_equity=10_000.0))
+        db.add(Trade(user_id=1, symbol="BTCUSDT", side=OrderSide.BUY,
+                     entry_price=100.0, exit_price=102.0, quantity=1.0,
+                     pnl=1.7, pnl_pct=1.7, gross_pnl=2.0, fee=0.25,
+                     slippage=0.05, status=TradeStatus.CLOSED, mode="paper",
+                     strategy="regime_breakout",
+                     opened_at=NOW - timedelta(days=2),
+                     closed_at=NOW - timedelta(days=1)))
+        db.add(Trade(user_id=1, symbol="ETHUSDT", side=OrderSide.BUY,
+                     entry_price=50.0, quantity=2.0,
+                     status=TradeStatus.OPEN, mode="paper",
+                     strategy="regime_breakout",
+                     opened_at=NOW - timedelta(hours=4)))
+        db.commit()
+
+        kpi = monitor.compute(db)
+        assert kpi["capital_base"] == 10_000.0
+        assert kpi["overall"]["trades"] == 1
+        assert kpi["open_positions"] == 1
+        assert kpi["exposure_notional"] == pytest.approx(100.0)
+        assert "regime_breakout" in kpi["strategies"]
+    finally:
+        db.close()
