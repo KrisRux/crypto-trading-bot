@@ -7,8 +7,7 @@ import numpy as np
 import pytest
 
 from app.strategies.indicators import Indicators
-from app.strategies.sma_crossover import SmaCrossoverStrategy
-from app.strategies.rsi_strategy import RsiStrategy
+from app.strategies.regime_breakout import RegimeBreakoutStrategy
 from app.strategies.base import SignalType
 
 
@@ -99,52 +98,18 @@ def _make_ohlcv(closes: list[float]) -> pd.DataFrame:
     return df
 
 
-def test_sma_crossover_buy_signal():
-    """When fast SMA crosses above slow SMA, a BUY signal should be generated."""
-    # Create a series where the short-term average crosses above the long-term
-    # First 30 values declining (fast < slow), then a sharp rise (fast > slow)
-    closes = [100 - i * 0.5 for i in range(30)] + [85 + i * 2 for i in range(10)]
+def test_strategy_no_signal_insufficient_data():
+    """With too few data points, no signal should be generated (never crash)."""
+    closes = [100.0, 101.0, 102.0]
     df = _make_ohlcv(closes)
-    strategy = SmaCrossoverStrategy(fast_period=5, slow_period=20)
-    signals = strategy.generate_signals(df, "BTCUSDT")
-    # Should find at least one BUY among the signals
-    buy_signals = [s for s in signals if s.signal_type == SignalType.BUY]
-    # The cross might or might not happen depending on exact values; just check no error
-    assert isinstance(signals, list)
-
-
-def test_sma_crossover_no_signal_insufficient_data():
-    """With too few data points, no signal should be generated."""
-    closes = [100, 101, 102]
-    df = _make_ohlcv(closes)
-    strategy = SmaCrossoverStrategy(fast_period=10, slow_period=30)
-    signals = strategy.generate_signals(df, "BTCUSDT")
-    assert signals == []
-
-
-def test_rsi_strategy_buy_signal():
-    """When RSI crosses up from oversold, a BUY signal should be generated."""
-    # Create a sharp decline followed by a bounce
-    closes = [100 - i * 3 for i in range(20)] + [40 + i * 5 for i in range(10)]
-    df = _make_ohlcv(closes)
-    strategy = RsiStrategy(period=14, oversold=30, overbought=70)
-    signals = strategy.generate_signals(df, "BTCUSDT")
-    # Just verify it returns a list without errors
-    assert isinstance(signals, list)
-
-
-def test_rsi_strategy_no_signal_insufficient_data():
-    closes = [100, 101]
-    df = _make_ohlcv(closes)
-    strategy = RsiStrategy(period=14)
-    signals = strategy.generate_signals(df, "BTCUSDT")
-    assert signals == []
+    strategy = RegimeBreakoutStrategy()
+    assert strategy.generate_signals(df, "BTCUSDT") == []
 
 
 def test_strategy_get_set_params():
-    s = SmaCrossoverStrategy(fast_period=5, slow_period=20)
+    s = RegimeBreakoutStrategy(entry_channel=55, exit_channel=20)
     params = s.get_params()
-    assert params["fast_period"] == 5
-    assert params["slow_period"] == 20
-    s.set_params({"fast_period": 7})
-    assert s.fast_period == 7
+    assert params["entry_channel"] == 55
+    assert params["exit_channel"] == 20
+    s.set_params({"entry_channel": 70})
+    assert s.entry_channel == 70

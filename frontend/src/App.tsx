@@ -8,7 +8,6 @@ import Dashboard from './pages/Dashboard'
 import Strategies from './pages/Strategies'
 import Logs from './pages/Logs'
 import Manual from './pages/Manual'
-import Skills from './pages/Skills'
 import Users from './pages/Users'
 import Settings from './pages/Settings'
 import Diagnostics from './pages/Diagnostics'
@@ -157,7 +156,6 @@ function AppContent() {
       items: [
         { to: '/opportunities', label: l('Opportunita', 'Opportunities'), adminOnly: true },
         { to: '/strategies', label: t('nav_strategies'), adminOnly: true },
-        { to: '/skills',     label: t('nav_skills'),     adminOnly: true },
       ],
     },
     {
@@ -314,7 +312,6 @@ function AppContent() {
             {isAdmin && <Route path="/opportunities" element={<Opportunities />} />}
             {isAdmin && <Route path="/strategies" element={<Strategies />} />}
             <Route path="/logs" element={<Logs />} />
-            {isAdmin && <Route path="/skills" element={<Skills />} />}
             <Route path="/manual" element={<Manual />} />
             <Route path="/settings" element={<Settings />} />
             {isAdmin && <Route path="/users" element={<Users />} />}

@@ -41,14 +41,20 @@
       "min_volume_ratio": 1.4,
       "min_bb_width_pct": 1.0
     },
-    "block_entry_on_symbol_regime": ["defensive", "range"]
+    "block_entry_on_symbol_regime": [
+      "defensive",
+      "range"
+    ]
   },
   "dynamic_score": {
     "base_min_score": 80,
     "min_score_after_3_losses": 88,
     "min_score_after_5_losses": 92,
     "extra_score_in_bad_regime": 5,
-    "bad_regimes": ["defensive", "range"],
+    "bad_regimes": [
+      "defensive",
+      "range"
+    ],
     "max_score_cap": 95
   },
   "entry_throttle": {
@@ -64,9 +70,9 @@
   },
   "risk_scaling": {
     "consecutive_losses_3_multiplier": 0.75,
-    "consecutive_losses_5_multiplier": 0.50,
+    "consecutive_losses_5_multiplier": 0.5,
     "drawdown_threshold": 1.5,
-    "drawdown_min_multiplier": 0.50
+    "drawdown_min_multiplier": 0.5
   },
   "strategy_circuit_breaker": {
     "consecutive_losses_threshold": 4,
@@ -96,12 +102,5 @@
     "symbol_max_all_time_net_loss": -10.0,
     "strategy_min_recent_trades": 4,
     "strategy_max_recent_net_loss": -6.0
-  },
-  "paper_short": {
-    "enabled": true,
-    "min_sell_score": 80,
-    "require_bearish_news": false,
-    "max_open_shorts": 2,
-    "allow_with_open_long": true
   }
 }

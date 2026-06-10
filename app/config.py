@@ -65,10 +65,9 @@ class Settings(BaseSettings):
 
     # --- Bear-market protection ---
     # Block new longs when the symbol's higher-timeframe trend is down.
+    # (Spot account: no shorts exist anywhere in the system — flat IS the
+    # bear-market position.)
     flat_in_bear: bool = Field(default=True, alias="FLAT_IN_BEAR")
-    # Keep paper consistent with live SPOT reality (no synthetic shorts that can't
-    # be executed on a spot account). Set False only to study short hypotheticals.
-    disable_paper_shorts: bool = Field(default=True, alias="DISABLE_PAPER_SHORTS")
 
     # Logging
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

@@ -230,8 +230,8 @@ def test_load_klines_rest_paginates_with_fake_http(monkeypatch):
 # ===========================================================================
 
 def test_resolve_strategy_by_name_and_instance():
-    s = resolve_strategy("embient_enhanced")
-    assert s.name == "embient_enhanced"
+    s = resolve_strategy("regime_breakout")
+    assert s.name == "regime_breakout"
     # passing an instance returns it unchanged
     assert resolve_strategy(s) is s
     with pytest.raises(ValueError):
@@ -244,7 +244,7 @@ def test_resolve_strategy_by_name_and_instance():
 
 def test_backtester_runs_and_returns_metrics():
     df = make_uptrend(300)
-    bt = Backtester("embient_enhanced", BacktestConfig(allow_short=False))
+    bt = Backtester("regime_breakout", BacktestConfig(allow_short=False))
     result = bt.run(df)
     assert isinstance(result, BacktestResult)
     assert isinstance(result.metrics, BacktestMetrics)
@@ -411,8 +411,8 @@ def test_short_opens_and_profits_when_allowed():
 def test_determinism_same_inputs_same_outputs():
     df = make_choppy(300)
     cfg = BacktestConfig(allow_short=False)
-    r1 = Backtester("embient_enhanced", cfg).run(df)
-    r2 = Backtester("embient_enhanced", cfg).run(df)
+    r1 = Backtester("regime_breakout", cfg).run(df)
+    r2 = Backtester("regime_breakout", cfg).run(df)
     assert r1.num_trades == r2.num_trades
     assert math.isclose(r1.metrics.net_pnl, r2.metrics.net_pnl, abs_tol=1e-9)
     assert math.isclose(r1.metrics.total_return_pct, r2.metrics.total_return_pct,
@@ -546,7 +546,7 @@ def test_walk_forward_runs_and_aggregates():
     df = make_choppy(600, amp=8.0, period=24)
     cfg = BacktestConfig(allow_short=False)
     report = walk_forward(df, train_size=150, test_size=100,
-                          strategy="embient_enhanced", config=cfg)
+                          strategy="regime_breakout", config=cfg)
     assert report.num_windows >= 2
     assert isinstance(report.aggregate, BacktestMetrics)
     # combined trades = sum of per-window OOS trades
@@ -566,7 +566,7 @@ def test_walk_forward_oos_entries_only_in_test_region():
     df = make_uptrend(500, start_price=100.0, step=0.5)
     cfg = BacktestConfig(allow_short=False)
     report = walk_forward(df, train_size=200, test_size=100,
-                          strategy="embient_enhanced", config=cfg)
+                          strategy="regime_breakout", config=cfg)
     for w in report.windows:
         local_warmup = 200  # train_size (rolling) == local test-start offset
         for t in w.result.trades:

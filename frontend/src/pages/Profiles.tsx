@@ -20,15 +20,6 @@ function riskSummary(profile: TradingProfile): [string, unknown][] {
   ]
 }
 
-function embientSummary(profile: TradingProfile): [string, unknown][] {
-  const embient = profile.strategies?.embient_enhanced || {}
-  return [
-    ['Trend BUY', embient.trend_buy_threshold],
-    ['Trend SELL', embient.trend_sell_threshold],
-    ['Range BUY', embient.range_buy_threshold],
-    ['Range SELL', embient.range_sell_threshold],
-  ]
-}
 
 export default function Profiles() {
   const { l } = useLang()
@@ -127,18 +118,6 @@ export default function Profiles() {
                     <p className="text-sm font-semibold text-gray-200">{valueText(value)}</p>
                   </div>
                 ))}
-              </div>
-
-              <div className="space-y-2 mb-4">
-                <p className="text-xs uppercase tracking-wider text-gray-500">Embient</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {embientSummary(profile).map(([label, value]) => (
-                    <div key={label} className="flex items-center justify-between text-xs bg-gray-950/40 border border-gray-800 rounded-md px-2 py-1.5">
-                      <span className="text-gray-500">{label}</span>
-                      <span className="font-mono text-gray-200">{valueText(value)}</span>
-                    </div>
-                  ))}
-                </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 mb-4">

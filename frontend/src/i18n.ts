@@ -75,9 +75,6 @@ const translations = {
   // -- Manual page --
   nav_manual: { it: 'Manuale', en: 'Manual' },
 
-  // -- Skills page --
-  nav_skills: { it: 'Skills', en: 'Skills' },
-
   // -- Assets page --
   nav_assets: { it: 'Asset', en: 'Assets' },
   assets_title: { it: 'I Miei Asset', en: 'My Assets' },

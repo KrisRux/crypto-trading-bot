@@ -38,10 +38,7 @@ const RISK_FIELDS: { key: keyof RiskParams; label: string; hint: string; min: nu
 ]
 
 const STRATEGY_ICONS: Record<string, string> = {
-  embient_enhanced: 'E',
-  sma_crossover: 'S',
-  macd_crossover: 'M',
-  rsi_reversal: 'R',
+  regime_breakout: 'B',
 }
 
 const SYMBOL_STATUS_STYLE: Record<SymbolAnalysisItem['candidate_status'], string> = {

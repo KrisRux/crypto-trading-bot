@@ -38,8 +38,8 @@ quoted open / SL / TP levels.
 Shorts
 ------
 ``allow_short`` defaults to ``False`` to match the spot-live reality (the live
-config sets ``disable_paper_shorts=True``). With shorts disabled a SELL signal
-only closes an existing long; it never opens a short.
+system is long-only everywhere). With shorts disabled a SELL signal only
+closes an existing long; it never opens a short.
 """
 
 from __future__ import annotations
@@ -73,20 +73,9 @@ EXIT_END_OF_DATA = "end_of_data"
 
 def _strategy_registry() -> dict[str, Callable[[], Strategy]]:
     """Lazy factory map name -> zero-arg constructor (defaults from prod)."""
-    from app.strategies.sma_crossover import SmaCrossoverStrategy
-    from app.strategies.rsi_strategy import RsiStrategy
-    from app.strategies.macd_strategy import MacdStrategy
-    from app.strategies.embient_enhanced import EmbientEnhancedStrategy
     from app.strategies.regime_breakout import RegimeBreakoutStrategy
 
     return {
-        "sma_crossover": SmaCrossoverStrategy,
-        "rsi_reversal": RsiStrategy,
-        "rsi": RsiStrategy,
-        "macd_crossover": MacdStrategy,
-        "macd": MacdStrategy,
-        "embient_enhanced": EmbientEnhancedStrategy,
-        "embient": EmbientEnhancedStrategy,
         "regime_breakout": RegimeBreakoutStrategy,
         "breakout": RegimeBreakoutStrategy,
     }
@@ -205,7 +194,7 @@ class Backtester:
 
     Usage::
 
-        bt = Backtester(strategy="embient_enhanced",
+        bt = Backtester(strategy="regime_breakout",
                         config=BacktestConfig(allow_short=False))
         result = bt.run(df)
         print(result.metrics.as_dict())
@@ -593,7 +582,7 @@ def walk_forward(
     train_size: int,
     test_size: int,
     *,
-    strategy: "str | Strategy" = "embient_enhanced",
+    strategy: "str | Strategy" = "regime_breakout",
     config: BacktestConfig | None = None,
     step: int | None = None,
     anchored: bool = False,

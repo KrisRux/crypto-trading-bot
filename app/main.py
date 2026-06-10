@@ -17,15 +17,9 @@ from app.database import init_db
 from app.logging_config import setup_logging
 from app.api.routes import router, set_engine
 from app.trading_engine.engine import TradingEngine
-from app.strategies.sma_crossover import SmaCrossoverStrategy
-from app.strategies.rsi_strategy import RsiStrategy
-from app.strategies.macd_strategy import MacdStrategy
-from app.strategies.embient_enhanced import EmbientEnhancedStrategy
 from app.strategies.regime_breakout import RegimeBreakoutStrategy
-from app.embient_skills.loader import SkillsLibrary
 from app.strategy_store import load_strategy_params, load_risk_params
 from app.adaptive.meta_controller import MetaController
-from app.embient_skills.sync import start_periodic_sync
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -46,21 +40,14 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database initialized")
 
-    # Load Embient skills library first (needed to configure EmbientEnhancedStrategy)
-    skills_library = SkillsLibrary()
-    logger.info("Embient skills: %s", skills_library.summary())
-
     # Create and configure the trading engine
     engine = TradingEngine()
 
-    # Register strategies with class defaults (may be overridden by saved params below)
-    engine.register_strategy(SmaCrossoverStrategy())
-    engine.register_strategy(RsiStrategy())
-    engine.register_strategy(MacdStrategy())
-    engine.register_strategy(EmbientEnhancedStrategy(skills_library=skills_library))
-    # regime_breakout declares interval="4h": the engine's TimeframeFeed fetches
-    # its closed 4h candles (cached per bar) and invokes it once per closed bar.
-    # Validated on 730d/walk-forward before enabling — see docs/EXPERIMENTS.md.
+    # Single strategy by design: regime_breakout declares interval="4h" — the
+    # engine's TimeframeFeed fetches its closed 4h candles (cached per bar) and
+    # invokes it once per closed bar. Validated on 730d + walk-forward before
+    # rollout — see docs/EXPERIMENTS.md. Defaults may be overridden by saved
+    # params below.
     engine.register_strategy(RegimeBreakoutStrategy())
 
     # Restore persisted params saved by the UI (survives restarts)
@@ -92,8 +79,8 @@ async def lifespan(app: FastAPI):
         meta_controller.profile_manager.apply_profile(active_profile, engine, "startup restore")
         logger.info("Restored active profile: %s", active_profile)
 
-    # Make engine, skills, and meta_controller available to API routes
-    set_engine(engine, skills_library, meta_controller)
+    # Make engine and meta_controller available to API routes
+    set_engine(engine, meta_controller)
 
     # Start the engine in the background
     engine_task = asyncio.create_task(engine.start())
@@ -103,15 +90,10 @@ async def lifespan(app: FastAPI):
     callback_task = asyncio.create_task(meta_controller.start_callback_polling())
     logger.info("Telegram callback polling started")
 
-    # Start periodic skills sync (every 6 hours)
-    skills_sync_task = asyncio.create_task(start_periodic_sync(skills_library, interval_hours=6))
-    logger.info("Skills periodic sync started (every 6h)")
-
     yield  # App is running
 
     # Shutdown
     logger.info("Shutting down trading engine...")
-    skills_sync_task.cancel()
     callback_task.cancel()
     await engine.stop()
     engine_task.cancel()
@@ -121,10 +103,6 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await callback_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await skills_sync_task
     except asyncio.CancelledError:
         pass
     logger.info("Shutdown complete")

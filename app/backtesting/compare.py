@@ -14,8 +14,8 @@ Example::
 
     python -m app.backtesting.compare \\
         --symbols BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,SOLUSDT,LTCUSDT \\
-        --strategies embient_enhanced --interval 15m --days 120 \\
-        --position-size 20 --params-file live_params.json
+        --strategies regime_breakout --interval 4h --days 365 \\
+        --position-size 20 --atr-tp 0 --params-file live_params.json
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--symbols", default="BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,SOLUSDT,LTCUSDT",
                    help="Comma-separated symbols")
-    p.add_argument("--strategies", default="embient_enhanced",
+    p.add_argument("--strategies", default="regime_breakout",
                    help="Comma-separated strategy names")
     p.add_argument("--interval", default="15m", help="Candle interval")
     p.add_argument("--days", type=float, default=120.0, help="Look-back window (days)")

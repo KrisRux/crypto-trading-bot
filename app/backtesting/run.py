@@ -3,19 +3,19 @@ Command-line entry point for the back-tester.
 
 Examples
 --------
-Real data from Binance (live host), embient strategy, 90 days of 15m candles::
+Real data from Binance (live host), regime_breakout, 365 days of 4h candles::
 
     venv/Scripts/python.exe -m app.backtesting.run \\
-        --symbol BTCUSDT --interval 15m --days 90 --strategy embient_enhanced
+        --symbol BTCUSDT --interval 4h --days 365 --strategy regime_breakout
 
-Allow shorts and override costs::
+Override costs::
 
-    python -m app.backtesting.run --symbol ETHUSDT --interval 1h --days 180 \\
-        --strategy sma_crossover --allow-short --fee 0.075 --slippage 0.02
+    python -m app.backtesting.run --symbol ETHUSDT --interval 4h --days 365 \\
+        --strategy regime_breakout --fee 0.075 --slippage 0.02
 
 Back-test a local CSV (no network) and run a walk-forward pass::
 
-    python -m app.backtesting.run --csv data/btc_15m.csv --strategy embient_enhanced \\
+    python -m app.backtesting.run --csv data/btc_4h.csv --strategy regime_breakout \\
         --walk-forward --train 1500 --test 500
 
 The report is printed to stdout; ``--json`` additionally dumps the metrics as
@@ -50,9 +50,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Fetch klines from the Binance testnet host")
 
     # Strategy + execution.
-    p.add_argument("--strategy", default="embient_enhanced",
-                   help="Strategy name: embient_enhanced, sma_crossover, "
-                        "rsi_reversal, macd_crossover")
+    p.add_argument("--strategy", default="regime_breakout",
+                   help="Strategy name (see app.backtesting.engine registry)")
     p.add_argument("--allow-short", action="store_true",
                    help="Permit short positions (default: long-only, spot-like)")
     p.add_argument("--capital", type=float, default=10_000.0,

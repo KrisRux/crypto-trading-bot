@@ -253,21 +253,6 @@ export interface PriceData {
   price: number
 }
 
-export interface SkillItem {
-  name: string
-  description: string
-  category: string
-  version: string
-  author: string
-  body: string
-  key_rules: string[]
-}
-
-export interface SkillsSummary {
-  total_skills: number
-  categories: Record<string, number>
-}
-
 export interface AssetItem {
   asset: string
   free: number
@@ -451,10 +436,6 @@ export const api = {
   clearApiKeys: (type: 'live' | 'testnet' | 'all') =>
     request<{ ok: boolean }>(`/settings/keys?key_type=${type}`, { method: 'DELETE' }),
   getAssets: () => request<AssetItem[]>('/assets'),
-  getSkillsSummary: () => request<SkillsSummary>('/skills/summary'),
-  getSkills: (category?: string) =>
-    request<SkillItem[]>(category ? `/skills?category=${category}` : '/skills'),
-  getSkill: (name: string) => request<SkillItem>(`/skills/${name}`),
   getAdaptiveStatus: () => request<AdaptiveStatus>('/adaptive/status'),
   getProfiles: () => request<ProfilesResponse>('/adaptive/profiles'),
   applyProfile: (profileName: string) =>

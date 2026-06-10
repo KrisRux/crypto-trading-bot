@@ -55,9 +55,6 @@ ALLOWED_DYNAMIC_SCORE_PATHS = {
     "performance_gate.symbol_max_recent_net_loss",
     "performance_gate.symbol_max_all_time_net_loss",
     "performance_gate.strategy_max_recent_net_loss",
-    "paper_short.min_sell_score",
-    "paper_short.max_open_shorts",
-    "paper_short.allow_with_open_long",
     "stale_position.profit_lock_trigger_pct",
     "stale_position.profit_lock_min_pct",
     "stale_position.profit_trail_start_pct",
@@ -145,8 +142,8 @@ Your job is to suggest concrete, data-driven parameter adjustments — even when
 - If an enabled strategy has >=10 trades and negative estimated_net_pnl: suggest strategy.<name>.enabled=false.
 - You may return an empty changes array when data is insufficient or current config is appropriate.
 - Prefer small incremental changes (10-15% of current value), never suggest changes >30% of current value
-- You may suggest ONLY these path families: trade_gate.* thresholds, dynamic_score.* thresholds, performance_gate loss thresholds, entry_throttle.max_open_positions, paper_short min/open/allow flags, stale_position profit-lock/range-profit thresholds, strategy.<name>.enabled flags.
-- Do not suggest direct strategy numeric thresholds such as embient_enhanced.trend_buy_threshold; they are not applyable through this endpoint.
+- You may suggest ONLY these path families: trade_gate.* thresholds, dynamic_score.* thresholds, performance_gate loss thresholds, entry_throttle.max_open_positions, stale_position profit-lock/range-profit thresholds, strategy.<name>.enabled flags.
+- Do not suggest direct strategy numeric thresholds (e.g. regime_breakout.entry_channel); they are not applyable through this endpoint.
 - Do not suggest no-op changes where from == to.
 
 Respond with exactly this JSON (changes array may contain 1-3 items):
@@ -173,17 +170,12 @@ Valid path examples:
 - entry_throttle.max_open_positions
 - performance_gate.strategy_max_recent_net_loss
 - performance_gate.symbol_max_recent_net_loss
-- paper_short.min_sell_score
-- paper_short.max_open_shorts
-- paper_short.allow_with_open_long
 - stale_position.profit_lock_trigger_pct
 - stale_position.profit_trail_distance_pct
 - stale_position.range_profit_exit_min_pct
 - stale_position.range_profit_exit_min_hours
-- strategy.embient_enhanced.enabled
-- strategy.sma_crossover.enabled
-- strategy.rsi_reversal.enabled
-- strategy.macd_crossover.enabled"""
+- strategy.regime_breakout.enabled
+"""
 
 
 async def check_deepseek(api_key: str) -> bool:
@@ -256,7 +248,7 @@ async def generate_suggestions(
     else:
         news_section = "Not available"
 
-    # Strategy parameters (embient thresholds, macd mode, etc.)
+    # Strategy parameters (regime_breakout channels, ATR filter, etc.)
     if strategy_params:
         sp_lines = []
         for name, params in strategy_params.items():

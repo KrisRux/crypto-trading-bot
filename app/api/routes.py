@@ -31,15 +31,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 _engine = None
-_skills_library = None
 _meta_controller = None
 DEFAULT_SYMBOL_CANDIDATES = {"BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT", "LTCUSDT"}
 
 
-def set_engine(engine, skills_library=None, meta_controller=None):
-    global _engine, _skills_library, _meta_controller
+def set_engine(engine, meta_controller=None):
+    global _engine, _meta_controller
     _engine = engine
-    _skills_library = skills_library
     _meta_controller = meta_controller
 
 
@@ -482,7 +480,7 @@ def _score_short_opportunity(
         setup = "paper_momentum_short"
     elif score >= 58 and len(blockers) <= 2:
         action = "SHORT_WATCH"
-        setup = "paper_short_watch"
+        setup = "short_watch_info_only"
     else:
         action = "AVOID"
         setup = "no_short_edge"
@@ -1697,10 +1695,6 @@ def _parse_log_line(line: str) -> dict | None:
         return {"ts": ts, "type": "block", "symbol": m.group(1), "level": "blocked", "reason": "symbol_cooldown", "source": "cooldown"}
     if (m := re.search(r'ENTRY_THROTTLE:\s*blocked\s*\|\s*symbol=(\w+).*?reason=(\S+)', line)):
         return {"ts": ts, "type": "block", "symbol": m.group(1), "level": "blocked", "reason": m.group(2), "source": "throttle"}
-    if (m := re.search(r'PAPER_SHORT:\s*skipped\s+(\w+USDT)\s*\|\s*(.+?)(?:\s*\[|$)', line)):
-        return {"ts": ts, "type": "block", "symbol": m.group(1), "level": "blocked", "reason": m.group(2).strip(), "source": "paper_short"}
-    if (m := re.search(r'\[paper/short\]:\s*SELL\s+(\w+USDT)', line)):
-        return {"ts": ts, "type": "fill", "symbol": m.group(1), "level": "fill", "source": "paper_short"}
     if (m := re.search(r'PROFIT_LOCK:\s*(\w+USDT)\s+(BUY|SELL).*?pnl=([-\d.]+)%', line)):
         return {"ts": ts, "type": "risk", "symbol": m.group(1), "level": "info", "source": "profit_lock", "side": m.group(2), "pnl_pct": float(m.group(3))}
     if (m := re.search(r'STRATEGY_BREAKER:\s*blocked\s*\|\s*strategy=(\w+)', line)):
@@ -1744,7 +1738,7 @@ def update_guardrails_config(body: dict, admin: dict = Depends(require_admin)):
     # Basic structure validation
     required_keys = {"kill_switch", "symbol_cooldown", "trade_gate", "dynamic_score",
                      "entry_throttle", "risk_scaling", "strategy_circuit_breaker",
-                     "stale_position", "performance_gate", "paper_short"}
+                     "stale_position", "performance_gate"}
     missing = required_keys - set(body.keys())
     if missing:
         raise HTTPException(400, f"Missing required sections: {', '.join(missing)}")
@@ -1837,11 +1831,6 @@ def reset_guardrails_config(admin: dict = Depends(require_admin)):
             "symbol_min_recent_trades": 2, "symbol_max_recent_net_loss": -3.0,
             "symbol_min_all_time_trades": 10, "symbol_max_all_time_net_loss": -10.0,
             "strategy_min_recent_trades": 4, "strategy_max_recent_net_loss": -6.0,
-        },
-        "paper_short": {
-            "enabled": True, "min_sell_score": 80,
-            "require_bearish_news": False, "max_open_shorts": 2,
-            "allow_with_open_long": True,
         },
     }
 
@@ -1939,9 +1928,6 @@ def apply_tuning_suggestion(suggestion_id: int, db: Session = Depends(get_db),
         "performance_gate.symbol_max_recent_net_loss",
         "performance_gate.symbol_max_all_time_net_loss",
         "performance_gate.strategy_max_recent_net_loss",
-        "paper_short.min_sell_score",
-        "paper_short.max_open_shorts",
-        "paper_short.allow_with_open_long",
         "stale_position.profit_lock_trigger_pct",
         "stale_position.profit_lock_min_pct",
         "stale_position.profit_trail_start_pct",
@@ -2442,48 +2428,3 @@ async def get_assets(db: Session = Depends(get_db), user_info: dict = Depends(re
 
     result.sort(key=lambda x: x["value_usdt"], reverse=True)
     return result
-
-
-# ------------------------------------------------------------------ Embient Skills
-@router.get("/skills/summary")
-def skills_summary(_admin: dict = Depends(require_admin)):
-    if not _skills_library:
-        return {"total_skills": 0, "categories": {}}
-    return _skills_library.summary()
-
-
-@router.get("/skills")
-def list_skills(category: str | None = None, _admin: dict = Depends(require_admin)):
-    if not _skills_library:
-        return []
-    if category:
-        return [s.to_dict() for s in _skills_library.get_by_category(category)]
-    return _skills_library.list_all()
-
-
-@router.get("/skills/{name}")
-def get_skill(name: str, _admin: dict = Depends(require_admin)):
-    if not _skills_library:
-        raise HTTPException(404, "Skills library not loaded")
-    skill = _skills_library.get(name)
-    if not skill:
-        raise HTTPException(404, f"Skill '{name}' not found")
-    return skill.to_dict()
-
-
-@router.post("/skills/sync")
-def sync_skills_endpoint(_admin: dict = Depends(require_admin)):
-    """Pull latest skills from upstream repo and reload library (admin only)."""
-    from app.embient_skills.sync import sync_skills
-    result = sync_skills()
-    if result["status"] == "ok" and _skills_library:
-        if result["added"] > 0 or result["updated"] > 0:
-            _skills_library.reload()
-    return result
-
-
-@router.get("/skills/sync/status")
-def skills_sync_status(_admin: dict = Depends(require_admin)):
-    """Return the last skills sync status."""
-    from app.embient_skills.sync import get_sync_status
-    return get_sync_status()

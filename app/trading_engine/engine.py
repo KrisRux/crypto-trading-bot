@@ -68,16 +68,10 @@ class TradingEngine:
         # (cached per (symbol, interval), strategies invoked once per closed bar)
         self.feed = TimeframeFeed(self.fetch_klines)
 
-    # ADX period (shared with embient) — threshold read dynamically from embient strategy
+    # ADX period and trend threshold (informational labelling only — each
+    # strategy applies its own regime logic internally)
     _ADX_PERIOD = 14
-
-    @property
-    def _trend_adx_threshold(self) -> float:
-        """Read ADX trend threshold from the embient strategy instance (synced with profile)."""
-        for strat in self.strategies:
-            if strat.name == "embient_enhanced" and hasattr(strat, "adx_trend_threshold"):
-                return float(strat.adx_trend_threshold)
-        return 25.0  # fallback
+    _TREND_ADX_THRESHOLD = 25.0
 
     @property
     def last_price(self) -> float:
@@ -264,95 +258,6 @@ class TradingEngine:
         if trade.take_profit and (low <= trade.take_profit or current_price <= trade.take_profit):
             return ("tp", trade.take_profit)
         return None
-
-    def _sell_signal_score(self, signal: Signal) -> float:
-        meta = signal.metadata or {}
-        if "sell_score" in meta:
-            return float(meta["sell_score"])
-        return float(signal.confidence or 0) * 100
-
-    def _paper_short_allowed(self, db: Session, user: User, signal: Signal) -> tuple[bool, str]:
-        # A spot account cannot hold a real short; synthetic paper shorts inflate
-        # results versus what live can actually execute. Disabled by default.
-        if settings.disable_paper_shorts:
-            return False, "paper_shorts_disabled (spot cannot short)"
-        cfg = self.guardrails.paper_short_config()
-        if not cfg.get("enabled", True):
-            return False, "paper_short_disabled"
-        score = self._sell_signal_score(signal)
-        if score < cfg["min_sell_score"]:
-            return False, f"sell_score {score:.0f} < {cfg['min_sell_score']:.0f}"
-        if cfg.get("require_bearish_news", False):
-            blocked, reason = self._is_deeply_bearish_market()
-            if not blocked:
-                return False, f"bearish_news_required {reason}".strip()
-        open_shorts = db.query(Trade).filter(
-            Trade.user_id == user.id,
-            Trade.mode == "paper",
-            Trade.status == TradeStatus.OPEN,
-            Trade.side == OrderSide.SELL,
-        ).count()
-        if open_shorts >= cfg["max_open_shorts"]:
-            return False, f"max_open_shorts {open_shorts}/{cfg['max_open_shorts']}"
-        if not cfg.get("allow_with_open_long", True):
-            open_longs = db.query(Trade).filter(
-                Trade.user_id == user.id,
-                Trade.mode == "paper",
-                Trade.status == TradeStatus.OPEN,
-                Trade.side == OrderSide.BUY,
-            ).count()
-            if open_longs:
-                return False, f"open_long_position {open_longs}"
-        return True, f"sell_score={score:.0f}"
-
-    def _try_open_paper_short(
-        self,
-        db: Session,
-        user: User,
-        signal: Signal,
-        current_price: float,
-        context: str,
-    ) -> bool:
-        allowed, reason = self._paper_short_allowed(db, user, signal)
-        if not allowed:
-            logger.info(
-                "PAPER_SHORT: skipped %s | %s [user=%d %s]",
-                signal.symbol, reason, user.id, context,
-            )
-            return False
-
-        portfolio = self.paper_portfolio.get_or_create(
-            db, user.id, user.paper_initial_capital
-        )
-        sl, tp, base_qty = self._entry_plan(
-            signal.symbol, OrderSide.SELL, current_price, portfolio.cash_balance,
-            atr_pct_override=(signal.metadata or {}).get("atr_pct"),
-            tp_atr_mult_override=(signal.metadata or {}).get("tp_atr_mult"),
-        )
-        risk_mult = self.guardrails.get_risk_multiplier()
-        qty = self._round_qty(signal.symbol, base_qty * risk_mult)
-        if qty <= 0:
-            return False
-        valid, qty_reason = self._validate_qty(signal.symbol, qty, current_price)
-        if not valid:
-            logger.info(
-                "PAPER_SHORT: skipped %s | %s [user=%d %s]",
-                signal.symbol, qty_reason, user.id, context,
-            )
-            return False
-        opened = self.paper_portfolio.open_position(
-            db, user.id, signal.symbol, qty, current_price, sl, tp,
-            side=OrderSide.SELL, strategy=signal.strategy_name,
-        )
-        if not opened:
-            return False
-        self._last_trade_time[(user.id, signal.symbol)] = datetime.now(timezone.utc)
-        self.guardrails.entry_throttle.record_entry(signal.symbol, user_id=user.id)
-        logger.info(
-            "User %d [paper/short]: SELL %s qty=%.6f @ %.2f SL=%.2f TP=%.2f (%s)",
-            user.id, signal.symbol, qty, current_price, sl, tp, reason,
-        )
-        return True
 
     def _estimated_trade_net_pnl(self, trade: Trade) -> float:
         entry_notional = (trade.entry_price or 0) * (trade.quantity or 0)
@@ -638,100 +543,6 @@ class TradingEngine:
             kept.append(s)
         return kept
 
-    def _apply_regime_gate(
-        self, signals: list[Signal], adx: float | None, symbol: str
-    ) -> list[Signal]:
-        """
-        Pre-filter signals based on ADX regime BEFORE conflict resolution.
-
-        TREND (ADX >= 25):
-          rsi_reversal → BLOCKED entirely (no contrarian entries in trend)
-          macd_crossover → kept only if direction matches embient signal
-          embient_enhanced → pass through
-
-        RANGE (ADX < 25):
-          rsi_reversal → OK
-          embient_enhanced → only if score >= 80
-          macd_crossover → pass through
-
-        ADX None → no filtering.
-        """
-        if adx is None or not signals:
-            return signals
-
-        threshold = self._trend_adx_threshold
-
-        if adx >= threshold:
-            # Determine embient direction (if any signal was generated)
-            embient_sigs = [s for s in signals if s.strategy_name == "embient_enhanced"]
-            embient_dir = embient_sigs[0].signal_type if embient_sigs else None
-
-            filtered = []
-            for sig in signals:
-                if sig.strategy_name == "rsi_reversal":
-                    logger.info(
-                        "REGIME: TREND (ADX=%.1f) → %s reversal BLOCKED [rsi_reversal]",
-                        adx, sig.signal_type.value,
-                    )
-                    continue
-                if sig.strategy_name == "macd_crossover":
-                    macd_mode = (sig.metadata or {}).get("mode", "independent")
-                    if macd_mode == "confirm_only":
-                        if embient_dir is None:
-                            logger.info(
-                                "REGIME: TREND (ADX=%.1f) → MACD %s blocked (confirm_only, no embient signal)",
-                                adx, sig.signal_type.value,
-                            )
-                            continue
-                        if sig.signal_type != embient_dir:
-                            logger.info(
-                                "REGIME: TREND (ADX=%.1f) → MACD %s blocked (confirm_only, misaligned embient=%s)",
-                                adx, sig.signal_type.value, embient_dir.value,
-                            )
-                            continue
-                    # independent / standalone: MACD passes without depending on embient
-                filtered.append(sig)
-            return filtered
-
-        else:
-            # RANGE: embient only if score >= 80; MACD confirm_only needs embient
-            embient_sigs = [s for s in signals if s.strategy_name == "embient_enhanced"]
-            embient_dir = embient_sigs[0].signal_type if embient_sigs else None
-
-            # Read current embient thresholds from the live strategy instance —
-            # single source of truth, kept in sync with the active profile.
-            embient_strat = next(
-                (s for s in self.strategies if s.name == "embient_enhanced"), None,
-            )
-            range_buy_th  = getattr(embient_strat, "range_buy_threshold", 80.0)
-            range_sell_th = getattr(embient_strat, "range_sell_threshold", 75.0)
-
-            filtered = []
-            for sig in signals:
-                if sig.strategy_name == "embient_enhanced":
-                    if sig.signal_type == SignalType.BUY:
-                        score = float((sig.metadata or {}).get("buy_score", 0))
-                        min_th = range_buy_th
-                    else:
-                        score = float((sig.metadata or {}).get("sell_score", 0))
-                        min_th = range_sell_th
-                    if score < min_th:
-                        logger.info(
-                            "REGIME: RANGE (ADX=%.1f) → embient %s blocked (score=%.0f<%.0f)",
-                            adx, sig.signal_type.value, score, min_th,
-                        )
-                        continue
-                if sig.strategy_name == "macd_crossover":
-                    macd_mode = (sig.metadata or {}).get("mode", "independent")
-                    if macd_mode == "confirm_only" and embient_dir is None:
-                        logger.info(
-                            "REGIME: RANGE (ADX=%.1f) → MACD %s blocked (confirm_only, no embient signal)",
-                            adx, sig.signal_type.value,
-                        )
-                        continue
-                filtered.append(sig)
-            return filtered
-
     # ------------------------------------------------------------------
     # Guardrails integration
     # ------------------------------------------------------------------
@@ -829,105 +640,21 @@ class TradingEngine:
         current_price: float,
     ) -> tuple[list[Signal], list[Signal]]:
         """
-        Resolve conflicting BUY vs SELL signals using ADX-based priority.
+        Resolve conflicting BUY vs SELL signals on the same symbol.
 
-        ADX >= 25 (TREND):
-          embient_enhanced has absolute priority for new entries.
-          rsi_reversal SELL allowed only as exit of an open profitable position.
-
-        ADX < 25 (RANGE):
-          rsi_reversal has priority for contrarian entries.
-          embient wins only if its score >= 75.
-
-        Returns (resolved_buy, resolved_sell).
-        Both empty = skip (unresolvable conflict).
+        Strategy-agnostic safety rule: an exit always outranks a new entry.
+        If any SELL is present the BUYs are dropped — closing risk can never
+        be blocked by the desire to add risk. With a single registered
+        strategy a real conflict should not occur; this also keeps multiple
+        future strategies safe by default.
         """
         if not (buy_signals and sell_signals):
             return buy_signals, sell_signals
-
-        embient_buy  = next((s for s in buy_signals  if s.strategy_name == "embient_enhanced"), None)
-        embient_sell = next((s for s in sell_signals if s.strategy_name == "embient_enhanced"), None)
-        rsi_buy      = next((s for s in buy_signals  if s.strategy_name == "rsi_reversal"),     None)
-        rsi_sell     = next((s for s in sell_signals if s.strategy_name == "rsi_reversal"),     None)
-
-        # ADX lives in embient metadata
-        embient_any = embient_buy or embient_sell
-        adx: float | None = (embient_any.metadata or {}).get("adx") if embient_any else None
-
-        if adx is None:
-            logger.info("[%s] conflict: ADX unavailable — skip", symbol)
-            return [], []
-
-        threshold = self._trend_adx_threshold
-
-        if adx >= threshold:
-            # ── TREND: embient priority ──────────────────────────────
-            # rsi SELL allowed as exit only if there is an open profitable position
-            if rsi_sell and open_trades:
-                profitable = next(
-                    (t for t in open_trades if current_price > t.entry_price > 0),
-                    None,
-                )
-                if profitable:
-                    profit_pct = (current_price - profitable.entry_price) / profitable.entry_price * 100
-                    logger.info(
-                        "[%s] conflict resolved: reversal exit only (ADX=%.1f trend, profit=+%.2f%%)",
-                        symbol, adx, profit_pct,
-                    )
-                    return [], [rsi_sell]
-
-            # embient entry wins
-            if embient_buy:
-                logger.info(
-                    "[%s] conflict resolved: embient wins (ADX=%.1f trend mode), reversal ignored",
-                    symbol, adx,
-                )
-                return [embient_buy], []
-            if embient_sell:
-                logger.info(
-                    "[%s] conflict resolved: embient wins (ADX=%.1f trend mode), reversal ignored",
-                    symbol, adx,
-                )
-                return [], [embient_sell]
-
-            logger.info("[%s] conflict: trend mode, no embient signal — skip", symbol)
-            return [], []
-
-        else:
-            # ── RANGE (ADX < 25): rsi priority ──────────────────────
-            # embient wins only if score >= 75
-
-            if embient_buy:
-                score = float((embient_buy.metadata or {}).get("buy_score", 0))
-                if score >= 80:
-                    logger.info(
-                        "[%s] conflict resolved: embient wins (ADX=%.1f range, score=%.0f>=80)",
-                        symbol, adx, score,
-                    )
-                    return [embient_buy], []
-                logger.info(
-                    "[%s] conflict resolved: reversal wins (ADX=%.1f range, embient BUY score=%.0f<80)",
-                    symbol, adx, score,
-                )
-            elif embient_sell:
-                score = float((embient_sell.metadata or {}).get("sell_score", 0))
-                if score >= 80:
-                    logger.info(
-                        "[%s] conflict resolved: embient wins (ADX=%.1f range, score=%.0f>=80)",
-                        symbol, adx, score,
-                    )
-                    return [], [embient_sell]
-                logger.info(
-                    "[%s] conflict resolved: reversal wins (ADX=%.1f range, embient SELL score=%.0f<80)",
-                    symbol, adx, score,
-                )
-            else:
-                logger.info(
-                    "[%s] conflict resolved: reversal priority (ADX=%.1f range mode)",
-                    symbol, adx,
-                )
-
-            return ([rsi_buy] if rsi_buy else []), ([rsi_sell] if rsi_sell else [])
+        logger.info(
+            "[%s] BUY/SELL conflict: exit wins, %d BUY dropped",
+            symbol, len(buy_signals),
+        )
+        return [], sell_signals
 
     async def _execute_paper(self, db: Session, user: User,
                              symbol: str, signals: list[Signal],
@@ -1120,9 +847,9 @@ class TradingEngine:
                     Trade.symbol == symbol,
                 ).all()
                 if not open_trades:
-                    self._try_open_paper_short(
-                        db, user, sell_signals[0], current_price, "paper/testnet-sim-short"
-                    )
+                    # Spot cannot short: a SELL with nothing open is a no-op.
+                    logger.debug("SELL %s ignored: no open position [user=%d]",
+                                 symbol, user.id)
                     return
                 for trade in open_trades:
                     if trade.side == OrderSide.SELL:
@@ -1278,9 +1005,9 @@ class TradingEngine:
                 Trade.symbol == symbol,
             ).all()
             if not open_before_close:
-                self._try_open_paper_short(
-                    db, user, sell_signals[0], current_price, "paper/sim-short"
-                )
+                # Spot cannot short: a SELL with nothing open is a no-op.
+                logger.debug("SELL %s ignored: no open position [user=%d]",
+                             symbol, user.id)
                 return
 
             long_positions = db.query(PaperPosition).filter(
@@ -1759,11 +1486,11 @@ class TradingEngine:
                         alt_frames=cycle_alt_frames.get(symbol),
                     )
 
-                    # Regime gate: filter signals based on ADX before execution
+                    # Informational regime label (strategies apply their own
+                    # regime logic; the macro filter below blocks bear longs)
                     if adx is not None and signals:
-                        regime_label = "TREND" if adx >= self._trend_adx_threshold else "RANGE"
+                        regime_label = "TREND" if adx >= self._TREND_ADX_THRESHOLD else "RANGE"
                         logger.info("REGIME: %s (ADX=%.1f) [%s]", regime_label, adx, symbol)
-                    signals = self._apply_regime_gate(signals, adx, symbol)
                     signals = self._apply_macro_trend_filter(
                         signals, symbol, htf_trend.get(symbol), sym_snap
                     )

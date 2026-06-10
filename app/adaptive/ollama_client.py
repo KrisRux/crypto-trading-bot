@@ -52,9 +52,6 @@ ALLOWED_DYNAMIC_SCORE_PATHS = {
     "performance_gate.symbol_max_recent_net_loss",
     "performance_gate.symbol_max_all_time_net_loss",
     "performance_gate.strategy_max_recent_net_loss",
-    "paper_short.min_sell_score",
-    "paper_short.max_open_shorts",
-    "paper_short.allow_with_open_long",
     "stale_position.profit_lock_trigger_pct",
     "stale_position.profit_lock_min_pct",
     "stale_position.profit_trail_start_pct",
@@ -137,7 +134,7 @@ Your job is to suggest concrete, data-driven parameter adjustments — even when
 - If consecutive_losses >= 3: suggest tightening score thresholds or reducing position exposure
 - Always suggest at least 1 change unless all metrics are at target AND block_rate < 30%
 - Prefer small incremental changes (10-15% of current value), never suggest changes >30% of current value
-- Valid paper-short/stale paths include paper_short.max_open_shorts, stale_position.range_profit_exit_min_pct, and stale_position.range_profit_exit_min_hours.
+- Valid stale-position paths include stale_position.range_profit_exit_min_pct and stale_position.range_profit_exit_min_hours.
 
 Respond JSON only (1-3 changes):
 {{"changes":[{{"path":"<full.path>","from":<old>,"to":<new>,"reason":"<specific metric in {output_language}>"}}],"reasoning":"<2-3 sentences in {output_language}>","confidence":<0.0-1.0>,"risk_level":"<low|medium|high>"}}"""
