@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     # Binance signed-request recvWindow (ms) + server-time drift sync.
     binance_recv_window: int = Field(default=5000, alias="BINANCE_RECV_WINDOW")
 
+    # --- Futures TESTNET (Option B research track — long/short, paper only) ---
+    # Keys for the USD-M futures testnet (https://testnet.binancefuture.com).
+    # Used ONLY by the futures-testnet execution path; the spot live system never
+    # reads these. No leverage by default (shorts sized like spot).
+    futures_testnet_api_key: str = Field(default="", alias="BINANCE_FUTURES_TESTNET_API_KEY")
+    futures_testnet_api_secret: str = Field(default="", alias="BINANCE_FUTURES_TESTNET_API_SECRET")
+    futures_default_leverage: int = Field(default=1, alias="FUTURES_DEFAULT_LEVERAGE")
+
     # --- Risk v2: ATR-based stops & risk-based position sizing ---
     use_atr_stops: bool = Field(default=True, alias="USE_ATR_STOPS")
     atr_sl_mult: float = Field(default=2.0, alias="ATR_SL_MULT")
