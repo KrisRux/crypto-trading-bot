@@ -433,7 +433,7 @@ export const api = {
     request<{ symbols: string[] }>('/symbols/remove', {
       method: 'POST', body: JSON.stringify({ symbol }),
     }),
-  clearApiKeys: (type: 'live' | 'testnet' | 'all') =>
+  clearApiKeys: (type: 'live' | 'testnet' | 'futures' | 'all') =>
     request<{ ok: boolean }>(`/settings/keys?key_type=${type}`, { method: 'DELETE' }),
   getAssets: () => request<AssetItem[]>('/assets'),
   getAdaptiveStatus: () => request<AdaptiveStatus>('/adaptive/status'),

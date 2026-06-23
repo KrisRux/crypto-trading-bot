@@ -10,25 +10,14 @@ import Modal from '../components/Modal'
    ═══════════════════════════════════════════════════════ */
 
 const PARAM_META: Record<string, { label: string; hint: string; min?: number; max?: number; step?: number }> = {
-  // SMA
-  fast_period:     { label: 'Fast Period',     hint: 'Fast SMA window (bars)',       min: 2,  max: 200, step: 1 },
-  slow_period:     { label: 'Slow Period',     hint: 'Slow SMA window (bars)',       min: 5,  max: 500, step: 1 },
-  adx_period:      { label: 'ADX Period',      hint: 'ADX calculation window',       min: 5,  max: 50,  step: 1 },
-  adx_threshold:   { label: 'ADX Threshold',   hint: 'Min ADX to generate signals',  min: 5,  max: 60,  step: 1 },
-  // RSI
-  period:          { label: 'Period',          hint: 'RSI / indicator period (bars)', min: 2,  max: 100, step: 1 },
-  oversold:        { label: 'Oversold',        hint: 'RSI oversold threshold',        min: 5,  max: 45,  step: 1 },
-  overbought:      { label: 'Overbought',      hint: 'RSI overbought threshold',      min: 55, max: 95,  step: 1 },
-  // MACD
-  fast:            { label: 'Fast EMA',        hint: 'MACD fast EMA period',         min: 2,  max: 50,  step: 1 },
-  slow:            { label: 'Slow EMA',        hint: 'MACD slow EMA period',         min: 5,  max: 100, step: 1 },
-  signal:          { label: 'Signal Line',     hint: 'MACD signal line period',      min: 2,  max: 50,  step: 1 },
-  // Embient
-  trend_buy_threshold:   { label: 'Trend BUY Threshold',   hint: 'Min score to BUY in trend',    min: 0, max: 100, step: 1 },
-  trend_sell_threshold:  { label: 'Trend SELL Threshold',  hint: 'Min score to SELL in trend',   min: 0, max: 100, step: 1 },
-  range_buy_threshold:   { label: 'Range BUY Threshold',   hint: 'Min score to BUY in range',    min: 0, max: 100, step: 1 },
-  range_sell_threshold:  { label: 'Range SELL Threshold',  hint: 'Min score to SELL in range',   min: 0, max: 100, step: 1 },
-  neutral_sell_threshold:{ label: 'Neutral SELL Threshold', hint: 'Min score to SELL in neutral', min: 0, max: 100, step: 1 },
+  // regime_breakout (the single registered strategy)
+  regime_ema_period: { label: 'Regime EMA',     hint: 'Slow EMA for the bull/bear regime gate (bars)', min: 50, max: 400, step: 10 },
+  slope_lookback:    { label: 'EMA Slope Look-back', hint: 'Bars used to measure the EMA slope',        min: 2,  max: 50,  step: 1 },
+  entry_channel:     { label: 'Entry Channel',  hint: 'Donchian breakout look-back (bars)',            min: 10, max: 120, step: 1 },
+  exit_channel:      { label: 'Exit Channel',   hint: 'Donchian exit look-back (bars)',                min: 5,  max: 100, step: 1 },
+  atr_period:        { label: 'ATR Period',     hint: 'ATR window for stop sizing and cost filter',    min: 5,  max: 50,  step: 1 },
+  min_atr_pct:       { label: 'Min ATR %',      hint: 'Skip entries below this ATR% (cost filter)',    min: 0,  max: 5,   step: 0.1 },
+  max_atr_pct:       { label: 'Max ATR %',      hint: 'Skip entries above this ATR% (too volatile)',   min: 1,  max: 20,  step: 0.5 },
 }
 
 const RISK_FIELDS: { key: keyof RiskParams; label: string; hint: string; min: number; max: number; step: number }[] = [

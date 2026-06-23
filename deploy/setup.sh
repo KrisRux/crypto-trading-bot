@@ -87,6 +87,13 @@ BINANCE_TESTNET_API_SECRET=your_testnet_secret_here
 BINANCE_API_KEY=
 BINANCE_API_SECRET=
 
+# Binance Futures TESTNET (optional — long/short research track, paper only).
+# Separate keys from spot testnet: https://testnet.binancefuture.com
+# Can also be set per-user from the Settings page instead of here.
+BINANCE_FUTURES_TESTNET_API_KEY=
+BINANCE_FUTURES_TESTNET_API_SECRET=
+FUTURES_DEFAULT_LEVERAGE=1
+
 TRADING_MODE=paper
 PAPER_INITIAL_CAPITAL=10000.0
 DATABASE_URL=sqlite:////opt/cryptobot/trading_bot.db

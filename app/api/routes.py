@@ -1599,7 +1599,7 @@ def clear_api_keys(key_type: str = "all", db: Session = Depends(get_db),
                    user_info: dict = Depends(require_auth)):
     """
     Delete stored API keys for the current user.
-    key_type: 'live' | 'testnet' | 'all'
+    key_type: 'live' | 'testnet' | 'futures' | 'all'
     """
     user = _get_user_obj(user_info, db)
     if key_type in ("live", "all"):
@@ -1608,6 +1608,9 @@ def clear_api_keys(key_type: str = "all", db: Session = Depends(get_db),
     if key_type in ("testnet", "all"):
         user.binance_testnet_api_key = ""
         user.binance_testnet_api_secret = ""
+    if key_type in ("futures", "all"):
+        user.binance_futures_testnet_api_key = ""
+        user.binance_futures_testnet_api_secret = ""
     db.commit()
     logger.info("User '%s' cleared %s API keys", user.username, key_type)
     return {"ok": True}

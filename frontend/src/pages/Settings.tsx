@@ -43,7 +43,7 @@ export default function Settings() {
   })
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
-  const [clearingType, setClearingType] = useState<'live' | 'testnet' | null>(null)
+  const [clearingType, setClearingType] = useState<'live' | 'testnet' | 'futures' | null>(null)
   const [testingTelegram, setTestingTelegram] = useState(false)
 
   const loadKeys = useCallback(() => {
@@ -117,9 +117,11 @@ export default function Settings() {
     }
   }
 
-  const handleClearKeys = async (type: 'live' | 'testnet') => {
+  const handleClearKeys = async (type: 'live' | 'testnet' | 'futures') => {
     const label = type === 'live'
       ? l('Live API', 'Live API')
+      : type === 'futures'
+      ? l('Futures Testnet API', 'Futures Testnet API')
       : l('Testnet API', 'Testnet API')
     const confirmed = confirm(
       l(
@@ -386,13 +388,26 @@ export default function Settings() {
 
       {/* Futures Testnet Keys — for the long/short research track */}
       <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
-        <div>
-          <h3 className="text-sm font-semibold text-white">
-            Binance Futures Testnet API
-            <span className="ml-2 text-[10px] font-normal text-gray-500">({l('per Futures L/S', 'for Futures L/S')})</span>
-          </h3>
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-white">
+              Binance Futures Testnet API
+              <span className="ml-2 text-[10px] font-normal text-gray-500">({l('per Futures L/S', 'for Futures L/S')})</span>
+            </h3>
+            {keys?.has_futures_keys && (
+              <span className="text-xs text-emerald-400 mt-0.5 block">{l('Configurate', 'Configured')}: {keys.binance_futures_testnet_api_key}</span>
+            )}
+          </div>
           {keys?.has_futures_keys && (
-            <span className="text-xs text-emerald-400 mt-0.5 block">{l('Configurate', 'Configured')}: {keys.binance_futures_testnet_api_key}</span>
+            <button
+              onClick={() => handleClearKeys('futures')}
+              disabled={clearingType === 'futures'}
+              className="px-3 py-1.5 bg-red-900/50 hover:bg-red-800/60 border border-red-800/50 text-red-300 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+            >
+              {clearingType === 'futures'
+                ? l('Eliminazione...', 'Deleting...')
+                : l('Elimina chiavi', 'Delete keys')}
+            </button>
           )}
         </div>
         <p className="text-xs text-gray-500">

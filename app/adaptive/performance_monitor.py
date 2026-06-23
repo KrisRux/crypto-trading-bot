@@ -100,11 +100,15 @@ class PerformanceMonitor:
         cutoff_48h_naive = cutoff_48h.replace(tzinfo=None)
         now_naive = now.replace(tzinfo=None)
 
+        # EXCLUDE the futures_testnet research track: this snapshot drives the
+        # SPOT kill-switch and profile switching, so a long/short futures paper
+        # loss must never trip the spot live risk controls.
         trades = (
             db.query(Trade)
             .filter(
                 Trade.status == TradeStatus.CLOSED,
                 Trade.closed_at >= cutoff_48h_naive,
+                Trade.mode != "futures_testnet",
             )
             .order_by(Trade.closed_at.desc())
             .all()
