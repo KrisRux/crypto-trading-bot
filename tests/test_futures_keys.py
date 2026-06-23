@@ -34,3 +34,30 @@ def test_has_futures_keys_false_when_partial():
     u = User(username="y")
     u.set_futures_keys(api_key="ONLYKEY", api_secret="")
     assert u.has_futures_keys() is False
+
+
+def test_routes_futures_client_helper(monkeypatch):
+    """_futures_client_for builds from the user's keys, falls back to env, and
+    returns None when neither is present."""
+    from app.api import routes
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "futures_testnet_api_key", "")
+    monkeypatch.setattr(settings, "futures_testnet_api_secret", "")
+
+    no_keys = User(username="nokeys")
+    assert routes._futures_client_for(no_keys) is None
+
+    with_keys = User(username="withkeys")
+    with_keys.set_futures_keys(api_key="FK", api_secret="FS")
+    client = routes._futures_client_for(with_keys)
+    assert client is not None and client.testnet is True
+    import asyncio
+    asyncio.run(client.close())
+
+    # Env fallback when the user has none.
+    monkeypatch.setattr(settings, "futures_testnet_api_key", "ENVK")
+    monkeypatch.setattr(settings, "futures_testnet_api_secret", "ENVS")
+    env_client = routes._futures_client_for(no_keys)
+    assert env_client is not None
+    asyncio.run(env_client.close())

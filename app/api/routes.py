@@ -47,6 +47,20 @@ def get_engine():
     return _engine
 
 
+def _futures_client_for(user):
+    """Build a futures-testnet client from the user's keys (fallback to the
+    server-wide env keys). Returns None when neither is configured."""
+    from app.binance_client.futures_client import BinanceFuturesClient
+    if user.has_futures_keys():
+        key, secret = user.get_futures_key(), user.get_futures_secret()
+    else:
+        key, secret = settings.futures_testnet_api_key, settings.futures_testnet_api_secret
+    if not (key and secret):
+        return None
+    return BinanceFuturesClient(api_key=key, api_secret=secret, testnet=True,
+                                default_leverage=settings.futures_default_leverage)
+
+
 def get_meta_controller():
     if _meta_controller is None:
         raise HTTPException(500, "MetaController not initialized")
@@ -978,6 +992,29 @@ async def get_balance(db: Session = Depends(get_db), user_info: dict = Depends(r
     if user_mode == "paper":
         return BalanceResponse(mode=user_mode, **_paper_equity_snapshot(db, user))
 
+    if user_mode == "futures_testnet":
+        # Read the futures wallet balance (USDT margin) + realized PnL from
+        # futures Trade rows. mark-to-market unrealized is on /positions.
+        cash = equity = 0.0
+        fclient = _futures_client_for(user)
+        if fclient is not None:
+            try:
+                cash = equity = await fclient.get_balance("USDT")
+            except Exception as exc:
+                logger.warning("Futures balance fetch failed for user %d: %s", user.id, exc)
+            finally:
+                await fclient.close()
+        fut = db.query(Trade).filter(
+            Trade.user_id == user.id, Trade.mode == "futures_testnet",
+            Trade.status == TradeStatus.CLOSED,
+        ).all()
+        return BalanceResponse(
+            mode=user_mode, cash_balance=cash, total_equity=equity,
+            total_pnl=sum(t.pnl or 0 for t in fut), total_trades=len(fut),
+            winning_trades=sum(1 for t in fut if (t.pnl or 0) > 0),
+            losing_trades=sum(1 for t in fut if (t.pnl or 0) < 0),
+        )
+
     cash_balance = 0.0   # USDT free — available to invest
     total_equity = 0.0   # Σ (free + locked) × market price for every asset
 
@@ -1101,6 +1138,21 @@ async def close_position_manual(
     ).first()
     if not trade:
         raise HTTPException(404, "Position not found or already closed")
+
+    # Futures testnet: close the real testnet position with a reduceOnly order
+    # via the executor (books NET PnL with the short sign). Handled first
+    # because it uses the futures mark price, not the spot WS price.
+    if user_mode == "futures_testnet" or trade.mode == "futures_testnet":
+        from app.trading_engine.futures_executor import FuturesTestnetExecutor
+        fclient = _futures_client_for(user)
+        if fclient is None:
+            raise HTTPException(400, "Futures testnet keys not configured")
+        try:
+            mark = await fclient.get_mark_price(trade.symbol)
+            await FuturesTestnetExecutor()._close(db, fclient, trade, mark, "manual_close")
+        finally:
+            await fclient.close()
+        return {"ok": True, "trade_id": trade.id, "status": "closed"}
 
     current_price = engine.last_prices.get(trade.symbol, 0)
     if current_price <= 0:
