@@ -45,6 +45,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fee", type=float, default=settings.taker_fee_pct)
     p.add_argument("--slippage", type=float, default=settings.paper_slippage_pct)
     p.add_argument("--allow-short", action="store_true")
+    p.add_argument("--funding", action="store_true",
+                   help="Model real Binance perpetual funding (futures only)")
     p.add_argument("--atr-stops", dest="atr_stops", action=argparse.BooleanOptionalAction,
                    default=settings.use_atr_stops)
     p.add_argument("--atr-sl", type=float, default=settings.atr_sl_mult,
@@ -124,13 +126,14 @@ def main(argv: list[str] | None = None) -> int:
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
     strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
 
-    def cfg_for(symbol):
+    def cfg_for(symbol, funding=None):
         return BacktestConfig(
             initial_capital=args.capital, position_size_pct=args.position_size,
             allow_short=args.allow_short, use_atr_stops=args.atr_stops,
             atr_sl_mult=args.atr_sl, atr_tp_mult=args.atr_tp,
             sl_pct=args.sl, tp_pct=args.tp,
             fee_pct=args.fee, slippage_pct=args.slippage, symbol=symbol,
+            funding_rates=funding,
         )
 
     rows: list[dict] = []
@@ -141,6 +144,21 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(f"  ! {symbol}: data load failed: {exc}", file=sys.stderr)
             continue
+        funding = None
+        if args.funding:
+            try:
+                from app.backtesting.funding import load_funding_rates
+                start_ms = int(df.index[0].timestamp() * 1000)
+                end_ms = int(df.index[-1].timestamp() * 1000)
+                funding = load_funding_rates(symbol, start_ms, end_ms)
+                if funding.empty:
+                    print(f"  ! {symbol}: no funding data — running without",
+                          file=sys.stderr)
+                    funding = None
+            except Exception as exc:
+                print(f"  ! {symbol}: funding load failed ({exc}) — without",
+                      file=sys.stderr)
+                funding = None
         if len(df) < max(60, (args.train + args.test) if args.walk_forward else 60):
             print(f"  ! {symbol}: only {len(df)} candles — skipped", file=sys.stderr)
             continue
@@ -149,10 +167,10 @@ def main(argv: list[str] | None = None) -> int:
                 strat = _make_strategy(name, params_map)
                 if args.walk_forward:
                     rep = walk_forward(df, train_size=args.train, test_size=args.test,
-                                       strategy=strat, config=cfg_for(symbol))
+                                       strategy=strat, config=cfg_for(symbol, funding))
                     m = rep.aggregate
                 else:
-                    m = Backtester(strat, cfg_for(symbol)).run(df).metrics
+                    m = Backtester(strat, cfg_for(symbol, funding)).run(df).metrics
                 rows.append({
                     "strategy": name, "symbol": symbol, "trades": m.num_trades,
                     "net%": m.total_return_pct, "gross%": (m.gross_pnl / args.capital * 100),

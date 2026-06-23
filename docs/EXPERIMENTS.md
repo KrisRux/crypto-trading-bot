@@ -91,6 +91,31 @@ risultati reali futures sarebbero peggiori di questo backtest idealizzato.
 TESTNET** (con funding modellato), NON sufficiente per soldi reali ora. Il
 live spot resta long-only `regime_breakout`.
 
+### Fase 1 (2026-06-23) — funding rate REALE nel backtester
+
+`app/backtesting/funding.py` carica i funding storici reali da Binance USD-M
+Futures (`/fapi/v1/fundingRate`, ogni 8h) e li applica a ogni posizione tenuta
+(`compare.py --funding`). Sui perpetual il funding NON è sempre un costo per lo
+short: quando è positivo (caso comune) lo short INCASSA, il long paga.
+
+Walk-forward OOS short-ON, net% **senza vs con funding reale**:
+
+| Simbolo | senza funding | con funding | Δ |
+|---|---:|---:|---:|
+| BTCUSDT | +0,08 | +0,07 | ~0 |
+| ETHUSDT | +9,73 | +9,62 | −0,1 |
+| BNBUSDT | +7,25 | +7,19 | −0,1 |
+| XRPUSDT | −1,14 | −1,58 | −0,4 |
+| SOLUSDT | −4,23 | −4,92 | −0,7 |
+| LTCUSDT | +8,93 | +9,02 | +0,1 |
+| **Somma / profittevoli** | +20,6 / 4-6 | **+19,4 / 4/6** | trascurabile |
+
+**Esito: FASE 1 SUPERATA.** Il funding erode pochi bps — l'edge OOS regge
+(4/6 simboli, ~+19% aggregato). Il funding non è il rischio che uccide la
+strategia. Rischi residui NON ancora coperti: liquidazione/leva (mitigabile a
+1x), SOL/XRP ancora negativi, win rate 10-30%, maxDD 15-22%. Prossimo passo:
+Fase 2 = client Binance Futures **testnet** + esecuzione short in paper.
+
 ## Idee di ricerca per un edge reale (oltre il tuning)
 - Conferma multi-timeframe come **filtro obbligatorio** (già implementata nel live engine).
 - Mean-reversion solo in regime range *con bassa* volatilità (non il contrario).

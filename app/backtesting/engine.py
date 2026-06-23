@@ -45,7 +45,7 @@ closes an existing long; it never opens a short.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 
 import numpy as np
@@ -140,6 +140,11 @@ class BacktestConfig:
     # If True, a SELL on the next bar's open closes a long even without SL/TP.
     allow_signal_exit: bool = True
 
+    # Optional perpetual-futures funding series (timestamp -> rate, every 8h).
+    # When set, each closed position accrues funding over its holding period
+    # (see app.backtesting.funding). Spot/long-only runs leave this None.
+    funding_rates: "pd.Series | None" = None
+
 
 @dataclass
 class BacktestTrade:
@@ -157,6 +162,7 @@ class BacktestTrade:
     bars_held: int
     entry_index: int
     exit_index: int
+    funding_cost: float = 0.0   # perpetual funding paid (>0) / received (<0)
 
     def as_dict(self) -> dict:
         return {
@@ -169,6 +175,7 @@ class BacktestTrade:
             "quantity": self.quantity,
             "exit_reason": self.exit_reason,
             "bars_held": self.bars_held,
+            "funding_cost": round(self.funding_cost, 8),
             **self.pnl.as_dict(),
         }
 
@@ -513,6 +520,21 @@ class Backtester:
             pos["side"], pos["entry_price"], price, pos["quantity"],
             cfg.fee_pct, cfg.slippage_pct,
         )
+        fund = 0.0
+        if cfg.funding_rates is not None:
+            from app.backtesting.funding import funding_cost
+            notional = pos["entry_price"] * pos["quantity"]
+            fund = funding_cost(pos["side"], notional, pos["entry_time"], time,
+                                cfg.funding_rates)
+            # Fold funding into the net so every downstream metric (equity,
+            # PnL, PF) reflects it without touching compute_metrics.
+            base = abs(pos["entry_price"]) * abs(pos["quantity"])
+            pnl = replace(
+                pnl,
+                cost=pnl.cost + fund,
+                net_pnl=pnl.net_pnl - fund,
+                net_pnl_pct=(pnl.net_pnl - fund) / base * 100.0 if base else 0.0,
+            )
         return BacktestTrade(
             side=pos["side"],
             symbol=cfg.symbol,
@@ -526,6 +548,7 @@ class Backtester:
             bars_held=max(0, index - pos["entry_index"]),
             entry_index=pos["entry_index"],
             exit_index=index,
+            funding_cost=fund,
         )
 
     def _unrealized(self, pos: dict, price: float) -> float:
