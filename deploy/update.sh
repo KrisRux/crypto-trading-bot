@@ -11,6 +11,17 @@ APP_USER="cryptobot"
 
 echo "Pulling latest code..."
 cd "$APP_DIR"
+
+# Repo hygiene (idempotent): a git command accidentally run as root leaves
+# root-owned files under .git, which then makes `sudo -u $APP_USER git` abort
+# with "detected dubious ownership". Re-assert ownership and register the
+# safe.directory exception for the APP_USER so the pull never gets blocked.
+chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+if ! sudo -u "$APP_USER" git config --global --get-all safe.directory 2>/dev/null \
+        | grep -qx "$APP_DIR"; then
+  sudo -u "$APP_USER" git config --global --add safe.directory "$APP_DIR"
+fi
+
 # All runtime state lives in GITIGNORED files (config/profile_state.json,
 # strategy_params.json, trading_bot.db, logs). Tracked files must always match
 # the repo: discard any local drift before pulling so a runtime process that
