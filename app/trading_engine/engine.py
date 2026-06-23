@@ -67,6 +67,10 @@ class TradingEngine:
         # Closed-candle frames for strategies that declare a custom interval
         # (cached per (symbol, interval), strategies invoked once per closed bar)
         self.feed = TimeframeFeed(self.fetch_klines)
+        # Futures-testnet long/short executor (lazy: built only when a user is in
+        # futures_testnet mode and keys exist). Cached client per process.
+        self._futures_executor = None
+        self._futures_client = None
 
     # ADX period and trend threshold (informational labelling only — each
     # strategy applies its own regime logic internally)
@@ -380,6 +384,39 @@ class TradingEngine:
                 return
             await self._execute_live(db, user, symbol, signals, current_price, within_hours,
                                      candle_high=candle_high, candle_low=candle_low)
+        elif user_mode == "futures_testnet":
+            # Opt-in long/short PAPER track on the futures testnet. Dormant
+            # unless server-wide testnet keys are configured. Spot paths above
+            # are completely unaffected.
+            if settings.futures_testnet_api_key and settings.futures_testnet_api_secret:
+                await self._execute_futures_testnet(db, user, symbol)
+
+    def _get_futures_executor(self):
+        """Lazily build the futures-testnet client + executor (one per process)."""
+        if self._futures_executor is None:
+            from app.binance_client.futures_client import BinanceFuturesClient
+            from app.trading_engine.futures_executor import FuturesTestnetExecutor
+            self._futures_client = BinanceFuturesClient(
+                api_key=settings.futures_testnet_api_key,
+                api_secret=settings.futures_testnet_api_secret,
+                testnet=True,
+                default_leverage=settings.futures_default_leverage,
+            )
+            self._futures_executor = FuturesTestnetExecutor()
+        return self._futures_executor, self._futures_client
+
+    async def _execute_futures_testnet(self, db: Session, user: User, symbol: str):
+        """Long/short PAPER execution on the futures testnet (Option B track).
+
+        Uses the dedicated 4h closed-candle frame from the TimeframeFeed and the
+        regime_breakout_ls strategy. Fully isolated from the spot paths."""
+        try:
+            executor, client = self._get_futures_executor()
+            df_4h = await self.feed.get_closed(symbol, "4h",
+                                               executor.strategy.min_history_bars)
+            await executor.run(db, user, symbol, df_4h, client)
+        except Exception:
+            logger.exception("FUTURES_TESTNET: execution failed for %s", symbol)
 
     async def _execute_dry_run(self, db: Session, user: User,
                                symbol: str, signals: list[Signal],

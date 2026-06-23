@@ -32,10 +32,16 @@ limit ed errori API.
 
 ## Architettura attuale
 
-### Tre modalità di trading
+### Modalità di trading
 - **dry_run**: analizza e logga, nessun ordine
 - **paper**: ordini su Binance Testnet (se chiavi testnet) o simulazione locale
-- **live**: ordini reali con chiavi live per-utente
+- **live**: ordini reali con chiavi live per-utente (SPOT long-only)
+- **futures_testnet** (Opzione B, ricerca long/short, PAPER): se l'utente ha
+  questa modalità E ci sono chiavi `BINANCE_FUTURES_TESTNET_*` server-wide,
+  l'engine esegue la strategia `regime_breakout_ls` (stop-and-reverse) su
+  futures testnet via `app/trading_engine/futures_executor.py` +
+  `app/binance_client/futures_client.py` (leva 1x default). È l'UNICO punto che
+  può shortare, ed è solo testnet. I percorsi spot non sono toccati.
 
 ### Trading Engine (`app/trading_engine/`)
 - `engine.py`: ciclo ogni 15 minuti su candele CHIUSE (no lookahead);
