@@ -295,7 +295,25 @@ export default function Settings() {
           >
             Live
           </button>
+          <button
+            onClick={() => setForm({ ...form, trading_mode: 'futures_testnet' })}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+              form.trading_mode === 'futures_testnet'
+                ? 'bg-indigo-600 text-white'
+                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+            }`}
+          >
+            {l('Futures Testnet (L/S)', 'Futures Testnet (L/S)')}
+          </button>
         </div>
+        {form.trading_mode === 'futures_testnet' && (
+          <div className="bg-indigo-900/30 border border-indigo-800/50 rounded-lg p-3 text-xs text-indigo-300">
+            {l(
+              'Ricerca long/short su Binance Futures TESTNET (paper, mai soldi reali). Esegue regime_breakout_ls con stop ATR e leva 1x. Richiede le chiavi futures testnet nel .env del server (BINANCE_FUTURES_TESTNET_*).',
+              'Long/short research on Binance Futures TESTNET (paper, never real money). Runs regime_breakout_ls with ATR stop at 1x leverage. Requires the futures testnet keys in the server .env (BINANCE_FUTURES_TESTNET_*).'
+            )}
+          </div>
+        )}
         {form.trading_mode === 'dry_run' && (
           <div className="bg-amber-900/30 border border-amber-800/50 rounded-lg p-3 text-xs text-amber-300">
             {l(

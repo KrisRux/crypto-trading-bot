@@ -863,8 +863,8 @@ async def update_api_keys(body: dict, db: Session = Depends(get_db),
     if "trading_enabled" in body:
         user.trading_enabled = bool(body["trading_enabled"])
     if "trading_mode" in body:
-        if body["trading_mode"] not in ("dry_run", "paper", "live"):
-            raise HTTPException(400, "Mode must be 'dry_run', 'paper' or 'live'")
+        if body["trading_mode"] not in ("dry_run", "paper", "live", "futures_testnet"):
+            raise HTTPException(400, "Mode must be 'dry_run', 'paper', 'live' or 'futures_testnet'")
         user.trading_mode = body["trading_mode"]
     if "paper_initial_capital" in body:
         user.paper_initial_capital = float(body["paper_initial_capital"])
