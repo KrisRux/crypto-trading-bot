@@ -68,6 +68,7 @@ class MetaController:
         self._last_global_regime: str | None = None
         self._daily_summary_sent: str | None = None
         self._kpi_report_sent: str | None = None
+        self._inactivity_report_sent: str | None = None  # YYYY-MM-DD dedup
         # Avoid spamming: track alert state + silence period
         self._drawdown_alerted: bool = False
         self._consec_losses_alerted: bool = False
@@ -331,6 +332,11 @@ class MetaController:
                 regime_snapshot.get("global_direction", "flat"),
             )
 
+            # 8. Flat-state heartbeat: if the bot has been intentionally flat
+            # for too long, explain WHY (DeepSeek read-only) so silence is never
+            # mistaken for a breakage. Never forces a trade.
+            await self._maybe_send_inactivity_report(db, chat_ids, regime_snapshot)
+
             logger.info(
                 "META_CTRL: cycle complete | regime=%s | profile=%s | "
                 "PnL6h=%.2f | WR=%.0f%% | DD=%.2f%%",
@@ -496,6 +502,51 @@ class MetaController:
                                "; ".join(t["key"] for t in fresh_triggers))
         except Exception:
             logger.exception("KPI report/trigger evaluation failed")
+
+    async def _maybe_send_inactivity_report(self, db: Session, chat_ids: list,
+                                            regime_snapshot: dict):
+        """Flat-state heartbeat. When the bot has had no trade for
+        ``inactivity_alert_days`` AND holds no open position, send a once-a-day
+        DeepSeek-generated (read-only) explanation of why it is flat.
+
+        This is self-regulation by self-EXPLANATION, not by forcing trades:
+        a spot long-only bot standing aside in a downtrend is correct, and the
+        operator should be told so instead of guessing whether it is broken.
+        """
+        try:
+            alert_days = float(self.kpi_monitor.thresholds.get("inactivity_alert_days", 5))
+            kpi = self.kpi_monitor.compute(db)
+            idle = kpi.get("days_since_last_trade")
+            open_positions = kpi.get("open_positions", 0)
+            # Only when genuinely idle AND flat (an open position is not silence).
+            if idle is None or idle < alert_days or open_positions > 0:
+                return
+            now = datetime.now(timezone.utc)
+            today = now.strftime("%Y-%m-%d")
+            report_hour = int(self.kpi_monitor.thresholds.get("report_hour_utc", 6))
+            if self._inactivity_report_sent == today or now.hour < report_hour:
+                return
+
+            symbols = regime_snapshot.get("symbols", {})
+            context = {
+                "days_since_last_trade": idle,
+                "open_positions": open_positions,
+                "global_regime": regime_snapshot.get("global_regime", "unknown"),
+                "global_direction": regime_snapshot.get("global_direction", "flat"),
+                "active_profile": self.profile_manager.active_profile,
+                "symbol_directions": {s: snap.get("direction")
+                                      for s, snap in symbols.items()},
+                "symbol_adx": {s: snap.get("adx") for s, snap in symbols.items()},
+            }
+            advice = await self.advisor.explain_inactivity(context)
+            msg = (f"\U0001F4A4 <b>Bot fermo da {idle:.0f} giorni — perche</b>\n\n"
+                   f"{advice['text']}")
+            await self.notifier.broadcast(msg, level="INFO", chat_ids=chat_ids or [])
+            self._inactivity_report_sent = today
+            logger.info("INACTIVITY_REPORT: sent (idle=%.1fd, source=%s)",
+                        idle, advice.get("source"))
+        except Exception:
+            logger.exception("Inactivity report failed")
 
     # ------------------------------------------------------------------
     # Telegram callback polling (inline approval buttons)

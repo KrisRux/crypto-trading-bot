@@ -182,6 +182,57 @@ class LLMAdvisor:
 
         return {"profile": None, "confidence": 0.0}
 
+    def _fallback_inactivity_text(self, context: dict) -> str:
+        """Deterministic explanation used when no LLM is available — always
+        works offline so the heartbeat never goes silent."""
+        days = context.get("days_since_last_trade")
+        regime = context.get("global_regime", "unknown")
+        direction = context.get("global_direction", "flat")
+        down = [s for s, d in context.get("symbol_directions", {}).items()
+                if d == "down"]
+        n_down = len(down)
+        n_tot = len(context.get("symbol_directions", {})) or 1
+        days_txt = f"{days:.0f}" if isinstance(days, (int, float)) else "diversi"
+
+        if direction == "down" or n_down >= n_tot / 2:
+            return (
+                f"Nessun trade da {days_txt} giorni: e il comportamento atteso, "
+                f"non un guasto. Il mercato e in regime <b>{regime}</b> con "
+                f"direzione <b>ribassista</b> ({n_down}/{n_tot} simboli in "
+                f"downtrend). La strategia regime_breakout e SPOT long-only: in "
+                f"un ribasso resta flat per proteggere il capitale (non puo "
+                f"shortare). Aprira una posizione solo quando un simbolo tornera "
+                f"sopra la EMA200 a 4h in salita e superera il massimo del canale "
+                f"Donchian a 55 barre. Finche il trend resta giu, fermo = giusto."
+            )
+        return (
+            f"Nessun trade da {days_txt} giorni con regime <b>{regime}</b> "
+            f"({direction}). La strategia attende un breakout confermato "
+            f"(prezzo sopra EMA200 4h in salita + nuovo massimo del canale "
+            f"Donchian 55): un setup raro per design (~1-2 ingressi/mese per "
+            f"simbolo). Nessuna azione necessaria; il sistema e operativo."
+        )
+
+    async def explain_inactivity(self, context: dict) -> dict:
+        """Read-only narrative for the flat-state heartbeat. Tries DeepSeek,
+        falls back to the deterministic text. NEVER changes any parameter."""
+        from app.config import settings
+        source = "fallback"
+        text = self._fallback_inactivity_text(context)
+        if settings.deepseek_api_key:
+            try:
+                from app.adaptive.deepseek_client import narrate_inactivity
+                llm_text = await narrate_inactivity(
+                    context, api_key=settings.deepseek_api_key,
+                    model=settings.deepseek_model,
+                )
+                if llm_text:
+                    text, source = llm_text, "deepseek"
+            except Exception:
+                logger.exception("explain_inactivity: DeepSeek failed, using fallback")
+        return {"text": text, "source": source,
+                "timestamp": datetime.now(timezone.utc).isoformat()}
+
     async def generate_tuning_suggestions(
         self,
         perf: dict,

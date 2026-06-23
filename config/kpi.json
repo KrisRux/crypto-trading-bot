@@ -16,5 +16,7 @@
   "review_idle_days_in_uptrend": 14,
 
   "report_hour_utc": 6,
-  "capital_base_fallback": 10000.0
+  "capital_base_fallback": 10000.0,
+
+  "inactivity_alert_days": 5
 }

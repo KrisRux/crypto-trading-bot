@@ -199,6 +199,57 @@ async def check_deepseek(api_key: str) -> bool:
     return result
 
 
+async def narrate_inactivity(context: dict, api_key: str,
+                             model: str = DEFAULT_MODEL) -> str | None:
+    """Read-only plain-text explanation of WHY the bot is currently flat.
+
+    Returns a short Italian message (no JSON, no parameter changes) or None on
+    any failure — the caller then uses its deterministic fallback. This NEVER
+    suggests forcing trades: a spot long-only bot is supposed to stand aside in
+    a downtrend, and the prompt makes that explicit.
+    """
+    if not api_key:
+        return None
+    system = (
+        "Sei l'assistente di un bot di trading SPOT LONG-ONLY. Spieghi in "
+        "italiano, in 2-4 frasi, perche il bot e fermo. REGOLE FERREE: non "
+        "suggerire MAI di forzare trade, allentare la strategia o comprare in "
+        "un downtrend; su spot stare flat in un mercato ribassista E il "
+        "comportamento corretto. Sii rassicurante e concreto, niente JSON, "
+        "niente elenchi puntati."
+    )
+    user = (
+        "Stato attuale del bot (sola lettura):\n"
+        f"{json.dumps(context, ensure_ascii=False, indent=2)}\n\n"
+        "Spiega all'operatore perche non ci sono trade, se e normale dato il "
+        "regime, e cosa dovrebbe succedere nel mercato perche la strategia "
+        "regime_breakout apra una posizione (prezzo sopra EMA200 in salita su "
+        "4h + breakout del canale Donchian)."
+    )
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
+            resp = await client.post(
+                API_URL,
+                headers={"Authorization": f"Bearer {api_key}",
+                         "Content-Type": "application/json"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "system", "content": system},
+                                 {"role": "user", "content": user}],
+                    "temperature": 0.4,
+                    "max_tokens": 300,
+                },
+            )
+        if resp.status_code != 200:
+            logger.warning("DEEPSEEK narrate: HTTP %d", resp.status_code)
+            return None
+        text = resp.json()["choices"][0]["message"]["content"].strip()
+        return text or None
+    except Exception:
+        logger.exception("DEEPSEEK narrate: request failed")
+        return None
+
+
 async def generate_suggestions(
     perf: dict,
     guardrails_status: dict,

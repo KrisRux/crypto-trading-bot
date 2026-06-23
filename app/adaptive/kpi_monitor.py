@@ -54,6 +54,9 @@ DEFAULT_THRESHOLDS = {
     # Reporting
     "report_hour_utc": 6,
     "capital_base_fallback": 10000.0,
+
+    # Flat-state heartbeat: explain inactivity after this many trade-less days
+    "inactivity_alert_days": 5,
 }
 
 
