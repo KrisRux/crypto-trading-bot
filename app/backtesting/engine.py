@@ -74,10 +74,14 @@ EXIT_END_OF_DATA = "end_of_data"
 def _strategy_registry() -> dict[str, Callable[[], Strategy]]:
     """Lazy factory map name -> zero-arg constructor (defaults from prod)."""
     from app.strategies.regime_breakout import RegimeBreakoutStrategy
+    # Research-only long/short variant — back-tester registry ONLY, never live.
+    from app.strategies.regime_breakout_ls import RegimeBreakoutLongShort
 
     return {
         "regime_breakout": RegimeBreakoutStrategy,
         "breakout": RegimeBreakoutStrategy,
+        "regime_breakout_ls": RegimeBreakoutLongShort,
+        "breakout_ls": RegimeBreakoutLongShort,
     }
 
 

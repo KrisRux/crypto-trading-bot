@@ -59,6 +59,38 @@ simboli, in bear puro perde al massimo il 4,6% (vs −67% del mercato) — il co
 (BNB). Non ancora pronta per live: serve la selezione relative-strength a livello
 portafoglio e il supporto per-strategy timeframe nell'engine.
 
+## Risultati 2026-06-23 — Opzione B: lato SHORT (research, futures-only)
+
+Variante `regime_breakout_ls` (stop-and-reverse simmetrico, short su breakdown
+Donchian in regime bear) — registrata SOLO nel backtester, MAI nel live spot.
+Comando: `compare.py --strategies regime_breakout_ls --interval 4h --days 730
+--position-size 20 --atr-tp 0 [--allow-short] --walk-forward --train 1500 --test 480`.
+
+**Walk-forward OOS** (finestra test quasi-tutta-bear), net% per simbolo:
+
+| Simbolo | Short OFF | Short ON | Δ |
+|---|---:|---:|---:|
+| BTCUSDT | −0,18 | +0,08 | ~0 |
+| ETHUSDT | +11,03 (PF 3,6) | +9,73 (PF 1,6) | −1,3 |
+| BNBUSDT | +1,70 | **+7,25** (PF 1,6) | +5,6 |
+| XRPUSDT | −2,84 | −1,14 | +1,7 |
+| SOLUSDT | −6,54 | −4,23 | +2,3 |
+| LTCUSDT | −2,06 | **+8,93** (PF 1,6) | +11,0 |
+| **Somma** | **+1,1** | **+20,6** | **+19,5** |
+| net>0 & alpha>0 | 2/6 | **4/6** | +2 |
+
+**Lettura onesta**: il lato short aggiunge alpha OOS reale (aggregato da ~+1%
+a ~+21% sommato, da 2/6 a 4/6 simboli profittevoli; LTC e BNB i maggiori
+beneficiari). MA: (1) win rate 10–30% (pochi grossi vincitori reggono tutto,
+fragile); (2) maxDD sale a 15–22% (vs 4–16% del long-only); (3) SOL/XRP
+perdono ancora; (4) **lo short richiede un conto FUTURES**: il backtest NON
+modella funding rate (su 2 anni materiale) né liquidazione/leva. Quindi i
+risultati reali futures sarebbero peggiori di questo backtest idealizzato.
+
+**Verdetto**: edge sufficiente per una fase di validazione su **futures
+TESTNET** (con funding modellato), NON sufficiente per soldi reali ora. Il
+live spot resta long-only `regime_breakout`.
+
 ## Idee di ricerca per un edge reale (oltre il tuning)
 - Conferma multi-timeframe come **filtro obbligatorio** (già implementata nel live engine).
 - Mean-reversion solo in regime range *con bassa* volatilità (non il contrario).
