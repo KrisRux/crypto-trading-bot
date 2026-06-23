@@ -105,6 +105,8 @@ def init_db():
         ("telegram_chat_id", "VARCHAR DEFAULT ''"),
         ("telegram_enabled", "BOOLEAN DEFAULT 0"),
         ("telegram_min_level", "VARCHAR DEFAULT ''"),
+        ("binance_futures_testnet_api_key", "VARCHAR DEFAULT ''"),
+        ("binance_futures_testnet_api_secret", "VARCHAR DEFAULT ''"),
     ])
     _migrate_add_columns(engine, "tuning_suggestions", [
         ("source", "VARCHAR DEFAULT 'rules'"),

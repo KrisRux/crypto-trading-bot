@@ -11,8 +11,10 @@ interface KeysState {
   trading_end_hour: number | null
   has_live_keys: boolean
   has_testnet_keys: boolean
+  has_futures_keys: boolean
   binance_api_key: string
   binance_testnet_api_key: string
+  binance_futures_testnet_api_key: string
   telegram_chat_id: string
   telegram_enabled: boolean
   telegram_min_level: string
@@ -33,6 +35,8 @@ export default function Settings() {
     binance_api_secret: '',
     binance_testnet_api_key: '',
     binance_testnet_api_secret: '',
+    binance_futures_testnet_api_key: '',
+    binance_futures_testnet_api_secret: '',
     telegram_chat_id: '',
     telegram_enabled: false,
     telegram_min_level: '',
@@ -85,6 +89,8 @@ export default function Settings() {
       if (form.binance_api_secret) body.binance_api_secret = form.binance_api_secret
       if (form.binance_testnet_api_key) body.binance_testnet_api_key = form.binance_testnet_api_key
       if (form.binance_testnet_api_secret) body.binance_testnet_api_secret = form.binance_testnet_api_secret
+      if (form.binance_futures_testnet_api_key) body.binance_futures_testnet_api_key = form.binance_futures_testnet_api_key
+      if (form.binance_futures_testnet_api_secret) body.binance_futures_testnet_api_secret = form.binance_futures_testnet_api_secret
 
       const resp = await fetch('/api/settings/keys', {
         method: 'PUT',
@@ -374,6 +380,39 @@ export default function Settings() {
           placeholder={keys?.has_testnet_keys ? l('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'Testnet API Secret'}
           value={form.binance_testnet_api_secret}
           onChange={(e) => setForm({ ...form, binance_testnet_api_secret: e.target.value })}
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
+        />
+      </section>
+
+      {/* Futures Testnet Keys — for the long/short research track */}
+      <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-white">
+            Binance Futures Testnet API
+            <span className="ml-2 text-[10px] font-normal text-gray-500">({l('per Futures L/S', 'for Futures L/S')})</span>
+          </h3>
+          {keys?.has_futures_keys && (
+            <span className="text-xs text-emerald-400 mt-0.5 block">{l('Configurate', 'Configured')}: {keys.binance_futures_testnet_api_key}</span>
+          )}
+        </div>
+        <p className="text-xs text-gray-500">
+          {l(
+            'Per la modalita Futures Testnet (long/short, paper). Chiavi separate dallo spot: ottienile su testnet.binancefuture.com',
+            'For Futures Testnet mode (long/short, paper). Separate from spot keys: get them at testnet.binancefuture.com'
+          )}
+        </p>
+        <input
+          type="text"
+          placeholder={keys?.has_futures_keys ? l('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'Futures Testnet API Key'}
+          value={form.binance_futures_testnet_api_key}
+          onChange={(e) => setForm({ ...form, binance_futures_testnet_api_key: e.target.value })}
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
+        />
+        <input
+          type="password"
+          placeholder={keys?.has_futures_keys ? l('Lascia vuoto per non modificare', 'Leave empty to keep current') : 'Futures Testnet API Secret'}
+          value={form.binance_futures_testnet_api_secret}
+          onChange={(e) => setForm({ ...form, binance_futures_testnet_api_secret: e.target.value })}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
         />
       </section>

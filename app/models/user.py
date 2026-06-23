@@ -126,6 +126,10 @@ class User(Base):
     binance_api_secret = Column(String, default="")
     binance_testnet_api_key = Column(String, default="")
     binance_testnet_api_secret = Column(String, default="")
+    # Binance USD-M Futures TESTNET keys (separate from spot testnet keys) —
+    # used only by the futures_testnet long/short paper track.
+    binance_futures_testnet_api_key = Column(String, default="")
+    binance_futures_testnet_api_secret = Column(String, default="")
 
     # Per-user trading preferences
     trading_mode = Column(String, default="paper")  # "dry_run", "paper", or "live"
@@ -160,6 +164,21 @@ class User(Base):
 
     def has_api_keys(self, live: bool = False) -> bool:
         return bool(self.get_api_key(live) and self.get_api_secret(live))
+
+    def set_futures_keys(self, api_key: str = "", api_secret: str = ""):
+        """Store the futures-testnet keys (Fernet-encrypted), independent of the
+        spot key setter so updating one never clobbers the other."""
+        self.binance_futures_testnet_api_key = _encrypt(api_key)
+        self.binance_futures_testnet_api_secret = _encrypt(api_secret)
+
+    def get_futures_key(self) -> str:
+        return _decrypt(self.binance_futures_testnet_api_key)
+
+    def get_futures_secret(self) -> str:
+        return _decrypt(self.binance_futures_testnet_api_secret)
+
+    def has_futures_keys(self) -> bool:
+        return bool(self.get_futures_key() and self.get_futures_secret())
 
     def is_within_trading_hours(self) -> bool:
         """Check if current UTC time is within the user's trading schedule."""

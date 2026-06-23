@@ -846,8 +846,10 @@ def get_api_keys(db: Session = Depends(get_db), user_info: dict = Depends(requir
         "trading_end_hour": user.trading_end_hour,
         "has_live_keys": user.has_api_keys(live=True),
         "has_testnet_keys": user.has_api_keys(live=False),
+        "has_futures_keys": user.has_futures_keys(),
         "binance_api_key": user.get_api_key(live=True)[:8] + "..." if user.has_api_keys(live=True) else "",
         "binance_testnet_api_key": user.get_api_key(live=False)[:8] + "..." if user.has_api_keys(live=False) else "",
+        "binance_futures_testnet_api_key": user.get_futures_key()[:8] + "..." if user.has_futures_keys() else "",
         "telegram_chat_id": user.telegram_chat_id or "",
         "telegram_enabled": user.telegram_enabled,
         "telegram_min_level": user.telegram_min_level or "",
@@ -891,6 +893,8 @@ async def update_api_keys(body: dict, db: Session = Depends(get_db),
     api_secret = body.get("binance_api_secret", "")
     testnet_key = body.get("binance_testnet_api_key", "")
     testnet_secret = body.get("binance_testnet_api_secret", "")
+    futures_key = body.get("binance_futures_testnet_api_key", "")
+    futures_secret = body.get("binance_futures_testnet_api_secret", "")
 
     # Validate Live keys if provided
     if api_key and api_secret:
@@ -919,6 +923,20 @@ async def update_api_keys(body: dict, db: Session = Depends(get_db),
             testnet_key=testnet_key or user.get_api_key(live=False),
             testnet_secret=testnet_secret or user.get_api_secret(live=False),
         )
+
+    # Validate + save futures testnet keys (separate setter, never clobbers spot)
+    if futures_key and futures_secret:
+        from app.binance_client.futures_client import BinanceFuturesClient
+        fclient = BinanceFuturesClient(api_key=futures_key, api_secret=futures_secret,
+                                       testnet=True)
+        try:
+            await fclient.get_balance("USDT")
+        except Exception:
+            await fclient.close()
+            raise HTTPException(400, "Chiavi Futures Testnet non valide / Futures testnet keys invalid")
+        await fclient.close()
+        user.set_futures_keys(api_key=futures_key, api_secret=futures_secret)
+
     db.commit()
     logger.info("User '%s' updated their settings", user.username)
     return {"ok": True}
